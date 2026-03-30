@@ -13,6 +13,13 @@ import { uploadFile } from "@/app/actions/upload-file";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
+// 2026 UPDATED MODELS - Gemini 1.5 is now legacy. 
+// Using 2.5 and 2.0 as primary stables.
+const AI_MODEL_PRIMARY = "gemini-2.5-flash";
+const AI_MODEL_FALLBACK = "gemini-2.0-flash";
+const AI_MODEL_LATESTStable = "gemini-flash-latest";
+
+
 export async function scanInvoiceAction(input: FormData | string, supplierId?: string): Promise<{ success?: boolean; data?: any; error?: string }> {
     let fileUrl = '';
 
@@ -96,6 +103,33 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
             return { error: "Unauthorized: Session missing tenant/company information. Please log out and log in again." };
         }
 
+        // --- DYNAMIC AI KEY FETCH ---
+        let finalApiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+        try {
+            const aiConf = await prisma.hms_settings.findUnique({
+                where: {
+                    tenant_id_company_id_key: {
+                        tenant_id: (session.user as any).tenantId,
+                        company_id: (session.user as any).companyId,
+                        key: 'AI_CONFIG'
+                    }
+                }
+            });
+            if (aiConf && aiConf.value) {
+                const val = aiConf.value as any;
+                if (val.enabled && val.apiKey) {
+                    finalApiKey = val.apiKey;
+                    console.log("[ScanInvoice] Using Custom AI Key from Database");
+                }
+            }
+        } catch (e) {
+            console.error("[ScanInvoice] Error fetching custom AI key, falling back to ENV:", e);
+        }
+
+        const dynamicGenAI = new GoogleGenerativeAI(finalApiKey);
+        // ----------------------------
+
+
         // Construct the prompt
         // Inject supplier rules if available
         const prompt = `
@@ -150,11 +184,15 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
         `;
 
         const configurations = [
+            { name: "gemini-2.5-flash", version: "v1beta", useJsonMode: true },
+            { name: "gemini-2.5-flash", version: "v1", useJsonMode: true },
+            { name: "gemini-flash-latest", version: "v1beta", useJsonMode: true },
             { name: "gemini-2.0-flash", version: "v1beta", useJsonMode: true },
-            { name: "gemini-1.5-flash", version: "v1beta", useJsonMode: true },
-            { name: "gemini-1.5-pro", version: "v1beta", useJsonMode: true },
-            { name: "gemini-1.5-flash", version: "v1", useJsonMode: false },
+            { name: "gemini-2.0-flash-lite", version: "v1beta", useJsonMode: true },
+            { name: "models/gemini-2.5-flash", version: "v1beta", useJsonMode: true },
+            { name: "gemini-pro-latest", version: "v1", useJsonMode: false },
         ];
+
 
         for (const config of configurations) {
             const modelName = config.name;
@@ -175,7 +213,7 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
             try {
                 console.log(`[ScanInvoice] Trying model: ${modelName} (${apiVersion}) | JSON Mode: ${useJsonMode}`);
 
-                const model = genAI.getGenerativeModel({
+                const model = dynamicGenAI.getGenerativeModel({
                     model: modelName,
                     generationConfig
                 }, { apiVersion });
@@ -284,7 +322,7 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
                         await new Promise(resolve => setTimeout(resolve, delay));
 
                         try {
-                            const model = genAI.getGenerativeModel({
+                            const model = dynamicGenAI.getGenerativeModel({
                                 model: modelName,
                                 generationConfig
                             }, { apiVersion });
