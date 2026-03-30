@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
-import crypto from 'crypto'
+import * as crypto from 'crypto'
 
 const STANDARD_PERMISSIONS = [
     // User Management -> System
@@ -49,11 +49,19 @@ const STANDARD_PERMISSIONS = [
     { code: 'vitals:create', name: 'Create Vitals', module: 'HMS' },
     { code: 'vitals:edit', name: 'Edit Vitals', module: 'HMS' },
 
-    // Billing
+    // Lab
+    { code: 'lab:view', name: 'View Lab Results', module: 'HMS' },
+    { code: 'lab:create', name: 'Create Lab Orders', module: 'HMS' },
+    { code: 'lab:edit', name: 'Edit Lab Orders', module: 'HMS' },
+
+    // Billing & Accounting
     { code: 'billing:view', name: 'View Billing', module: 'HMS' },
     { code: 'billing:create', name: 'Create Bills', module: 'HMS' },
+    { code: 'billing:edit', name: 'Edit Bills', module: 'HMS' },
     { code: 'billing:returns:view', name: 'View Sales Returns', module: 'HMS' },
     { code: 'billing:returns:create', name: 'Create Sales Returns', module: 'HMS' },
+    { code: 'accounting:view', name: 'View Accounting Dashboard', module: 'HMS' },
+    { code: 'accounting:create', name: 'Create Vouchers', module: 'HMS' },
 
     // Pharmacy
     { code: 'pharmacy:view', name: 'View Pharmacy', module: 'Pharmacy' },
@@ -114,6 +122,8 @@ const STANDARD_PERMISSIONS = [
     { code: 'hr:attendance:create', name: 'Mark Attendance', module: 'HR' },
     { code: 'hr:attendance:edit', name: 'Edit Attendance', module: 'HR' },
     { code: 'hr:employees:view', name: 'View Employees', module: 'HR' },
+    { code: 'attendance:view', name: 'View Attendance Records', module: 'HR' },
+
 ];
 
 /**
@@ -145,6 +155,24 @@ async function ensurePermissionsExist(codes: string[]) {
                     code: p.code,
                     name: p.name,
                     category: p.module
+                })),
+                skipDuplicates: true
+            });
+        }
+
+        // --- NEW: CATCH-ALL FOR DYNAMIC CODES ---
+        // If some codes are still missing (not in STANDARD_PERMISSIONS), create them with generic names
+        // This prevents the P2003 Foreign Key crash!
+        const finalChecks = await prisma.permission.findMany({ where: { code: { in: missingCodes } }, select: { code: true } });
+        const finalSet = new Set(finalChecks.map(p => p.code));
+        const absoluteMissing = missingCodes.filter(c => !finalSet.has(c));
+
+        if (absoluteMissing.length > 0) {
+            await prisma.permission.createMany({
+                data: absoluteMissing.map(c => ({
+                    code: c,
+                    name: c.split(':').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                    category: 'System'
                 })),
                 skipDuplicates: true
             });
@@ -265,6 +293,15 @@ export async function seedRolesAndPermissions() {
         ];
 
         const results = [];
+        
+        // --- ADDED: PROACTIVE PERMISSION SYNC ---
+        // Collect all unique permission codes from all standard roles
+        const allPermissionsToEnsure = new Set<string>();
+        rolesData.forEach(r => r.permissions.forEach(p => allPermissionsToEnsure.add(p)));
+        
+        // Sync them to the database to prevent foreign key (FK) violation on role_permission table
+        await ensurePermissionsExist(Array.from(allPermissionsToEnsure));
+        // ----------------------------------------
 
         for (const roleData of rolesData) {
             // Check if role exists
@@ -365,6 +402,9 @@ export async function createRole(data: { key: string; name: string; permissions:
         if (existing) {
             return { error: "A role with this name already exists" };
         }
+
+        // --- ADDED: PROACTIVE PERMISSION SYNC ---
+        await ensurePermissionsExist(data.permissions);
 
         const role = await prisma.role.create({
             data: {

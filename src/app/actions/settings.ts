@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath, unstable_noStore as noStore } from "next/cache"
-import crypto from 'crypto'
+import * as crypto from 'crypto'
 
 export type ProfileFormState = {
     message?: string
@@ -1110,6 +1110,7 @@ export async function updatePDFSettings(data: {
     addressSize?: number;
     showContactInfo?: boolean;
     autoPrint: boolean;
+    showTaxInvoiceTitle: boolean;
 }) {
     const session = await auth();
     const companyId = session?.user?.companyId;
@@ -1173,5 +1174,123 @@ export async function getPDFConfig(companyId: string, tenantId: string) {
         return (record?.value as any) || null;
     } catch (err) {
         return null;
+    }
+}
+
+// === AI / GEMINI CONFIGURATION ===
+
+export async function getAIConfig(companyId: string, tenantId: string) {
+    noStore();
+    try {
+        const record = await prisma.hms_settings.findFirst({
+            where: { 
+                company_id: companyId, 
+                tenant_id: tenantId, 
+                key: 'AI_CONFIG' // Normalizing to Uppercase to match DB pattern
+            }
+        });
+        if (!record || !record.value) return null;
+        return record.value as any;
+    } catch (e) {
+        console.error("[getAIConfig] Error fetching AI config:", e);
+        return null;
+    }
+}
+
+
+export async function getAISettings(providedTenantId?: string) {
+    noStore();
+    const session = await auth();
+    const tenantId = providedTenantId || session?.user?.tenantId;
+    const companyId = session?.user?.companyId;
+
+    if (!tenantId || !companyId) return { success: false, error: 'Unauthorized' };
+
+    try {
+        const record = await prisma.hms_settings.findFirst({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
+        });
+        const data = (record?.value as any) || {};
+
+        return {
+            success: true,
+            settings: {
+                enabled: data.enabled ?? true,
+                hasKey: !!data.apiKey,
+                updatedAt: data.updatedAt
+            }
+        };
+    } catch (error: any) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateAISettings(data: { enabled: boolean, apiKey?: string, reset?: boolean }) {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    const userId = session?.user?.id;
+
+    if (!companyId || !tenantId || !userId) return { success: false, error: 'Session expired.' };
+
+    const canManage = await checkPermission('hms:admin');
+    if (!canManage) return { success: false, error: 'Unauthorized: HMS Admin permission required.' };
+
+    try {
+        const existing = await prisma.hms_settings.findFirst({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
+        });
+
+        const existingData = (existing?.value as any) || {};
+
+        // SAFETY MERGE: Keep existing keys but update AI specific ones
+        const configValue = {
+            ...existingData,
+            enabled: data.enabled,
+            apiKey: data.apiKey || existingData.apiKey || '',
+            updatedAt: new Date().toISOString()
+        };
+
+        await prisma.$transaction([
+            prisma.hms_settings.deleteMany({
+                where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
+            }),
+            prisma.hms_settings.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    tenant_id: tenantId,
+                    company_id: companyId,
+                    key: 'ai_config',
+                    value: configValue,
+                    scope: 'company',
+                    is_active: true,
+                    created_by: userId,
+                    updated_by: userId
+                }
+            })
+        ]);
+
+        revalidatePath('/settings/hms');
+        return { success: true };
+    } catch (error: any) {
+        console.error('Failed to save AI settings:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function resetWhatsAppSession() {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { success: false };
+
+    try {
+        await prisma.hms_settings.deleteMany({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'whatsapp_session' }
+        });
+        revalidatePath('/settings/hms');
+        return { success: true };
+    } catch (err) {
+        return { success: false };
     }
 }
