@@ -90,6 +90,12 @@ export default function PaymentsPage() {
                                     className="h-5 pl-7 pr-2 bg-[#002b2b] border border-[#008080] rounded text-[10px] text-[#ffffcc] focus:outline-none focus:border-[#64ffff] w-48 transition-all"
                                 />
                             </div>
+                            <button 
+                                onClick={() => router.push('/hms/accounting/payments/new')}
+                                className="h-5 px-3 bg-[#ffffcc] text-black font-black text-[9px] uppercase hover:bg-[#64ffff] transition-all flex items-center gap-1 shadow-lg"
+                            >
+                                <span className="text-[10px]">+</span> Add Entry
+                            </button>
                             <span className="text-[10px] text-white">F2: PERIOD | F12: CONFIGURE</span>
                         </div>
                     </div>
@@ -213,7 +219,7 @@ export default function PaymentsPage() {
                             { f: 'F1', l: 'Select Cmp', active: false },
                             { f: 'F2', l: 'Period', active: false },
                             { f: 'F4', l: 'Contra', active: false },
-                            { f: 'F5', l: 'Payment', active: true },
+                            { f: 'F5', l: 'Payment', active: true, onClick: () => router.push('/hms/accounting/payments/new') },
                             { f: 'F6', l: 'Receipt', active: false },
                             { f: 'Alt+C', l: 'Create', active: false, onClick: () => router.push('/hms/accounting/payments/new') },
                         ].map(btn => (

@@ -51,10 +51,14 @@ function CountUp({ value, prefix = "", suffix = "" }: { value: number, prefix?: 
 
 export function FinancialDashboard({
     currencyCode = 'INR',
-    currencySymbol = '₹'
+    currencySymbol = '₹',
+    initialView = 'modern',
+    initialTab = 'pl'
 }: {
     currencyCode?: string,
-    currencySymbol?: string
+    currencySymbol?: string,
+    initialView?: 'modern' | 'classic',
+    initialTab?: 'pl' | 'bs'
 }) {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
@@ -64,8 +68,8 @@ export function FinancialDashboard({
     const [trends, setTrends] = useState<any[]>([])
     const [insights, setInsights] = useState<string[]>([])
     const [date, setDate] = useState(new Date())
-    const [viewMode, setViewMode] = useState<'modern' | 'classic'>('modern')
-    const [classicTab, setClassicTab] = useState<'pl' | 'bs'>('pl')
+    const [viewMode, setViewMode] = useState<'modern' | 'classic'>(initialView)
+    const [classicTab, setClassicTab] = useState<'pl' | 'bs'>(initialTab)
 
     useEffect(() => {
         loadData()
@@ -159,7 +163,7 @@ export function FinancialDashboard({
                         className={`h-12 px-6 rounded-xl border-slate-200 dark:border-slate-800 gap-2 transition-all font-bold ${viewMode === 'classic' ? 'bg-[#002b2b] text-[#ffffcc] hover:bg-[#004d4d]' : 'hover:bg-slate-50'}`}
                     >
                         <Landmark className="h-5 w-5" />
-                        {viewMode === 'modern' ? 'Switch to Tally View' : 'Back to Dashboard'}
+                        {viewMode === 'modern' ? 'Switch to Classic View' : 'Back to Dashboard'}
                     </Button>
                     <Button variant="outline" className="h-12 px-6 rounded-xl border-slate-200 dark:border-slate-800 gap-2 hover:bg-slate-50 transition-all font-semibold">
                         <Calendar className="h-5 w-5 text-indigo-500" />

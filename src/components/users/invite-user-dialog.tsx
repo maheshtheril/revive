@@ -1,6 +1,6 @@
 'use client'
 
-import { cn } from '@/lib/utils'
+import { cn, copyToClipboard } from '@/lib/utils'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getRoles } from '@/app/actions/role'
@@ -153,8 +153,12 @@ export function InviteUserDialog({ roles = [] }: InviteUserDialogProps) {
 
     const copyLink = () => {
         if (inviteResult?.link) {
-            navigator.clipboard.writeText(inviteResult.link)
-            toast({ title: 'Link Copied', description: 'Invitation link copied to clipboard' })
+            const success = copyToClipboard(inviteResult.link)
+            if (success) {
+                toast({ title: 'Link Copied', description: 'Invitation link copied to clipboard' })
+            } else {
+                toast({ title: 'Copy Failed', description: 'Please copy the link manually', variant: 'destructive' })
+            }
         }
     }
 

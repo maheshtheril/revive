@@ -304,22 +304,20 @@ export function LabDashboardClient({ labStaffName, orders, stats, patients, bill
                                             {/* Actions */}
                                             <div className="flex items-center gap-3 mt-4 lg:mt-0 lg:ml-auto flex-wrap justify-end">
                                                 <button
-                                                    onClick={() => setSelectedOrder(order)}
+                                                    onClick={() => router.push(`/hms/lab/results/${order.id}`)}
                                                     className="h-12 px-6 rounded-2xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm shadow-xl shadow-violet-600/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
                                                 >
-                                                    {order.status === 'requested' ? 'Collect Sample' : 'Enter Results'}
+                                                    {order.status === 'requested' ? 'Process Order' : 'Enter Results'}
                                                     <ArrowRight className="h-4 w-4" />
                                                 </button>
-                                                {order.report_url && (
-                                                    <a
-                                                        href={`/api/lab/report/${order.id}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
+                                                {order.status === 'completed' && (
+                                                    <button
+                                                        onClick={() => router.push(`/hms/lab/reports/${order.id}`)}
                                                         className="h-12 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-xl shadow-blue-600/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
                                                     >
                                                         <FileText className="h-4 w-4" />
-                                                        View Results
-                                                    </a>
+                                                        View Report
+                                                    </button>
                                                 )}
                                                 {order.invoice_id ? (
                                                     <button

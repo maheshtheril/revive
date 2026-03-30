@@ -109,9 +109,10 @@ export async function updateGlobalSettings(data: {
     const session = await auth();
     if (!session?.user?.id) return { error: "Not authenticated" };
 
-    // Basic RBAC check
-    if (!session.user.isAdmin && !session.user.isTenantAdmin) {
-        // return { error: "Unauthorized" }
+    // Robust RBAC check (Same as HMS Save)
+    const canManage = await checkPermission('hms:admin');
+    if (!canManage) {
+        return { error: "Unauthorized: HMS Admin permission required." };
     }
 
     try {
@@ -190,8 +191,9 @@ export async function updateTenantSettings(data: {
     dateFormat?: string
 }) {
     const session = await auth();
-    if (!session?.user?.id || !session.user.isTenantAdmin) {
-        return { error: "Unauthorized. Tenant Admin access required." };
+    const canManage = await checkPermission('hms:admin');
+    if (!canManage) {
+        return { error: "Unauthorized. Tenant Admin / HMS Admin access required." };
     }
 
     try {
@@ -1208,7 +1210,7 @@ export async function getAISettings(providedTenantId?: string) {
 
     try {
         const record = await prisma.hms_settings.findFirst({
-            where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
+            where: { company_id: companyId, tenant_id: tenantId, key: 'AI_CONFIG' }
         });
         const data = (record?.value as any) || {};
 
@@ -1238,7 +1240,7 @@ export async function updateAISettings(data: { enabled: boolean, apiKey?: string
 
     try {
         const existing = await prisma.hms_settings.findFirst({
-            where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
+            where: { company_id: companyId, tenant_id: tenantId, key: 'AI_CONFIG' }
         });
 
         const existingData = (existing?.value as any) || {};
@@ -1251,30 +1253,35 @@ export async function updateAISettings(data: { enabled: boolean, apiKey?: string
             updatedAt: new Date().toISOString()
         };
 
-        await prisma.$transaction([
-            prisma.hms_settings.deleteMany({
-                where: { company_id: companyId, tenant_id: tenantId, key: 'ai_config' }
-            }),
-            prisma.hms_settings.create({
+        if (existing) {
+            await prisma.hms_settings.update({
+                where: { id: existing.id },
                 data: {
-                    id: crypto.randomUUID(),
+                    value: configValue,
+                    updated_by: userId,
+                    updated_at: new Date()
+                }
+            });
+        } else {
+            await prisma.hms_settings.create({
+                data: {
                     tenant_id: tenantId,
                     company_id: companyId,
-                    key: 'ai_config',
+                    key: 'AI_CONFIG',
                     value: configValue,
                     scope: 'company',
                     is_active: true,
                     created_by: userId,
                     updated_by: userId
                 }
-            })
-        ]);
+            });
+        }
 
         revalidatePath('/settings/hms');
         return { success: true };
     } catch (error: any) {
         console.error('Failed to save AI settings:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: "CRITICAL: " + error.message };
     }
 }
 

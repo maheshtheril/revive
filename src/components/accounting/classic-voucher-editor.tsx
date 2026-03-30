@@ -136,10 +136,32 @@ export function ClassicVoucherEditor({
                 e.preventDefault();
                 onCancel();
             }
+            if (e.key === 'F5') {
+                e.preventDefault();
+                // If already on payment, do nothing, else we might need to navigate or change internal state
+                // Since 'type' is a prop, we should ideally handle this via navigation or a callback
+                window.location.href = '/hms/accounting/payments/new';
+            }
+            if (e.key === 'F6') {
+                e.preventDefault();
+                window.location.href = '/hms/accounting/receipts/new';
+            }
+            if (e.key === 'F7') {
+                e.preventDefault();
+                window.location.href = '/hms/accounting/journals';
+            }
+            if (e.key === 'F8') {
+                e.preventDefault();
+                window.location.href = '/hms/accounting/credit-notes/new';
+            }
+            if (e.key === 'F9') {
+                e.preventDefault();
+                window.location.href = '/hms/accounting/debit-notes/new';
+            }
         };
         window.addEventListener('keydown', handleKeys);
         return () => window.removeEventListener('keydown', handleKeys);
-    }, [amount, partnerId, allocations, directLines]);
+    }, [amount, partnerId, allocations, directLines, onCancel]);
 
     return (
         <div className="fixed inset-0 z-[100] bg-[#002b2b] text-[#ffffcc] font-mono select-none flex flex-col overflow-hidden">
@@ -388,10 +410,8 @@ export function ClassicVoucherEditor({
 
                 {/* Right Side: Gateway Simulation */}
                 <div className="w-56 bg-[#003333] border border-[#006666] flex flex-col p-1 gap-1">
-                    <div className="bg-[#004d4d] flex flex-col items-center py-4 border border-[#006666]">
-                        <span className="text-[12px] font-black text-[#ffffcc]">GATEWAY of TALLY</span>
-                        <div className="h-px w-full bg-[#006666] my-2" />
-                        <span className="text-[10px] text-[#64ffff]">Platform Operations</span>
+                    <div className="bg-[#004d4d] flex flex-col items-center py-4 border border-[#006666] mb-2">
+                        <span className="text-[12px] font-black text-[#ffffcc]">CLASSIC ERP GATEWAY</span>
                     </div>
 
                     <div className="flex-1 space-y-1">
@@ -400,8 +420,10 @@ export function ClassicVoucherEditor({
                             { f: 'F5', l: 'PAYMENT', active: type === 'payment' },
                             { f: 'F6', l: 'RECEIPT', active: type === 'receipt' },
                             { f: 'F7', l: 'JOURNAL', active: false },
-                            { f: 'F8', l: 'SALES', active: false },
-                            { f: 'F9', l: 'PURCHASE', active: false },
+                            { f: 'F8', l: 'CREDIT NOTE', active: false },
+                            { f: 'F9', l: 'DEBIT NOTE', active: false },
+                            { f: 'F11', l: 'FEATURES', active: false },
+                            { f: 'F12', l: 'CONFIGURE', active: false },
                         ].map(btn => (
                             <button key={btn.f} className={`w-full flex items-center h-8 px-2 text-[10px] transition-all ${btn.active ? 'bg-[#ffffcc] text-black font-black' : 'hover:bg-[#004d4d] text-white'}`}>
                                 <span className="w-8 opacity-50">{btn.f}</span>

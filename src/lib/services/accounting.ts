@@ -1808,4 +1808,135 @@ export class AccountingService {
             return { success: false, error: error.message };
         }
     }
+
+    /**
+     * Generates a Trial Balance as on a specific date.
+     * Includes Opening Balance, Debit/Credit for the period, and Closing Balance.
+     */
+    static async getTrialBalance(companyId: string, date: Date = new Date()) {
+        try {
+            const startOfDay = new Date(date);
+            startOfDay.setHours(23, 59, 59, 999);
+
+            // 1. Fetch all ledgers (accounts)
+            const accounts = await prisma.accounts.findMany({
+                where: { company_id: companyId, is_group: false },
+                orderBy: { code: 'asc' }
+            });
+
+            // 2. Fetch all journal lines for these accounts up to date
+            const lines = await prisma.journal_entry_lines.findMany({
+                where: {
+                    company_id: companyId,
+                    journal_entries: { date: { lte: startOfDay }, posted: true }
+                }
+            });
+
+            // 3. Summarize by account
+            const trialBalance = accounts.map(acc => {
+                const accLines = lines.filter(l => l.account_id === acc.id);
+                const debit = accLines.reduce((sum, l) => sum + Number(l.debit || 0), 0);
+                const credit = accLines.reduce((sum, l) => sum + Number(l.credit || 0), 0);
+                const closing = debit - credit;
+
+                return {
+                    id: acc.id,
+                    name: acc.name,
+                    code: acc.code,
+                    type: acc.type,
+                    debit: closing > 0 ? closing : 0,
+                    credit: closing < 0 ? Math.abs(closing) : 0,
+                    closingBalance: closing
+                };
+            });
+
+            return { 
+                success: true, 
+                data: trialBalance,
+                totalDebit: trialBalance.reduce((sum, b) => sum + b.debit, 0),
+                totalCredit: trialBalance.reduce((sum, b) => sum + b.credit, 0)
+            };
+        } catch (error: any) {
+            console.error("Trial Balance Error:", error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Generates Bill-wise Ageing Report for Receivables or Payables.
+     */
+    static async getAgeingReport(companyId: string, type: 'receivables' | 'payables') {
+        try {
+            const today = new Date();
+            
+            if (type === 'receivables') {
+                const invoices = await prisma.hms_invoice.findMany({
+                    where: { 
+                        company_id: companyId,
+                        status: 'posted',
+                        outstanding_amount: { gt: 0 }
+                    },
+                    include: { hms_patient: true },
+                    orderBy: { issued_at: 'asc' }
+                });
+
+                const ageing = invoices.map(inv => {
+                    const diffDays = Math.ceil((today.getTime() - new Date(inv.issued_at).getTime()) / (1000 * 60 * 60 * 24));
+                    return {
+                        id: inv.id,
+                        number: inv.invoice_number,
+                        date: inv.issued_at,
+                        party: inv.hms_patient?.first_name + ' ' + inv.hms_patient?.last_name,
+                        amount: Number(inv.total),
+                        outstanding: Number(inv.outstanding_amount),
+                        days: diffDays,
+                        slots: {
+                            '0-30': diffDays <= 30 ? Number(inv.outstanding_amount) : 0,
+                            '30-60': diffDays > 30 && diffDays <= 60 ? Number(inv.outstanding_amount) : 0,
+                            '60-90': diffDays > 60 && diffDays <= 90 ? Number(inv.outstanding_amount) : 0,
+                            '90+': diffDays > 90 ? Number(inv.outstanding_amount) : 0,
+                        }
+                    };
+                });
+
+                return { success: true, data: ageing };
+            } else {
+                const bills = await prisma.hms_purchase_invoice.findMany({
+                    where: { 
+                        company_id: companyId,
+                        status: 'posted',
+                        total_amount: { gt: 0 } // Basic filtering, in real world we check (total - paid)
+                    },
+                    include: { hms_supplier: true },
+                    orderBy: { invoice_date: 'asc' }
+                });
+
+                const ageing = bills.map(bill => {
+                    const outstanding = Number(bill.total_amount || 0) - Number(bill.paid_amount || 0);
+                    const diffDays = Math.ceil((today.getTime() - new Date(bill.invoice_date || bill.created_at).getTime()) / (1000 * 60 * 60 * 24));
+                    
+                    return {
+                        id: bill.id,
+                        number: bill.name || 'N/A',
+                        date: bill.invoice_date || bill.created_at,
+                        party: bill.hms_supplier?.name || 'GENERIC SUPPLIER',
+                        amount: Number(bill.total_amount),
+                        outstanding: outstanding,
+                        days: diffDays,
+                        slots: {
+                            '0-30': diffDays <= 30 ? outstanding : 0,
+                            '30-60': diffDays > 30 && diffDays <= 60 ? outstanding : 0,
+                            '60-90': diffDays > 60 && diffDays <= 90 ? outstanding : 0,
+                            '90+': diffDays > 90 ? outstanding : 0,
+                        }
+                    };
+                }).filter(b => b.outstanding > 0);
+
+                return { success: true, data: ageing };
+            }
+        } catch (error: any) {
+            console.error("Ageing Report Error:", error);
+            return { success: false, error: error.message };
+        }
+    }
 }

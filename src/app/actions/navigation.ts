@@ -426,6 +426,13 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
             { key: 'inv-products', label: 'Product Master', icon: 'Package', url: '/hms/inventory/products' },
             { key: 'inv-import', label: 'Bulk Import Products', icon: 'Upload', url: '/hms/inventory/products?import=true' },
             {
+                key: 'inv-pharmacy',
+                label: 'Pharmacy Stock',
+                icon: 'Activity',
+                url: '/hms/pharmacy/inventory',
+                permission_code: 'pharmacy:view'
+            },
+            {
                 key: 'inv-procurement',
                 label: 'Procurement',
                 icon: 'ShoppingCart',
@@ -437,6 +444,16 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                     { key: 'inv-returns', label: 'Purchase Returns', icon: 'Undo2', url: '/hms/purchasing/returns' },
                 ]
             }
+        ]
+    });
+
+    // 4. LABORATORY (Diagnostics & Testing)
+    items.push({
+        module: { name: 'Laboratory & Diagnostics', module_key: 'lab' },
+        items: [
+            { key: 'lab-dashboard', label: 'Lab Analytics', icon: 'LayoutDashboard', url: '/hms/lab' },
+            { key: 'lab-pending', label: 'Pending Results', icon: 'FlaskConical', url: '/hms/lab/pending' },
+            { key: 'lab-order-all', label: 'Order Register', icon: 'List', url: '/hms/lab/orders' },
         ]
     });
 
@@ -755,7 +772,8 @@ export async function auditAndFixMenuPermissions() {
             { k: 'hms-nursing', p: 'hms:dashboard:nurse' },
             { k: 'hms-doctors', p: 'hms:admin' },
             { k: 'hms-dashboard', p: 'hms:admin', l: 'HMS Dashboard' },
-            { k: 'inv-dashboard', p: 'inventory:view', l: 'Inventory Overview' }
+            { k: 'inv-dashboard', p: 'inventory:view', l: 'Inventory Overview' },
+            { k: 'inv-pharmacy', p: 'pharmacy:view', l: 'Pharmacy Stock' }
         ];
         for (const f of fixes) {
             await prisma.menu_items.updateMany({ 

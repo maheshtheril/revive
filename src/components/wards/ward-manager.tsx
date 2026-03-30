@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react'
 import {
     Home, Plus, Users, Bed as BedIcon, Info,
     MoreVertical, CheckCircle2, AlertCircle,
-    Trash2, Edit2, Search, Filter, RefreshCcw
+    Trash2, Edit2, Search, Filter, RefreshCcw,
+    Thermometer, Heart, Activity as VitalIcon, Droplets, Zap
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,7 @@ import {
 import { getWards, createWard, createBed, getActiveAdmissions, assignBedToPatient, releaseBed, transferBed } from "@/app/actions/wards"
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from "sonner"
+import Link from 'next/link'
 
 export function WardManager({ branches, isAdmin }: { branches: any[], isAdmin?: boolean }) {
     const [wards, setWards] = useState<any[]>([])
@@ -197,6 +199,15 @@ export function WardManager({ branches, isAdmin }: { branches: any[], isAdmin?: 
 
             {/* Content grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div className="lg:col-span-12 flex gap-4 h-12 items-center px-8 bg-white/50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-500 overflow-x-auto no-scrollbar">
+                    <span className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-emerald-500" /> STABLE</span>
+                    <span className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-amber-500" /> OBSERVATION</span>
+                    <span className="flex items-center gap-2"><div className="h-2 w-2 rounded-full bg-rose-500 animate-ping" /> CRITICAL (SPO2 {"<"} 92)</span>
+                    <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 mx-2" />
+                    <span className="flex items-center gap-2"><Heart className="h-3 w-3 text-rose-500" /> REAL-TIME PULSE</span>
+                    <span className="flex items-center gap-2"><VitalIcon className="h-3 w-3 text-indigo-500" /> VITALS UPDATED</span>
+                </div>
+
                 {/* Wards Sidebar/List */}
                 <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     <AnimatePresence mode='popLayout'>
@@ -265,7 +276,7 @@ export function WardManager({ branches, isAdmin }: { branches: any[], isAdmin?: 
                                                     }
                                                 }}
                                                 className={`
-                                                    relative h-20 rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center border-2 transition-all
+                                                    relative h-20 rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center border-2 transition-all group/bed
                                                     ${transferMode && bed.status === 'available' ? 'border-dashed border-emerald-500 bg-emerald-50/50 animate-pulse' : 'border-transparent'}
                                                     ${bed.status === 'available'
                                                         ? 'bg-slate-50 dark:bg-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800'
@@ -277,9 +288,40 @@ export function WardManager({ branches, isAdmin }: { branches: any[], isAdmin?: 
                                                 <span className={`text-[11px] font-black ${bed.status === 'available' ? 'text-slate-500' : 'text-indigo-900 dark:text-indigo-200'}`}>
                                                     {bed.bed_no}
                                                 </span>
+
+                                                {/* Clinical Vitals QuickView - World Standard Feature */}
+                                                {bed.status === 'occupied' && bed.vitals && !transferMode && (
+                                                    <div className="absolute right-1 top-1 flex flex-col gap-0.5 opacity-60 group-hover/bed:opacity-100 transition-opacity">
+                                                        {bed.vitals.pulse && (
+                                                            <div className="flex items-center gap-0.5 text-[7px] font-bold text-rose-600">
+                                                                <Heart className="h-1.5 w-1.5 fill-rose-500" /> {bed.vitals.pulse}
+                                                            </div>
+                                                        )}
+                                                        {bed.vitals.spo2 && (
+                                                            <div className={`flex items-center gap-0.5 text-[7px] font-bold ${bed.vitals.spo2 < 94 ? 'text-orange-500' : 'text-indigo-600'}`}>
+                                                                <Droplets className="h-1.5 w-1.5" /> {bed.vitals.spo2}%
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {bed.status === 'occupied' && !transferMode && (
+                                                    <div className="absolute inset-x-0 bottom-1 flex justify-center gap-2 opacity-40">
+                                                        <div className="h-0.5 w-4 bg-indigo-200 rounded-full" />
+                                                        <div className="h-0.5 w-4 bg-indigo-200 rounded-full" />
+                                                    </div>
+                                                )}
+
                                                 {bed.status === 'occupied' && !transferMode && (
                                                     <div className="absolute inset-0 bg-indigo-600/90 rounded-2xl flex items-center justify-center opacity-0 group-hover/bed:opacity-100 transition-opacity p-2 text-center pointer-events-none group">
                                                         <div className="flex flex-col gap-1 pointer-events-auto">
+                                                            <Link
+                                                                href={`/hms/patients/${bed.patientId}`}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="text-[9px] font-black text-white leading-tight uppercase bg-indigo-500 hover:bg-indigo-400 p-1 px-2 rounded-md transition-colors block"
+                                                            >
+                                                                View History
+                                                            </Link>
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); startTransfer(bed); }}
                                                                 className="text-[9px] font-black text-white leading-tight uppercase bg-white/20 hover:bg-white/40 p-1 px-2 rounded-md transition-colors"

@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
+import { AccountingService } from "@/lib/services/accounting";
 
 export async function upsertPurchaseInvoice(data: any) {
     try {
@@ -14,7 +15,7 @@ export async function upsertPurchaseInvoice(data: any) {
 
         if (!tenantId || !companyId) throw new Error("Missing tenant or company ID");
 
-        return await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             const invoiceData = {
                 tenant_id: tenantId,
                 company_id: companyId,
@@ -26,7 +27,7 @@ export async function upsertPurchaseInvoice(data: any) {
                 total_amount: data.totalAmount,
                 subtotal: data.subtotal,
                 tax_total: data.taxTotal,
-                status: data.status || "draft",
+                status: (data.status || "posted") as any, // Default to posted for auto-journaling
                 metadata: data.metadata || {},
                 attachments: data.attachments || {},
             };
@@ -82,9 +83,22 @@ export async function upsertPurchaseInvoice(data: any) {
                 });
             }
 
-            revalidatePath("/hms/accounting/bills");
-            return { success: true, data: invoice };
+            return invoice;
         });
+
+        if (result && result.id) {
+            // FIRE AND FORGET ACCOUNTING POST (Or await if preferred)
+            // Thisbooks: Dr Purchase Expense, Dr Input Tax, Cr Accounts Payable
+            const accResult = await AccountingService.postPurchaseInvoice(result.id, session.user.id);
+            if (!accResult.success) {
+                console.error("Accounting Post Failed (Manual Bill):", accResult.error);
+                // We return success of the bill even if posting fails, but we could return the warning
+                return { success: true, data: result, warning: `Bill saved but Accounting failed: ${accResult.error}` };
+            }
+        }
+
+        revalidatePath("/hms/accounting/bills");
+        return { success: true, data: result };
     } catch (error: any) {
         console.error("Purchase Invoice Error:", error);
         return { success: false, error: error.message };

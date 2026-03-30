@@ -170,30 +170,150 @@ export async function uploadAndAttachLabReport(formData: FormData) {
     }
 }
 
-export async function deleteLabReport(orderId: string) {
+export async function getPendingLabOrders() {
     const session = await auth()
-    if (!session?.user?.id) {
-        return { success: false, message: "Unauthorized" }
-    }
+    if (!session?.user?.companyId) return { success: false, error: "Unauthorized" }
 
     try {
-        await prisma.hms_lab_order.update({
+        const orders = await prisma.hms_lab_order.findMany({
+            where: {
+                company_id: session.user.companyId,
+                status: { in: ['requested', 'collected', 'in_progress'] }
+            },
+            include: {
+                hms_patient: {
+                    select: { first_name: true, last_name: true, patient_number: true }
+                },
+                hms_appointment: {
+                    include: {
+                        hms_clinician: {
+                            select: { first_name: true, last_name: true }
+                        }
+                    }
+                },
+                hms_lab_order_lines: {
+                    include: {
+                        hms_lab_test: true,
+                        hms_lab_result: true
+                    }
+                }
+            },
+            orderBy: { created_at: 'desc' }
+        })
+
+        return { success: true, data: orders }
+    } catch (err: any) {
+        return { success: false, error: err.message }
+    }
+}
+
+export async function getLabOrderForReporting(orderId: string) {
+    const session = await auth()
+    if (!session?.user?.companyId) return { success: false, error: "Unauthorized" }
+
+    try {
+        const order = await prisma.hms_lab_order.findUnique({
             where: { id: orderId },
-            data: {
-                report_url: null,
-                status: 'in_progress'
+            include: {
+                hms_patient: true,
+                hms_appointment: {
+                    include: {
+                        hms_clinician: true
+                    }
+                },
+                hms_lab_order_lines: {
+                    include: {
+                        hms_lab_test: true,
+                        hms_lab_result: true
+                    }
+                }
             }
         })
 
-        await prisma.hms_lab_order_line.updateMany({
-            where: { order_id: orderId },
-            data: { status: 'processing' }
+        return { success: true, data: order }
+    } catch (err: any) {
+        return { success: false, error: err.message }
+    }
+}
+
+export async function saveLabResults(data: {
+    orderId: string,
+    results: Array<{
+        orderLineId: string,
+        testId: string,
+        value: string,
+        remarks?: string,
+        isVerified?: boolean
+    }>
+}) {
+    const session = await auth()
+    if (!session?.user?.id) return { success: false, error: "Unauthorized" }
+
+    try {
+        const userId = session.user.id
+        const tenantId = session.user.tenantId!
+        const companyId = session.user.companyId!
+
+        await prisma.$transaction(async (tx) => {
+            for (const res of data.results) {
+                // Check if result already exists
+                const existing = await tx.hms_lab_result.findFirst({
+                    where: { order_line_id: res.orderLineId }
+                })
+
+                if (existing) {
+                    await tx.hms_lab_result.update({
+                        where: { id: existing.id },
+                        data: {
+                            result_value: res.value,
+                            interpreted_value: res.remarks,
+                            verified_by: res.isVerified ? userId : null,
+                            verified_at: res.isVerified ? new Date() : null,
+                            reported_by: userId,
+                            reported_at: new Date()
+                        }
+                    })
+                } else {
+                    await tx.hms_lab_result.create({
+                        data: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            order_line_id: res.orderLineId,
+                            test_id: res.testId,
+                            result_value: res.value,
+                            interpreted_value: res.remarks,
+                            reported_by: userId,
+                            reported_at: new Date(),
+                            verified_by: res.isVerified ? userId : null,
+                            verified_at: res.isVerified ? new Date() : null
+                        }
+                    })
+                }
+
+                // Update line status
+                await tx.hms_lab_order_lines.update({
+                    where: { id: res.orderLineId },
+                    data: { status: 'completed' }
+                })
+            }
+
+            // check if all lines are completed
+            const allLines = await tx.hms_lab_order_lines.findMany({
+                where: { order_id: data.orderId }
+            })
+            const allDone = allLines.every(l => l.status === 'completed')
+
+            if (allDone) {
+                await tx.hms_lab_order.update({
+                    where: { id: data.orderId },
+                    data: { status: 'completed' }
+                })
+            }
         })
 
         revalidatePath('/hms/lab/dashboard')
-        revalidatePath('/hms/doctor/dashboard')
-        return { success: true, message: "Report removed" }
-    } catch (error: any) {
-        return { success: false, message: error.message }
+        return { success: true }
+    } catch (err: any) {
+        return { success: false, error: err.message }
     }
 }

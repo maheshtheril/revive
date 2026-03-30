@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { updateUserStatus, deleteUser, deleteUserPermanently, resendInvitation } from '@/app/actions/users'
 import { useToast } from '@/components/ui/use-toast'
-import { cn } from '@/lib/utils'
+import { cn, copyToClipboard } from '@/lib/utils'
 import Link from 'next/link'
 
 interface User {
@@ -77,8 +77,8 @@ export function UserTable({ users, total, pages, currentPage }: UserTableProps) 
                                 <p className="text-[9px] font-black uppercase tracking-widest text-indigo-300">Manual Activation Link</p>
                                 <button
                                     onClick={() => {
-                                        navigator.clipboard.writeText(result.inviteLink!)
-                                        toast({ title: "Copied!", variant: "default", className: "bg-emerald-600 text-white" })
+                                        const success = copyToClipboard(result.inviteLink!)
+                                        if (success) toast({ title: "Copied!", variant: "default", className: "bg-emerald-600 text-white" })
                                     }}
                                     className="w-full bg-white/20 hover:bg-white hover:text-indigo-600 p-2 rounded-lg text-white text-left font-bold text-[10px] flex items-center justify-between transition-all group"
                                 >

@@ -6,163 +6,107 @@ export async function ensureAccountingMenu() {
         // --- ADMIN CONFIG NOW HANDLED IN ensureAdminMenus ---
 
         // 2.5 Ensure 'Dashboard' exists in Accounting Module
-        const dashKey = 'acc-dashboard';
-        const existingDash = await prisma.menu_items.findFirst({ where: { key: dashKey } });
-        if (!existingDash) {
-            await prisma.menu_items.create({
-                data: {
-                    label: 'Gateway of Tally',
-                    url: '/hms/accounting',
-                    key: dashKey,
-                    module_key: 'finance',
-                    icon: 'LayoutDashboard',
-                    sort_order: 1, // First item
-                    is_global: true
-                }
-            });
-            console.log("Seeded Tally Dashboard menu item.");
-        } else if (existingDash.url !== '/hms/accounting' || existingDash.label !== 'Gateway of Tally') {
-            await prisma.menu_items.update({
-                where: { id: existingDash.id },
-                data: { url: '/hms/accounting', label: 'Gateway of Tally', module_key: 'finance' }
-            });
-        }
+        // 2. SEED REPORTS
+        await ensureLedgerReports();
+        
+        // 3. SEED TRANSACTIONS
+        await ensureTransactionMenus();
 
-        // 3. SEED JOURNALS MENU (Enterprise Feature)
-        await ensureJournalMenu();
-
-
-        // D. Ensure 'Customers' and 'Vendors' Groups exist with Receipts/Payments
-        await ensurePaymentMenus();
+        // 4. SEED MASTERS
+        await ensureAccountingMasters();
 
     } catch (e) {
         console.error("Failed to auto-seed menu:", e);
     }
 }
 
-async function ensurePaymentMenus() {
-    // Customers -> Receipts
-    let custParent = await prisma.menu_items.findFirst({ where: { key: 'acc-customers' } });
-    if (!custParent) {
-        custParent = await prisma.menu_items.create({
-            data: { label: 'Customers', url: '#', key: 'acc-customers', module_key: 'finance', icon: 'Users', sort_order: 10, is_global: true }
+async function ensureAccountingMasters() {
+    let masterParent = await prisma.menu_items.findFirst({ where: { key: 'acc-masters' } });
+    if (!masterParent) {
+        masterParent = await prisma.menu_items.create({
+            data: { label: 'MASTERS', url: '#', key: 'acc-masters', module_key: 'finance', icon: 'Settings', sort_order: 10, is_global: true, permission_code: 'billing:view' }
         });
     }
 
-    const receiptMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-receipts' } });
-    if (!receiptMenu) {
+    const coaMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-coa' } });
+    if (!coaMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Receipt Vouchers', url: '/hms/accounting/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: custParent.id, sort_order: 20, is_global: true }
+            data: { label: 'Chart of Accounts', url: '/hms/accounting/coa', key: 'acc-coa', module_key: 'finance', icon: 'ListTree', parent_id: masterParent.id, sort_order: 10, is_global: true, permission_code: 'billing:view' }
         });
-    } else if (receiptMenu.url !== '/hms/accounting/receipts') {
-        await prisma.menu_items.update({ where: { id: receiptMenu.id }, data: { url: '/hms/accounting/receipts', label: 'Receipt Vouchers' } });
     }
+}
 
-    // Vendors -> Payments
-    let vendParent = await prisma.menu_items.findFirst({ where: { key: 'acc-vendors' } });
-    if (!vendParent) {
-        vendParent = await prisma.menu_items.create({
-            data: { label: 'Vendors', url: '#', key: 'acc-vendors', module_key: 'finance', icon: 'Truck', sort_order: 20, is_global: true }
+async function ensureTransactionMenus() {
+    let transParent = await prisma.menu_items.findFirst({ where: { key: 'acc-transactions' } });
+    if (!transParent) {
+        transParent = await prisma.menu_items.create({
+            data: { label: 'TRANSACTIONS', url: '#', key: 'acc-transactions', module_key: 'finance', icon: 'ArrowRightLeft', sort_order: 20, is_global: true, permission_code: 'billing:view' }
         });
     }
 
     const paymentMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-payments' } });
     if (!paymentMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Payment Vouchers', url: '/hms/accounting/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: vendParent.id, sort_order: 20, permission_code: 'billing:view', is_global: true }
+            data: { label: 'Payment Vouchers', url: '/hms/accounting/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: transParent.id, sort_order: 10, is_global: true, permission_code: 'billing:view' }
         });
-    } else if (paymentMenu.url !== '/hms/accounting/payments') {
-        await prisma.menu_items.update({ where: { id: paymentMenu.id }, data: { url: '/hms/accounting/payments', label: 'Payment Vouchers' } });
     }
 
-    // BULK SAFETY: Lock ALL Accounting Menus if they don't have permissions
-    // This catches 'acc-vendors' (created above) and any others missed.
-    await prisma.menu_items.updateMany({
-        where: {
-            module_key: 'finance',
-            permission_code: null
-        },
-        data: { permission_code: 'billing:view' }
-    });
-}
-
-
-async function ensureJournalMenu() {
-    try {
-        // A. Ensure 'General Ledger' Parent Exists
-        let ledgerParent = await prisma.menu_items.findFirst({
-            where: { key: 'acc-ledger' }
+    const receiptMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-receipts' } });
+    if (!receiptMenu) {
+        await prisma.menu_items.create({
+            data: { label: 'Receipt Vouchers', url: '/hms/accounting/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: transParent.id, sort_order: 20, is_global: true, permission_code: 'billing:view' }
         });
+    }
 
-        if (!ledgerParent) {
-            console.log("Creating General Ledger parent menu...");
-            ledgerParent = await prisma.menu_items.create({
-                data: {
-                    label: 'General Ledger',
-                    url: '#',
-                    key: 'acc-ledger',
-                    module_key: 'finance',
-                    icon: 'Book',
-                    sort_order: 30, // Positioned after Sales/Purchases
-                    permission_code: 'billing:view',
-                    is_global: true
-                }
-            });
-        } else if (!ledgerParent.permission_code) {
-            await prisma.menu_items.update({ where: { id: ledgerParent.id }, data: { permission_code: 'billing:view' } });
-        }
-
-        // B. Ensure 'Journal Entries' Child Exists
-        const journalsMenu = await prisma.menu_items.findFirst({
-            where: { key: 'acc-journals' }
+    const journalMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-journals' } });
+    if (!journalMenu) {
+        await prisma.menu_items.create({
+            data: { label: 'Journal Register', url: '/hms/accounting/journals', key: 'acc-journals', module_key: 'finance', icon: 'BookOpen', parent_id: transParent.id, sort_order: 30, is_global: true, permission_code: 'billing:view' }
         });
+    }
 
-        if (!journalsMenu) {
-            console.log("Creating Journal Entries menu...");
-            await prisma.menu_items.create({
-                data: {
-                    label: 'Journal Register',
-                    url: '/hms/accounting/journals',
-                    key: 'acc-journals',
-                    module_key: 'finance',
-                    icon: 'BookOpen',
-                    parent_id: ledgerParent.id,
-                    sort_order: 10,
-                    permission_code: 'billing:view',
-                    is_global: true
-                }
-            });
-        } else if (journalsMenu.url !== '/hms/accounting/journals') {
-            await prisma.menu_items.update({ where: { id: journalsMenu.id }, data: { url: '/hms/accounting/journals', label: 'Journal Register', permission_code: 'billing:view' } });
-        }
-
-        // C. Ensure 'Chart of Accounts' Child Exists
-        const coaMenu = await prisma.menu_items.findFirst({
-            where: { key: 'acc-coa' }
+    const creditNoteMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-credit-note' } });
+    if (!creditNoteMenu) {
+        await prisma.menu_items.create({
+            data: { label: 'Credit Note', url: '/hms/accounting/credit-notes', key: 'acc-credit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 40, is_global: true, permission_code: 'billing:view' }
         });
+    }
 
-        if (!coaMenu) {
-            console.log("Creating Chart of Accounts menu...");
-            await prisma.menu_items.create({
-                data: {
-                    label: 'Chart of Accounts',
-                    url: '/hms/accounting/coa',
-                    key: 'acc-coa',
-                    module_key: 'finance',
-                    icon: 'ListTree',
-                    parent_id: ledgerParent.id,
-                    sort_order: 5, // Before Journals
-                    permission_code: 'billing:view',
-                    is_global: true
-                }
-            });
-        } else if (coaMenu.url !== '/hms/accounting/coa') {
-            await prisma.menu_items.update({ where: { id: coaMenu.id }, data: { url: '/hms/accounting/coa', permission_code: 'billing:view' } });
-        }
-    } catch (error) {
-        console.error("Failed to seed journal menus:", error);
+    const debitNoteMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-debit-note' } });
+    if (!debitNoteMenu) {
+        await prisma.menu_items.create({
+            data: { label: 'Debit Note', url: '/hms/accounting/debit-notes', key: 'acc-debit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 50, is_global: true, permission_code: 'billing:view' }
+        });
     }
 }
+
+async function ensureLedgerReports() {
+    let reportParent = await prisma.menu_items.findFirst({ where: { key: 'acc-reports' } });
+    if (!reportParent) {
+        reportParent = await prisma.menu_items.create({
+            data: { label: 'REPORTS', url: '#', key: 'acc-reports', module_key: 'finance', icon: 'BarChart3', sort_order: 30, is_global: true, permission_code: 'billing:view' }
+        });
+    }
+
+    const reports = [
+        { key: 'acc-bs', label: 'Balance Sheet', url: '/hms/accounting/page?view=classic&tab=bs', icon: 'Scale', sort: 10 },
+        { key: 'acc-pl', label: 'Profit & Loss A/c', url: '/hms/accounting/page?view=classic&tab=pl', icon: 'TrendingUp', sort: 20 },
+        { key: 'acc-tb', label: 'Trial Balance', url: '/hms/accounting/trial-balance', icon: 'Activity', sort: 30 },
+        { key: 'acc-db', label: 'Day Book', url: '/hms/accounting/daybook', icon: 'BookOpen', sort: 40 },
+        { key: 'acc-cb', label: 'Cash / Bank Book', url: '/hms/accounting/cashbook', icon: 'Banknote', sort: 50 },
+        { key: 'acc-ageing', label: 'Bill-wise Ageing Analysis', url: '/hms/accounting/ageing', icon: 'History', sort: 60 },
+    ];
+
+    for (const r of reports) {
+        const existing = await prisma.menu_items.findFirst({ where: { key: r.key } });
+        if (!existing) {
+            await prisma.menu_items.create({
+                data: { label: r.label, url: r.url, key: r.key, module_key: 'finance', icon: r.icon, parent_id: reportParent.id, sort_order: r.sort, is_global: true, permission_code: 'billing:view' }
+            });
+        }
+    }
+}
+
 
 export async function ensureAdminMenus() {
     try {

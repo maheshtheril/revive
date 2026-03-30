@@ -19,7 +19,7 @@ export async function getWards(branchId?: string) {
         orderBy: { name: 'asc' }
     })
 
-    // Fetch active admissions to show occupancy
+    // 2. Fetch active admissions
     const activeAdmissions = await prisma.hms_admission.findMany({
         where: {
             tenant_id: session.user.tenantId,
@@ -27,24 +27,35 @@ export async function getWards(branchId?: string) {
         },
         include: {
             hms_patient: {
-                select: {
-                    id: true,
-                    first_name: true,
-                    last_name: true
+                include: {
+                    hms_vitals: {
+                        orderBy: { recorded_at: 'desc' },
+                        take: 1
+                    }
                 }
             }
         }
     })
 
-    // Enrich beds with patient info
+    // Enrich beds with patient info and vitals
     const enrichedWards = wards.map(ward => ({
         ...ward,
         hms_bed: ward.hms_bed.map(bed => {
             const admission = activeAdmissions.find(a => (a.metadata as any)?.bed_id === bed.id)
+            const patientVitals = admission?.hms_patient?.hms_vitals?.[0]
+            
             return {
                 ...bed,
                 admissionId: admission?.id || null,
-                patient: admission?.hms_patient ? `${admission.hms_patient.first_name} ${admission.hms_patient.last_name}` : null
+                patientId: admission?.patient_id || null,
+                patient: admission?.hms_patient ? `${admission.hms_patient.first_name} ${admission.hms_patient.last_name}` : null,
+                vitals: patientVitals ? {
+                    temp: patientVitals.temperature,
+                    pulse: patientVitals.pulse,
+                    bp: `${patientVitals.systolic}/${patientVitals.diastolic}`,
+                    spo2: patientVitals.spo2,
+                    recordedAt: patientVitals.recorded_at
+                } : null
             }
         })
     }))

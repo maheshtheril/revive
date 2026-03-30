@@ -495,7 +495,7 @@ export function DetailedLedgerReport({
                 {/* Right Side Options Bar */}
                 <div className="w-48 bg-[#003333] border border-[#006666] flex flex-col p-1 gap-1 no-print">
                     <div className="bg-[#004d4d] flex flex-col items-center py-2 border border-[#006666] mb-1">
-                        <span className="text-[10px] font-black text-[#ffffcc]">OPTIONS</span>
+                        <span className="text-[10px] font-black text-[#ffffcc]">CLASSIC GATEWAY</span>
                     </div>
 
                     <div className="flex-1 space-y-1">

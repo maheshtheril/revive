@@ -8,6 +8,8 @@ import { PatientConsumptionDialog } from "@/components/hms/billing/patient-consu
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { InvoicePreviewDialog } from "@/components/hms/billing/invoice-preview-dialog"
 import { AppointmentManageDialog } from "@/components/hms/appointments/appointment-manage-dialog"
+import { ClinicalTimeline } from "@/components/patients/clinical-timeline"
+import { PatientHistoryLog } from "@/components/patients/patient-history-log"
 
 import { AdmissionDialog } from "@/components/hms/patients/admission-dialog"
 
@@ -261,182 +263,8 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                     <div className="flex-1 overflow-y-auto bg-slate-50/30 p-6 md:p-8 scroll-smooth">
 
                         {/* TAB: OVERVIEW (Timeline) */}
-                        <TabsContent value="overview" className="m-0 space-y-8 max-w-7xl mx-auto selection:bg-indigo-100">
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                                {/* Left: Timeline */}
-                                <div className="lg:col-span-8 space-y-6">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                            <Clock className="h-5 w-5 text-indigo-500" />
-                                            Recent Timeline
-                                        </h3>
-                                        <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{timelineEvents.length} Activities</span>
-                                    </div>
-
-                                    {Object.keys(groupedTimeline).length === 0 ? (
-                                        <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200">
-                                            <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                                                <Clock className="h-8 w-8 text-slate-300" />
-                                            </div>
-                                            <p className="text-slate-500 font-medium">No clinical history recorded.</p>
-                                        </div>
-                                    ) : (
-                                        <div className="relative pl-8 border-l-2 border-slate-200 space-y-10 ml-3">
-                                            {Object.entries(groupedTimeline).map(([dateString, events]) => (
-                                                <div key={dateString} className="relative">
-                                                    <div className="absolute -left-[43px] top-0 h-5 w-5 rounded-full border-4 border-white bg-slate-300 ring-4 ring-slate-50" />
-                                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6 pl-2">{dateString}</h4>
-
-                                                    <div className="space-y-4">
-                                                        {events.map((event: any, i: number) => {
-                                                            let LinkComponent: any = 'div';
-                                                            let linkProps: any = {};
-                                                            let iconColor = 'bg-slate-100 text-slate-500';
-                                                            let Icon = Clock;
-                                                            let title = '';
-
-                                                            if (event.type === 'vital') {
-                                                                iconColor = 'bg-cyan-100 text-cyan-600';
-                                                                Icon = Activity;
-                                                                title = 'Vitals Recorded';
-                                                            } else if (event.type === 'consumption_group') {
-                                                                iconColor = 'bg-orange-100 text-orange-600';
-                                                                Icon = Package;
-                                                                title = 'Medication/Consumables';
-                                                            } else if (event.type === 'appointment') {
-                                                                LinkComponent = Link;
-                                                                linkProps = { href: `/hms/appointments/${event.data.id}` };
-                                                                iconColor = 'bg-indigo-100 text-indigo-600';
-                                                                Icon = Calendar;
-                                                                title = 'Consultation Visit';
-                                                            } else if (event.type === 'invoice') {
-                                                                LinkComponent = Link;
-                                                                linkProps = { href: `/hms/billing/${event.data.id}` };
-                                                                iconColor = 'bg-emerald-100 text-emerald-600';
-                                                                Icon = Receipt;
-                                                                title = `Invoice Generated`;
-                                                            } else if (event.type === 'prescription') {
-                                                                LinkComponent = Link;
-                                                                linkProps = { href: `/hms/prescriptions/new?patientId=${patient.id}&appointmentId=${event.data.appointment_id || ''}` };
-                                                                iconColor = 'bg-blue-100 text-blue-600';
-                                                                Icon = FileText;
-                                                                title = 'Prescription (Rx)';
-                                                            }
-
-                                                            const CardContentFallback = (
-                                                                <div className={`block bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-200 transition-all duration-200 group relative cursor-pointer`}>
-                                                                    <div className="absolute top-1/2 -left-8 w-6 h-[2px] bg-slate-200 group-hover:bg-indigo-200 transition-colors" />
-                                                                    <div className="flex gap-4">
-                                                                        <div className={`h-12 w-12 rounded-2xl flex items-center justify-center shrink-0 ${iconColor}`}>
-                                                                            <Icon className="h-6 w-6" />
-                                                                        </div>
-                                                                        <div className="flex-1">
-                                                                            <div className="flex justify-between items-start">
-                                                                                <div>
-                                                                                    <h5 className="font-bold text-slate-900">{title}</h5>
-                                                                                    {event.type === 'invoice' && (
-                                                                                        <p className="text-sm font-mono text-slate-600 font-medium text-orange-600">
-                                                                                            {event.data.invoice_no || event.data.invoice_number ? `#${event.data.invoice_no || event.data.invoice_number}` : 'DRAFT'}
-                                                                                        </p>
-                                                                                    )}
-                                                                                    {event.type === 'appointment' && <p className="text-sm text-slate-600 capitalize">{event.data.type || 'General'}</p>}
-                                                                                </div>
-                                                                                <span className="text-xs font-mono font-medium text-slate-400">{event.date ? new Date(event.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
-                                                                            </div>
-
-                                                                            {/* Inline Details for Overview */}
-                                                                            {event.type === 'vital' && (
-                                                                                <div className="mt-3 flex gap-3 text-xs font-mono font-medium text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 w-fit">
-                                                                                    <span>BP: {event.data.systolic}/{event.data.diastolic}</span>
-                                                                                    <span className="w-px bg-slate-200 h-4" />
-                                                                                    <span>HR: {event.data.pulse}</span>
-                                                                                    <span className="w-px bg-slate-200 h-4" />
-                                                                                    <span>Temp: {event.data.temperature}°</span>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            )
-
-                                                            if (event.type === 'appointment') {
-                                                                return (
-                                                                    <AppointmentManageDialog
-                                                                        key={i}
-                                                                        patient={patientAny}
-                                                                        doctors={doctors}
-                                                                        existingAppointment={event.data}
-                                                                        trigger={CardContentFallback}
-                                                                    />
-                                                                )
-                                                            }
-
-                                                            if (event.type === 'invoice') {
-                                                                return (
-                                                                    <InvoicePreviewDialog
-                                                                        key={i}
-                                                                        invoice={event.data}
-                                                                        trigger={CardContentFallback}
-                                                                    />
-                                                                )
-                                                            }
-
-                                                            return <div key={i}>{CardContentFallback}</div>
-
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Right: Fast Facts Card */}
-                                <div className="lg:col-span-4 space-y-6">
-                                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col gap-6">
-                                        <div>
-                                            <h3 className="font-bold text-slate-900 mb-2 flex items-center gap-2">
-                                                <MapPin className="h-4 w-4 text-slate-400" /> Emergency
-                                            </h3>
-                                            {(patientAny.contact as any)?.emergency_contact?.name ? (
-                                                <div className="bg-red-50 p-4 rounded-2xl border border-red-100 text-center">
-                                                    <p className="font-black text-red-900 text-lg mb-1">{(patientAny.contact as any).emergency_contact.name}</p>
-                                                    <p className="text-red-600 text-xs font-bold uppercase tracking-wider mb-3">{(patientAny.contact as any).emergency_contact.relation}</p>
-                                                    <a href={`tel:${(patientAny.contact as any).emergency_contact.phone}`} className="inline-flex items-center gap-2 bg-white text-red-600 px-4 py-2 rounded-xl font-mono font-bold text-sm shadow-sm hover:bg-red-50 transition-colors">
-                                                        <Phone className="h-3 w-3" /> {(patientAny.contact as any).emergency_contact.phone}
-                                                    </a>
-                                                </div>
-                                            ) : <span className="text-slate-400 text-sm">Not set</span>}
-                                        </div>
-
-                                        <div className="h-px bg-slate-100" />
-
-                                        <div>
-                                            <h3 className="font-bold text-slate-900 mb-2">Address</h3>
-                                            <p className="text-sm text-slate-500 leading-relaxed">
-                                                {[(patientAny.contact as any)?.address?.street, (patientAny.contact as any)?.address?.city, (patientAny.contact as any)?.address?.state, (patientAny.contact as any)?.address?.zip].filter(Boolean).join(', ')}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {/* Quick Financial Summary */}
-                                    {totalOutstanding > 0 && (
-                                        <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-3xl shadow-lg shadow-orange-200 text-white">
-                                            <p className="font-medium opacity-90 text-sm mb-1">Outstanding Balance</p>
-                                            <p className="text-3xl font-black mb-4">₹{totalOutstanding.toLocaleString()}</p>
-                                            <PatientPaymentDialog
-                                                patientId={patientAny.id}
-                                                patientName={`${patientAny.first_name} ${patientAny.last_name}`}
-                                                trigger={
-                                                    <button className="w-full bg-white text-orange-600 font-bold py-3 rounded-xl hover:bg-orange-50 transition-colors text-sm">
-                                                        Pay Now
-                                                    </button>
-                                                }
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                        <TabsContent value="overview" className="m-0 h-full overflow-y-auto no-scrollbar selection:bg-indigo-100">
+                            <ClinicalTimeline patientId={id} />
                         </TabsContent>
 
                         {/* TAB: CLINICAL */}
@@ -557,12 +385,9 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                             </div>
                         </TabsContent>
 
-                        {/* TAB: HISTORY (Placeholder for future audit logs) */}
-                        <TabsContent value="history" className="m-0 max-w-7xl mx-auto animate-in fade-in-50 duration-500">
-                            <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
-                                <History className="h-10 w-10 text-slate-300 mx-auto mb-4" />
-                                <p className="text-slate-500 font-medium">Audit logs coming soon</p>
-                            </div>
+                        {/* TAB: HISTORY (Administrative audit logs) */}
+                        <TabsContent value="history" className="m-0 max-w-7xl mx-auto animate-in fade-in-50 duration-500 overflow-y-auto no-scrollbar">
+                            <PatientHistoryLog patientId={id} />
                         </TabsContent>
 
                     </div>

@@ -734,8 +734,8 @@ export async function getUserPermissions(userId: string): Promise<string[]> {
         });
         userPermissions.forEach(up => permissionSet.add(up.permission_code));
 
-        // 5. Implicitly Grant Super Admin (Wildcard) if session says isAdmin
-        if (session?.user?.isAdmin) {
+        // 5. Implicitly Grant Super Admin (Wildcard) if session says isAdmin or isTenantAdmin
+        if (session?.user?.isAdmin || session?.user?.isTenantAdmin) {
             permissionSet.add('*');
         }
 
@@ -754,8 +754,8 @@ export async function checkPermission(permissionCode: string): Promise<boolean> 
     const session = await auth();
     if (!session?.user?.id) return false;
 
-    // Super Admin Bypass (optional)
-    // if (session.user.isAdmin) return true; 
+    // Administrator Bypass
+    if (session?.user?.isAdmin || session?.user?.isTenantAdmin) return true;
 
     const perms = await getUserPermissions(session.user.id);
 

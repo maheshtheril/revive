@@ -4,7 +4,14 @@ import { PrismaClient } from "@prisma/client";
 async function runDiagnosis() {
     const prisma = new PrismaClient();
     try {
-        const config = await prisma.hms_settings.findFirst({ where: { key: 'ai_config' } });
+        const config = await prisma.hms_settings.findFirst({ 
+            where: { 
+                OR: [
+                    { key: 'AI_CONFIG' },
+                    { key: 'ai_config' }
+                ]
+            } 
+        });
         const val = (config?.value as any) || {};
         const key = val.apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
         

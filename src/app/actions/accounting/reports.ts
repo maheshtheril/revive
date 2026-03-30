@@ -58,3 +58,17 @@ export async function getCategoryAccounts(type: 'cash' | 'bank') {
 
     return await AccountingService.getCategoryAccounts(session.user.companyId, type)
 }
+
+export async function getTrialBalance(date?: Date) {
+    const session = await auth()
+    if (!session?.user?.companyId) return { success: false, error: "Unauthorized" }
+
+    return await AccountingService.getTrialBalance(session.user.companyId, date)
+}
+
+export async function getAgeingReport(type: 'receivables' | 'payables') {
+    const session = await auth()
+    if (!session?.user?.companyId) return { success: false, error: "Unauthorized" }
+
+    return await AccountingService.getAgeingReport(session.user.companyId, type)
+}

@@ -170,7 +170,7 @@ export function ClassicBalanceSheet({
                 {/* Right Side Shortcuts (Tally Sidebar) */}
                 <div className="w-56 bg-[#003333] border border-[#006666] flex flex-col p-1 gap-1 no-print">
                     <div className="bg-[#004d4d] flex flex-col items-center py-4 border border-[#006666] mb-2">
-                        <span className="text-[12px] font-black text-[#ffffcc]">GATEWAY of TALLY</span>
+                        <span className="text-[12px] font-black text-[#ffffcc]">CLASSIC ERP GATEWAY</span>
                     </div>
 
                     <div className="flex-1 space-y-1">
