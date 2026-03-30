@@ -1,11 +1,15 @@
 import { ReactNode } from "react";
 import { PrintControls } from "@/components/billing/print-controls";
 
-interface PremiumPrintWrapperProps {
+export interface PremiumPrintWrapperProps {
     children: ReactNode;
+    printMode?: 'standard' | 'letterhead';
+    headerHeight?: string | number;
 }
 
-export function PremiumPrintWrapper({ children }: PremiumPrintWrapperProps) {
+export function PremiumPrintWrapper({ children, printMode = 'standard', headerHeight = '4.5' }: PremiumPrintWrapperProps) {
+    const isLetterhead = printMode === 'letterhead';
+    
     return (
         <div className="min-h-screen bg-white font-sans text-slate-900 overflow-visible">
             {/* Print Styles */}
@@ -14,7 +18,7 @@ export function PremiumPrintWrapper({ children }: PremiumPrintWrapperProps) {
                 @media print {
                     @page {
                         size: A4;
-                        margin: 15mm;
+                        margin: 0;
                     }
                     body {
                         background-color: white !important;
@@ -27,21 +31,28 @@ export function PremiumPrintWrapper({ children }: PremiumPrintWrapperProps) {
                     #print-area {
                         margin: 0 !important;
                         border: none !important;
-                        padding: 0 !important;
+                        padding-top: ${isLetterhead ? `${headerHeight}cm` : '15mm'} !important;
+                        padding-left: 15mm !important;
+                        padding-right: 15mm !important;
+                        padding-bottom: 15mm !important;
                         width: 100% !important;
                         max-width: none !important;
                         box-shadow: none !important;
+                        height: 297mm;
                     }
                 }
                 
                 #print-area {
                     max-width: 890px;
                     margin: 20px auto;
-                    padding: 40px;
+                    padding-top: ${isLetterhead ? `${headerHeight}cm` : '40px'};
+                    padding-left: 40px;
+                    padding-right: 40px;
+                    padding-bottom: 40px;
                     background: white;
                     min-height: 1000px;
                     display: flex;
-                    flex-col: column;
+                    flex-direction: column;
                 }
 
                 /* Modern Typography for Prints */
@@ -59,9 +70,6 @@ export function PremiumPrintWrapper({ children }: PremiumPrintWrapperProps) {
             <div id="print-area" className="hms-print-container border border-slate-200 flex flex-col">
                 {children}
             </div>
-
-            {/* Auto-print disabled to allow payment interaction first */}
-            {/* <script dangerouslySetInnerHTML={{ __html: `setTimeout(() => { if(!window.location.search.includes('no-auto')) window.print() }, 1500)` }} /> */}
         </div>
     );
 }

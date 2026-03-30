@@ -8,9 +8,10 @@ import { getConsumptionHistory } from "@/app/actions/nursing-history"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { format } from "date-fns"
 import { getProductsPremium } from "@/app/actions/inventory"
-import { Loader2, Check, ChevronsUpDown, PackageMinus, Plus, Trash2, ShoppingCart, Info, ScanLine, X } from "lucide-react"
+import { Loader2, Check, ChevronsUpDown, PackageMinus, Plus, Trash2, ShoppingCart, Info, ScanLine, X, Banknote } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { SearchableSelect, Option } from "@/components/ui/searchable-select"
 import {
     Command,
     CommandEmpty,
@@ -43,6 +44,7 @@ type CartItem = ConsumptionItem & {
     productName: string
     uom: string
     stock: number
+    price: number
     id: string // Temporary ID for UI handling
 }
 
@@ -51,10 +53,6 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
     const { toast } = useToast()
     const [isSubmitting, setIsSubmitting] = useState(false)
 
-    // Search & Add State
-    const [open, setOpen] = useState(false)
-    const [products, setProducts] = useState<any[]>([])
-    const [loadingProducts, setLoadingProducts] = useState(false)
 
     // Cart State
     const [cart, setCart] = useState<CartItem[]>([])
@@ -69,7 +67,6 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
 
     useEffect(() => {
         loadHistory()
-        loadProducts()
     }, [])
 
     async function loadHistory() {
@@ -81,18 +78,6 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
         setLoadingHistory(false)
     }
 
-    async function loadProducts(query: string = '') {
-        setLoadingProducts(true)
-        const res = await getProductsPremium(query, 1);
-        if (res.success && res.data) {
-            setProducts(res.data)
-        }
-        setLoadingProducts(false)
-    }
-
-    const handleSearch = (query: string) => {
-        loadProducts(query)
-    }
 
     const addItem = () => {
         if (!selectedProduct) return;
@@ -112,6 +97,7 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
             quantity: Number(quantity),
             uom: selectedProduct.uom,
             stock: selectedProduct.totalStock,
+            price: Number(selectedProduct.price || 0),
             notes: notes
         }
 
@@ -121,7 +107,6 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
         setSelectedProduct(null)
         setQuantity(1)
         setNotes("")
-        setOpen(false) // Close dropdown if open
         toast({
             description: "Item added to list",
         })
@@ -211,9 +196,14 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
                             <div className="flex-1 min-w-0">
                                 <div className="flex justify-between items-start">
                                     <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate pr-2">{item.productName}</h4>
-                                    <span className="font-mono text-xs font-bold bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-slate-600 dark:text-slate-300">
-                                        {item.quantity} {item.uom}
-                                    </span>
+                                    <div className="flex flex-col items-end">
+                                        <span className="font-mono text-xs font-bold bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-slate-600 dark:text-slate-300">
+                                            {item.quantity} {item.uom}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 mt-1">
+                                            Rate: ₹{item.price.toFixed(2)}
+                                        </span>
+                                    </div>
                                 </div>
                                 {item.notes && (
                                     <p className="text-xs text-slate-500 mt-1 italic">"{item.notes}"</p>
@@ -270,9 +260,14 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
                                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
                                         {item.productName}
                                     </span>
-                                    <span className="text-xs font-bold bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-600">
-                                        {item.quantity} {item.uom}
-                                    </span>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span className="text-xs font-bold bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-600">
+                                            {item.quantity} {item.uom}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-slate-400">
+                                            Rate: ₹{Number(item.price || 0).toFixed(2)}
+                                        </span>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -315,57 +310,30 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
                     <div className="grid grid-cols-12 gap-3 mb-4 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
                         <div className="col-span-12 md:col-span-6 space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase">Select Consumable</Label>
-                            <Popover open={open} onOpenChange={setOpen}>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant="outline"
-                                        role="combobox"
-                                        aria-expanded={open}
-                                        className="w-full justify-between bg-white dark:bg-slate-800"
-                                    >
-                                        {selectedProduct ? (
-                                            <span className="truncate font-medium">{selectedProduct.name}</span>
-                                        ) : (
-                                            <span className="text-slate-400">Search sku, name...</span>
-                                        )}
-                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[300px] p-0" align="start">
-                                    <Command shouldFilter={false}>
-                                        <CommandInput
-                                            placeholder="Search inventory..."
-                                            onValueChange={handleSearch}
-                                        />
-                                        <CommandList>
-                                            <CommandEmpty>No product found.</CommandEmpty>
-                                            <CommandGroup>
-                                                {products.map((product) => (
-                                                    <CommandItem
-                                                        key={product.id}
-                                                        value={product.name}
-                                                        onSelect={() => {
-                                                            setSelectedProduct(product)
-                                                            setOpen(false)
-                                                        }}
-                                                    >
-                                                        <Check
-                                                            className={cn(
-                                                                "mr-2 h-4 w-4",
-                                                                selectedProduct?.id === product.id ? "opacity-100" : "opacity-0"
-                                                            )}
-                                                        />
-                                                        <div className="flex flex-col">
-                                                            <span className="font-medium">{product.name}</span>
-                                                            <span className="text-xs text-slate-400">Stock: {product.totalStock} {product.uom}</span>
-                                                        </div>
-                                                    </CommandItem>
-                                                ))}
-                                            </CommandGroup>
-                                        </CommandList>
-                                    </Command>
-                                </PopoverContent>
-                            </Popover>
+                            <SearchableSelect
+                                value={selectedProduct?.id}
+                                valueLabel={selectedProduct?.name}
+                                placeholder="Search items, medicines..."
+                                onSearch={async (q) => {
+                                    const res = await getProductsPremium(q, 1);
+                                    if (res.success && res.data) {
+                                        return res.data.map((p: any) => ({
+                                            id: p.id,
+                                            label: p.name,
+                                            subLabel: `Stock: ${p.totalStock} ${p.uom} | Rate: ₹${Number(p.price || 0).toFixed(2)}`,
+                                            ...p
+                                        }));
+                                    }
+                                    return [];
+                                }}
+                                onChange={(val, opt) => {
+                                    if (opt) {
+                                        setSelectedProduct(opt);
+                                    } else {
+                                        setSelectedProduct(null);
+                                    }
+                                }}
+                            />
                         </div>
 
                         <div className="col-span-6 md:col-span-3 space-y-1.5">
@@ -442,7 +410,7 @@ export function UsageForm({ patientId, encounterId, patientName, onCancel, onSuc
 
     if (isModal) {
         return (
-            <div className="h-full flex flex-col">
+            <div className="h-full flex flex-col p-6">
                 <div className="mb-6 flex items-center justify-between">
                     <div>
                         <h2 className="text-xl font-bold flex items-center gap-2">

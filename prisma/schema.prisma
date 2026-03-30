@@ -1,4 +1,3 @@
-// [CACHE-BUST] Forced schema refresh Feb 26 18:05
 generator client {
   provider = "prisma-client-js"
 }
@@ -316,7 +315,6 @@ model company {
   enabled                Boolean?                 @default(true)
   metadata               Json?                    @default("{}")
   created_at             DateTime?                @default(now()) @db.Timestamptz(6)
-  // search_tsv             Unsupported("tsvector")?
   country_id             String?                  @db.Uuid
   industry               String?
   logo_url               String?
@@ -526,19 +524,18 @@ model company_taxes {
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 model contact {
-  id         String                   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id  String?                  @db.Uuid
-  // search_tsv Unsupported("tsvector")?
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String?  @db.Uuid
   first_name String?
   last_name  String?
   email      String?
   phone      String?
   role_title String?
-  meta       Json?                    @default("{}")
-  created_at DateTime                 @default(now()) @db.Timestamptz(6)
-  updated_at DateTime                 @default(now()) @db.Timestamptz(6)
-  company_id String?                  @db.Uuid
-  owner_id   String?                  @db.Uuid
+  meta       Json?    @default("{}")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  company_id String?  @db.Uuid
+  owner_id   String?  @db.Uuid
 
   @@ignore
 }
@@ -679,9 +676,8 @@ model customer_loyalty_wallet {
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 model deals {
-  id         String                   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id  String?                  @db.Uuid
-  // search_tsv Unsupported("tsvector")?
+  id        String  @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id String? @db.Uuid
 
   @@ignore
 }
@@ -1118,8 +1114,8 @@ model hms_clinicians {
   designation                String?
   employee_id                String?              @unique
   qualification              String?
-  working_days               String[]             @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
-  document_urls              String[]             @default([])
+  working_days               Json?                @default("[\"Monday\", \"Tuesday\", \"Wednesday\", \"Thursday\", \"Friday\"]")
+  document_urls              Json?                @default("[]")
   profile_image_url          String?
   signature_url              String?
   user_id                    String?              @db.Uuid
@@ -1132,18 +1128,18 @@ model hms_clinicians {
 }
 
 model hms_credit_note {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id          String              @db.Uuid
-  company_id         String              @db.Uuid
-  invoice_id         String?             @db.Uuid
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id          String   @db.Uuid
+  company_id         String   @db.Uuid
+  invoice_id         String?  @db.Uuid
   credit_note_number String
-  issued_at          DateTime            @default(now()) @db.Timestamptz(6)
-  amount             Decimal             @db.Decimal(18, 2)
+  issued_at          DateTime @default(now()) @db.Timestamptz(6)
+  amount             Decimal  @db.Decimal(18, 2)
   reason             String?
-  line_items         Json?               @default("[]")
-  status             String?             @default("draft")
-  created_by         String?             @db.Uuid
-  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  line_items         Json?    @default("[]")
+  status             String?  @default("draft")
+  created_by         String?  @db.Uuid
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([tenant_id, company_id, credit_note_number], map: "ux_hms_credit_note_company_number")
 }
@@ -1162,10 +1158,10 @@ model hms_departments {
   created_at            DateTime?         @default(now()) @db.Timestamptz(6)
   updated_at            DateTime?         @default(now()) @db.Timestamptz(6)
   deleted_at            DateTime?         @db.Timestamptz(6)
+  crm_designations      crm_designation[]
   crm_employees         crm_employee[]
   hms_departments       hms_departments?  @relation("hms_departmentsTohms_departments", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_parent_company")
   other_hms_departments hms_departments[] @relation("hms_departmentsTohms_departments")
-  crm_designations      crm_designation[]
 
   @@unique([company_id, name], map: "hms_departments_company_id_name_unique")
   @@unique([company_id, code], map: "unique_company_code")
@@ -1907,8 +1903,8 @@ model hms_uom_category {
   created_at DateTime  @default(now()) @db.Timestamptz(6)
   hms_uom    hms_uom[]
 
-  @@index([company_id], map: "ix_hms_uom_category_company")
   @@unique([tenant_id, company_id, name], name: "ux_hms_uom_category_name")
+  @@index([company_id], map: "ix_hms_uom_category_company")
 }
 
 model hms_uom {
@@ -1926,8 +1922,8 @@ model hms_uom {
   hms_product_batch hms_product_batch[]
   hms_uom_category  hms_uom_category    @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([company_id], map: "ix_hms_uom_company")
   @@unique([tenant_id, company_id, category_id, name], name: "ux_hms_uom_name")
+  @@index([company_id], map: "ix_hms_uom_company")
 }
 
 model hms_product_image {
@@ -2798,33 +2794,32 @@ model lab_test_group {
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model lead {
-  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id          String                   @db.Uuid
-  company_id         String?                  @db.Uuid
-  owner_id           String?                  @db.Uuid
-  pipeline_id        String?                  @db.Uuid
-  stage_id           String?                  @db.Uuid
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id          String    @db.Uuid
+  company_id         String?   @db.Uuid
+  owner_id           String?   @db.Uuid
+  pipeline_id        String?   @db.Uuid
+  stage_id           String?   @db.Uuid
   name               String
   primary_email      String?
   primary_phone      String?
-  source_id          String?                  @db.Uuid
-  status             String?                  @default("new")
-  estimated_value    Decimal?                 @default(0) @db.Decimal
-  probability        Decimal?                 @default(0) @db.Decimal
-  priority           Int?                     @default(3) @db.SmallInt
-  custom_data        Json?                    @default("{}")
-  tags               String[]                 @default([])
-  meta               Json?                    @default("{}")
-  created_by         String?                  @db.Uuid
-  created_at         DateTime?                @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime?                @default(now()) @db.Timestamptz(6)
-  metadata           Json?                    @default("{}")
-  // search_vector      Unsupported("tsvector")?
-  stage              String?                  @default("new")
+  source_id          String?   @db.Uuid
+  status             String?   @default("new")
+  estimated_value    Decimal?  @default(0) @db.Decimal
+  probability        Decimal?  @default(0) @db.Decimal
+  priority           Int?      @default(3) @db.SmallInt
+  custom_data        Json?     @default("{}")
+  tags               String[]  @default([])
+  meta               Json?     @default("{}")
+  created_by         String?   @db.Uuid
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+  metadata           Json?     @default("{}")
+  stage              String?   @default("new")
   primary_phone_e164 String?
-  profession_id      String?                  @db.Uuid
+  profession_id      String?   @db.Uuid
   profession_name    String?
-  industry_id        String?                  @db.Uuid
+  industry_id        String?   @db.Uuid
 
   @@index([industry_id], map: "idx_lead_industry_id")
   @@index([profession_id], map: "idx_lead_profession_id")
@@ -3556,12 +3551,12 @@ model crm_leads {
   branch_id          String?           @db.Uuid
   activities         crm_activities[]
   branch             hms_branch?       @relation(fields: [branch_id], references: [id])
+  lob                crm_lob?          @relation(fields: [lob_id], references: [id])
   owner              app_user?         @relation(fields: [owner_id], references: [id])
   pipeline           crm_pipelines?    @relation(fields: [pipeline_id], references: [id])
   source             crm_sources?      @relation(fields: [source_id], references: [id])
   stage              crm_stages?       @relation(fields: [stage_id], references: [id])
   target_type        crm_target_types? @relation(fields: [target_type_id], references: [id])
-  lob                crm_lob?          @relation(fields: [lob_id], references: [id])
 
   @@index([tenant_id, status])
   @@index([next_followup_date])
@@ -3663,24 +3658,24 @@ model crm_pipelines {
 }
 
 model crm_stages {
-  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  pipeline_id          String            @db.Uuid
+  id                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pipeline_id          String                   @db.Uuid
   name                 String
   /// open, won, lost
-  type                 String            @default("open")
-  probability          Decimal           @default(0) @db.Decimal(5, 2)
-  sort_order           Int               @default(0)
-  color                String?           @default("#000000")
-  is_approval_required Boolean           @default(false)
-  is_lob               Boolean           @default(false)
-  permanent_stage      String?           // to map to reports
-  is_active            Boolean           @default(true)
-  deleted_at           DateTime?         @db.Timestamptz(6)
+  type                 String                   @default("open")
+  probability          Decimal                  @default(0) @db.Decimal(5, 2)
+  sort_order           Int                      @default(0)
+  color                String?                  @default("#000000")
+  is_approval_required Boolean                  @default(false)
+  is_lob               Boolean                  @default(false)
+  permanent_stage      String?
+  is_active            Boolean                  @default(true)
+  deleted_at           DateTime?                @db.Timestamptz(6)
   deals                crm_deals[]
   leads                crm_leads[]
-  pipeline             crm_pipelines     @relation(fields: [pipeline_id], references: [id], onDelete: Cascade)
-  rules                crm_stage_rules[]
   lost_reasons         crm_stage_lost_reasons[]
+  rules                crm_stage_rules[]
+  pipeline             crm_pipelines            @relation(fields: [pipeline_id], references: [id], onDelete: Cascade)
 }
 
 model crm_stage_lost_reasons {
@@ -3693,15 +3688,15 @@ model crm_stage_lost_reasons {
 }
 
 model crm_stage_rules {
-  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  stage_id   String      @db.Uuid
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stage_id   String     @db.Uuid
   name       String
   /// text, number, select, boolean
   input_type String
-  sort_order Int         @default(0)
-  is_active  Boolean     @default(true)
-  created_at DateTime    @default(now()) @db.Timestamptz(6)
-  stage      crm_stages? @relation(fields: [stage_id], references: [id], onDelete: Cascade)
+  sort_order Int        @default(0)
+  is_active  Boolean    @default(true)
+  created_at DateTime   @default(now()) @db.Timestamptz(6)
+  stage      crm_stages @relation(fields: [stage_id], references: [id], onDelete: Cascade)
 }
 
 model crm_sources {
@@ -3867,9 +3862,9 @@ model crm_employee {
   branch                  hms_branch?      @relation(fields: [branch_id], references: [id])
   department              hms_departments? @relation(fields: [department_id], references: [id])
   designation             crm_designation? @relation(fields: [designation_id], references: [id])
-  user                    app_user?        @relation(fields: [user_id], references: [id])
   supervisor              crm_employee?    @relation("crm_employeeTocrm_employee", fields: [supervisor_id], references: [id])
   subordinates            crm_employee[]   @relation("crm_employeeTocrm_employee")
+  user                    app_user?        @relation(fields: [user_id], references: [id])
 }
 
 model crm_commission_rules {
@@ -4411,8 +4406,8 @@ model tenant {
   billing_plan          String?
   metadata              Json?                   @default("{}")
   created_at            DateTime?               @default(now()) @db.Timestamptz(6)
-  tenant_id             String?                 @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  domain                String?                 @db.Citext
+  tenant_id             String?                 @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domain                String?
   deleted_at            DateTime?               @db.Timestamptz(6)
   mode                  String                  @default("trial")
   app_name              String?                 @default("Cloud HMS")
@@ -4700,6 +4695,33 @@ model doctor_note {
   @@index([patient_id])
 }
 
+model hms_holiday {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String               @db.Uuid
+  name           String
+  date           DateTime             @db.Timestamptz(6)
+  type           String
+  country_id     String?              @db.Uuid
+  subdivision_id String?              @db.Uuid
+  description    String?
+  created_at     DateTime?            @default(now()) @db.Timestamptz(6)
+  country        countries?           @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subdivision    country_subdivision? @relation(fields: [subdivision_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model country_subdivision {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  country_id String?       @db.Uuid
+  parent_id  String?       @db.Uuid
+  name       String
+  code       String?
+  type       String?
+  is_active  Boolean?      @default(true)
+  created_at DateTime?     @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?     @default(now()) @db.Timestamptz(6)
+  holidays   hms_holiday[]
+}
+
 enum StockMoveType {
   RECEIPT
   ISSUE
@@ -4752,32 +4774,3 @@ enum visit_status {
   cancelled
   no_show
 }
-
-model hms_holiday {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenant_id      String      @db.Uuid
-  name           String
-  date           DateTime    @db.Timestamptz(6)
-  type           String
-  country_id     String?     @db.Uuid
-  subdivision_id String?     @db.Uuid
-  description    String?
-  created_at     DateTime?   @default(now()) @db.Timestamptz(6)
-  country        countries?  @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  subdivision    country_subdivision? @relation(fields: [subdivision_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-
-model country_subdivision {
-  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  country_id  String?        @db.Uuid
-  parent_id   String?        @db.Uuid
-  name        String
-  code        String?
-  type        String?
-  is_active   Boolean?       @default(true)
-  created_at  DateTime?      @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime?      @default(now()) @db.Timestamptz(6)
-  holidays    hms_holiday[]
-}
-

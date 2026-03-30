@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import {
     Users, Calendar, Activity, IndianRupee, Plus, Search,
@@ -27,6 +27,11 @@ interface DashboardClientProps {
 
 export function DashboardClient({ user, stats, appointments, patients, doctors, tenant, company }: DashboardClientProps) {
     const [showAppointmentModal, setShowAppointmentModal] = useState(false)
+    const [mounted, setMounted] = useState(false)
+    
+    // Fix Hydration mismatch on locale strings
+    useEffect(() => { setMounted(true) }, [])
+
     const pendingApts = (appointments || []).filter(a => a?.status?.toLowerCase() === 'scheduled' || a?.status?.toLowerCase() === 'pending').length
     const dashboardTitle = company?.name || tenant?.app_name || 'Dashboard'
 
@@ -101,7 +106,7 @@ export function DashboardClient({ user, stats, appointments, patients, doctors, 
                     <Link href="/hms/billing" className="block transition-transform hover:scale-[1.02]">
                         <StatsCard
                             title="Total Revenue"
-                            value={`₹${stats.revenue.toLocaleString()}`}
+                            value={mounted ? `₹${stats.revenue.toLocaleString('en-IN')}` : `₹${stats.revenue}`}
                             icon={IndianRupee}
                             trend="Monthly collection"
                             color="green"
@@ -183,7 +188,7 @@ export function DashboardClient({ user, stats, appointments, patients, doctors, 
                                                 className="group hover:bg-blue-50/50 dark:hover:bg-indigo-900/10 transition-colors"
                                             >
                                                 <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900 dark:text-white">
-                                                    {new Date(apt.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    {mounted ? new Date(apt.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date(apt.starts_at).toISOString().split('T')[1].substring(0, 5)}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-3">
@@ -339,7 +344,8 @@ function StatsCard({ title, value, icon: Icon, trend, color, highlight = false }
     )
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status }: { status?: string }) {
+    const safeStatus = status?.toLowerCase() || 'pending'
     const styles = {
         scheduled: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800",
         completed: "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800",
@@ -354,12 +360,12 @@ function StatusBadge({ status }: { status: string }) {
         pending: AlertCircle,
     } as any
 
-    const StatusIcon = icons[status.toLowerCase()] || Clock
+    const StatusIcon = icons[safeStatus] || Clock
 
     return (
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${styles[status.toLowerCase()] || styles.pending}`}>
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${styles[safeStatus] || styles.pending}`}>
             <StatusIcon className="h-3.5 w-3.5" />
-            <span className="capitalize">{status}</span>
+            <span className="capitalize">{status || 'Pending'}</span>
         </span>
     )
 }

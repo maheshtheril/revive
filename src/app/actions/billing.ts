@@ -22,7 +22,15 @@ export async function getUoms() {
             where: { tenant_id: (session?.user as any).tenantId },
             orderBy: { name: 'asc' }
         });
-        return { success: true, data: uoms };
+        
+        // Serialize Decimal fields for Client Components
+        const serializedUoms = uoms.map((u: any) => ({
+            ...u,
+            ratio: u.ratio?.toNumber() || 1,
+            rounding: u.rounding?.toNumber() || 0.01
+        }));
+
+        return { success: true, data: serializedUoms };
     } catch (err: any) {
         return { success: false, error: err.message };
     }
@@ -523,6 +531,93 @@ export async function createInvoice(data: {
                 }
             });
 
+            // --- WORLD CLASS STOCK SYNC (SALES) ---
+            // Deduct stock for all physical items in the invoice
+            for (const item of processedLineItems) {
+                if (!item.product_id) continue;
+
+                const qtyToDeduct = safeNum(item.quantity) || 1;
+                
+                // 0. Resolve Location (Default to Main Warehouse for now)
+                let location = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId, name: 'Main Warehouse' }
+                });
+
+                if (!location) {
+                    location = await tx.hms_stock_location.findFirst({
+                        where: { company_id: companyId }
+                    });
+                }
+
+                if (location) {
+                    // 1. Deduct Stock Level
+                    const level = await tx.hms_stock_levels.findFirst({
+                        where: {
+                            company_id: companyId,
+                            product_id: item.product_id,
+                            location_id: location.id
+                            // Not using batch for sales yet in this action, can be enhanced
+                        }
+                    });
+
+                    if (level) {
+                        await tx.hms_stock_levels.update({
+                            where: { id: level.id },
+                            data: { quantity: { decrement: qtyToDeduct } }
+                        });
+                    } else {
+                        // Create negative stock level if not exists (allow for overselling if enabled, or just create record)
+                        await tx.hms_stock_levels.create({
+                            data: {
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantId,
+                                company_id: companyId,
+                                product_id: item.product_id,
+                                location_id: location.id,
+                                quantity: -qtyToDeduct,
+                                reserved: 0
+                            }
+                        });
+                    }
+
+                    // 2. Log Outward Movement in Ledger
+                    await tx.hms_stock_ledger.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: item.product_id,
+                            movement_type: 'out',
+                            qty: -qtyToDeduct,
+                            uom: item.uom || 'Unit',
+                            unit_cost: 0, // Sale doesn't have cost in this context
+                            total_cost: 0,
+                            from_location_id: location.id,
+                            reference: invoiceNo,
+                            related_type: 'hms_invoice',
+                            related_id: invoiceId
+                        }
+                    });
+
+                    // 3. Audit Move
+                    await tx.hms_stock_move.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: item.product_id,
+                            location_from: location.id,
+                            qty: -qtyToDeduct,
+                            uom: item.uom || 'Unit',
+                            move_type: 'out' as any,
+                            source: 'Counter Sale',
+                            source_reference: invoiceId,
+                            created_by: userId
+                        }
+                    });
+                }
+            }
+
             // Post-Hooks
             if (status === 'paid' && isUUID(data.appointment_id)) {
                 await tx.hms_appointments.update({ where: { id: data.appointment_id }, data: { status: 'completed' } });
@@ -553,23 +648,28 @@ export async function createInvoice(data: {
             } catch (err) {
                 console.error(`${LOG_PREFIX} Accounting Post Exception:`, err);
             }
-
-            // WhatsApp Notification (Only if paid/posted and auto-send enabled)
-            if (status === 'paid' || status === 'posted') {
-                try {
-                    const config = await getWhatsAppConfig(companyId, tenantId);
-                    if (config?.autoSendBill) {
-                        const wsRes = await NotificationService.sendInvoiceWhatsapp(invoiceId, tenantId);
-                        if (!wsRes.success) console.warn(`${LOG_PREFIX} Auto-WhatsApp Send Failed:`, wsRes.error);
-                    }
-                } catch (err) {
-                    console.error(`${LOG_PREFIX} WhatsApp Notification Orchestration Failed:`, err);
-                }
-            }
         }
 
         revalidatePath('/hms/billing');
-        return { success: true, data: result };
+        
+        let whatsappFeedback = {};
+        if ((status === 'paid' || status === 'posted') && (invoiceId || (result as any)?.id)) {
+            try {
+                const finalId = invoiceId || (result as any)?.id;
+                const config = await getWhatsAppConfig(companyId, tenantId);
+                if (config?.autoSendBill) {
+                    const wsRes = await NotificationService.sendInvoiceWhatsapp(finalId, tenantId);
+                    whatsappFeedback = {
+                        whatsapp_sent: wsRes.success,
+                        whatsapp_error: wsRes.success ? null : wsRes.error
+                    };
+                }
+            } catch (e) {
+                console.error(`${LOG_PREFIX} WhatsApp Notification Failed:`, e);
+            }
+        }
+
+        return { success: true, data: result, ...whatsappFeedback };
 
     } catch (err: any) {
         console.error(`${LOG_PREFIX} [CRITICAL-FAIL] createInvoice:`, err);
@@ -1906,6 +2006,10 @@ export async function getInitialInvoiceData(appointmentId: string) {
     const tenantId = session.user.tenantId;
 
     try {
+        if (!appointmentId || appointmentId === 'undefined' || appointmentId === 'null' || appointmentId.length < 5) {
+            return { error: "Invalid appointment context." };
+        }
+
         const appointment = await prisma.hms_appointments.findUnique({
             where: { id: appointmentId },
             include: {

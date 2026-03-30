@@ -1,0 +1,37 @@
+# Ziona Shield - Production Bundle GitIgnore
+# Pruned dependencies to stay under GitHub's 100MB file limit
+# Next.js 'standalone' mode already provides essential files in .next/
+
+# Dependencies & Cache
+node_modules/
+!.next/
+!public/
+!prisma/
+.env
+.env.local
+!package.json
+!package-lock.json
+
+# CRITICAL: Allow database engines & drivers (No Internet Install)
+!node_modules/.prisma/
+!node_modules/@prisma/
+!node_modules/prisma/
+!node_modules/pg/
+!node_modules/dotenv/
+!whatsapp-bridge/node_modules/
+
+# Ensure Next.js large binary is NEVER tracked
+node_modules/@next/swc-win32-x64-msvc/
+
+# Logs & Temp
+*.log
+.DS_Store
+Thumbs.db
+*.tmp
+.next/cache/
+.vercel/
+!*.bat
+!*.js
+!*.sql
+!*.md
+!*.pdf

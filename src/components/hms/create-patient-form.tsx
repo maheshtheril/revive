@@ -60,23 +60,24 @@ export function CreatePatientForm({
     const [enableCardIssuanceSetting, setEnableCardIssuanceSetting] = useState(true);
 
     useEffect(() => {
+        let isMounted = true;
         const syncSettings = async () => {
             try {
                 const res = await getHMSSettings();
-                if (res.success && res.settings) {
+                if (isMounted && res.success && res.settings) {
                     setRegistrationFee(res.settings.registrationFee);
                     setRegistrationValidity(res.settings.registrationValidity);
                     setRegistrationProductId(res.settings.registrationProductId);
                     setRegistrationProductName(res.settings.registrationProductName);
                     setRegistrationProductDescription(res.settings.registrationProductDescription);
                     setEnableCardIssuanceSetting(res.settings.enableCardIssuance);
-                    setPrintIDCard(res.settings.enableCardIssuance);
                 }
             } catch (err) {
                 console.error("Failed to sync HMS settings:", err);
             }
         };
         syncSettings();
+        return () => { isMounted = false; };
     }, [propFee]);
 
     // Keyboard Shortcut: Ctrl+S to Save
@@ -190,43 +191,64 @@ export function CreatePatientForm({
         const recognition = new SpeechRecognition()
         recognition.continuous = false
         recognition.interimResults = false
-        recognition.lang = 'en-US'
+        // [WORLD-CLASS] Intelligent Language Selection: Support en-IN for local clinical context
+        recognition.lang = tenantCountry === 'IN' ? 'en-IN' : 'en-US'
 
         recognition.onstart = () => setIsListening(true)
         recognition.onend = () => setIsListening(false)
+
+        recognition.onerror = (event: any) => {
+            console.error("Voice Registry Error:", event.error)
+            setIsListening(false)
+            
+            // Critical Feedback for Non-Secure Contexts (LAN IP Addresses)
+            if (event.error === 'not-allowed') {
+                alert("Microphone permission was denied. \n\nIMPORTANT: If you are accessing the server via an IP address (e.g. 192.168.x.x), Chrome disables voice features for security. Please use localhost or enable HTTPS.")
+            } else if (event.error === 'network') {
+                alert("Voice recognition requires an active internet connection to process audio.")
+            }
+        }
+
         recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript.toLowerCase()
-            console.log("Voice Registry Transcript:", transcript)
+            const transcript = event.results[0][0].transcript.toLowerCase().trim()
+            console.log("Voice Registry Sync Result:", transcript)
 
             const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-            // Name Parsing: "name mahesh theril" or "name mahesh"
-            const nameMatch = transcript.match(/(?:name|is|identify as)\s+([a-z]+)\s*([a-z]*)/i)
+            // High Precision Name Parsing: "name mahesh theril" | "patient is mahesh" | "identify as mahesh"
+            const nameMatch = transcript.match(/(?:name|is|identify as|patient|self)\s+([a-z]+)\s*([a-z]*)/i)
             if (nameMatch) {
                 setFirstName(capitalize(nameMatch[1]))
-                if (nameMatch[2]) setLastName(capitalize(nameMatch[2]))
+                if (nameMatch[2] && !['years', 'is', 'at'].includes(nameMatch[2].toLowerCase())) {
+                    setLastName(capitalize(nameMatch[2]))
+                }
             }
 
-            // Age Parsing: "age 25" or "is 25 years old"
-            const ageMatch = transcript.match(/(?:age|is)\s+(\d+)/i)
+            // Age Node Extraction: "age 25" | "he is 25" | "25 years old"
+            const ageMatch = transcript.match(/(?:age|is|of)\s+(\d+)/i) || transcript.match(/(\d+)\s*(?:years|yr|age)/i)
             if (ageMatch) {
-                setAge(ageMatch[1])
+                const numericAge = ageMatch[1]
+                setAge(numericAge)
                 setAgeUnit('Years')
-                // Trigger DOB calculation
+                
+                // Real-time Ledger Sync for DOB
                 const currentDate = new Date()
-                const birthYear = currentDate.getFullYear() - parseInt(ageMatch[1])
+                const birthYear = currentDate.getFullYear() - parseInt(numericAge)
                 const calculatedDob = new Date(birthYear, currentDate.getMonth(), currentDate.getDate())
                 setDob(calculatedDob.toISOString().split('T')[0])
             }
 
-            // Place/Address Parsing: "place calicut" or "live in calicut"
-            const placeMatch = transcript.match(/(?:place|address|location|at|from)\s+([a-z0-9\s]+)/i)
+            // Geo/Address Node: "place calicut" | "from kondotty" | "at calicut"
+            const placeMatch = transcript.match(/(?:place|address|location|at|from|is|live in|lives in)\s+([a-z0-9\s]+)/i)
             if (placeMatch) {
-                setStreet(capitalize(placeMatch[1].trim()))
+                const p = placeMatch[1].trim()
+                if (p && !['mahesh', 'the', 'his', 'her'].includes(p.toLowerCase())) {
+                    setStreet(capitalize(p))
+                }
             }
 
-            // Mobile Parsing: "mobile 9456..." or just the number
-            const mobileMatch = transcript.match(/(?:mobile|phone|number|call)\s*(\d{10})/i)
+            // Communication Node: "mobile 9456..." | "phone 987..." | literal 10-digits
+            const mobileMatch = transcript.match(/(?:mobile|phone|number|call|cell)\s*(\d{10})/i)
             if (mobileMatch) {
                 setPhone(mobileMatch[1])
             } else {
@@ -479,10 +501,10 @@ export function CreatePatientForm({
                                             </div>
                                             {/* WORLD-STANDARD ACCOUNTING GROUP */}
                                             <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
-                                                <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Accounting Group (AR Category)</label>
+                                                <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Patient Billing Category</label>
                                                 <div className="flex gap-2">
                                                     {[
-                                                        { id: 'general', label: 'General / Cash', color: 'indigo' },
+                                                        { id: 'general', label: 'General / Self-Pay', color: 'indigo' },
                                                         { id: 'insurance', label: 'Insurance (TPA)', color: 'emerald' },
                                                         { id: 'corporate', label: 'Corporate (Credit)', color: 'orange' }
                                                     ].map(group => (
@@ -502,7 +524,7 @@ export function CreatePatientForm({
                                                     <input type="hidden" name="accounting_group" value={accountingGroup} />
                                                 </div>
                                                 <p className="mt-1 text-[9px] text-slate-400 font-medium italic">
-                                                    * This determines which Accounts Receivable (AR) head the billing will be posted to.
+                                                    * This determines how the patient's future invoices will be processed and routed.
                                                 </p>
                                             </div>
                                             <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-12 gap-3">

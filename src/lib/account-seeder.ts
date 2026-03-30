@@ -63,6 +63,9 @@ export async function ensureDefaultAccounts(companyId: string, tenantId: string)
         // REVENUE (4000-4999)
         { code: '4000', name: 'Direct Income (Revenue)', type: 'Revenue', isGroup: true },
         { code: '4010', name: 'Patient Consultation Fees', type: 'Revenue', parentCode: '4000' },
+        { code: '4020', name: 'OP Income', type: 'Revenue', parentCode: '4000' },
+        { code: '4030', name: 'Casualty Income', type: 'Revenue', parentCode: '4000' },
+        { code: '4040', name: 'IP Income / Ward Charges', type: 'Revenue', parentCode: '4000' },
         { code: '4100', name: 'Lab Test Revenue', type: 'Revenue', parentCode: '4000' },
         { code: '4200', name: 'Pharmacy Sales', type: 'Revenue', parentCode: '4000' },
         { code: '4300', name: 'Procedure / Surgery Charges', type: 'Revenue', parentCode: '4000' },

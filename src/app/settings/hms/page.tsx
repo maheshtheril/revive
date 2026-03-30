@@ -58,6 +58,7 @@ export default async function HMSSettingsPage() {
                 gatewaySettings={gatewayRes.success ? gatewayRes.settings : null}
                 whatsappSettings={whatsappRes.success ? whatsappRes.settings : null}
                 pdfSettings={pdfRes.success ? pdfRes.settings : null}
+                aiSettings={res.aiSettings}
             />
         </div>
     )

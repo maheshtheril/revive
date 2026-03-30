@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma"
-import { CompactInvoiceEditor } from "@/components/billing/invoice-editor-compact"
+import { BillingClientEntry } from "@/components/billing/billing-client-entry"
 import { getBillableItems, getTaxConfiguration, getUoms } from "@/app/actions/billing"
 import { auth } from "@/auth"
 
@@ -16,8 +16,7 @@ export default async function PharmacyBillingPage({
     const { patientId } = await searchParams;
     const tenantId = session.user.tenantId;
 
-    // Parallel data fetching
-    const [patients, itemsRes, taxRes, uomsRes, companySettings] = await Promise.all([
+    let [patients, itemsRes, taxRes, uomsRes, companySettings] = await Promise.all([
         prisma.hms_patient.findMany({
             where: { tenant_id: tenantId },
             select: {
@@ -41,6 +40,23 @@ export default async function PharmacyBillingPage({
             include: { currencies: true }
         })
     ]);
+
+    if (patientId && !patients.find(p => p.id === patientId)) {
+        const specialPatient = await prisma.hms_patient.findUnique({
+            where: { id: patientId },
+            select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                contact: true,
+                patient_number: true,
+                dob: true,
+                gender: true,
+                metadata: true
+            }
+        });
+        if (specialPatient) (patients as any).unshift(specialPatient);
+    }
 
     const billableItems = itemsRes.success ? itemsRes.data : [];
     const taxConfig = taxRes.success ? taxRes.data : { defaultTax: null, taxRates: [] };
@@ -85,7 +101,7 @@ export default async function PharmacyBillingPage({
                 </div>
             </div>
 
-            <CompactInvoiceEditor
+            <BillingClientEntry
                 patients={JSON.parse(JSON.stringify(patients))}
                 billableItems={JSON.parse(JSON.stringify(billableItems))}
                 uoms={JSON.parse(JSON.stringify(uoms))}
@@ -93,6 +109,7 @@ export default async function PharmacyBillingPage({
                 initialPatientId={patientId}
                 initialMedicines={initialItems}
                 currency={currency}
+                defaultTaxMode={(companySettings?.hms_billing_mode as any) || 'exclusive'}
             />
         </div>
     )

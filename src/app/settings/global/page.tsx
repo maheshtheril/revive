@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { GlobalSettingsForm } from "./global-settings-form"
 import { redirect } from "next/navigation"
-import { getWhatsAppSettings, getPDFSettings } from "@/app/actions/settings"
+import { getWhatsAppSettings, getPDFSettings, getAISettings } from "@/app/actions/settings"
 
 export const dynamic = 'force-dynamic'
 
@@ -41,13 +41,14 @@ export default async function GlobalSettingsPage() {
 
     console.log("Global Settings: Company Fetched", company?.id);
 
-    const [currencies, whatsappRes, pdfRes] = await Promise.all([
+    const [currencies, whatsappRes, pdfRes, aiRes] = await Promise.all([
         prisma.currencies.findMany({
             select: { id: true, code: true, name: true, symbol: true },
             orderBy: { code: 'asc' }
         }),
         getWhatsAppSettings(companyId, tenant?.id),
-        getPDFSettings(companyId, tenant?.id)
+        getPDFSettings(companyId, tenant?.id),
+        getAISettings(companyId, tenant?.id)
     ])
     
     console.log("Global Settings: WhatsApp Token Found:", whatsappRes.success && whatsappRes.settings?.hasToken);
@@ -71,6 +72,7 @@ export default async function GlobalSettingsPage() {
                 isAdmin={session.user.isAdmin}
                 whatsappSettings={whatsappRes.success ? whatsappRes.settings : null}
                 pdfSettings={pdfRes.success ? pdfRes.settings : null}
+                aiSettings={aiRes.success ? aiRes.settings : null}
             />
         </div>
     )

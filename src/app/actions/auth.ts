@@ -40,6 +40,12 @@ export async function signup(prevState: any, formData: FormData) {
     }
 
     try {
+        // [SAFETY] Check if this is a fresh system. For local installs, we only allow ONE initial signup.
+        const userCount = await prisma.app_user.count();
+        if (userCount > 0) {
+            return { error: "Initial setup already completed. Please login instead." }
+        }
+
         const existing = await prisma.app_user.findFirst({ where: { email } })
         const inputCountryId = rawData.countryId as string;
         let resolvedCountryId = inputCountryId;
@@ -226,34 +232,41 @@ export async function signup(prevState: any, formData: FormData) {
                 });
             }
 
-            // 9. Products (HMS Only)
+            // 9. Master Seeding (Standard UOMs, Roles, etc.)
+            await initializeTenantMasters(tenantId, companyId, prisma);
+            const { seedCompanyTaxes } = await import("@/lib/services/tax-seed");
+            await seedCompanyTaxes(companyId, prisma);
+
+            // 10. Default Products (HMS Only)
             if (modulesToEnable.has('hms')) {
-                const defaultProducts = [
-                    { sku: 'REG001', name: 'Patient Registration Fee', price: 150, type: 'fee' },
-                    { sku: 'CON001', name: 'Consultation Fee', price: 500, type: 'fee' },
-                    { sku: 'LAB001', name: 'Complete Blood Count (CBC)', price: 450, type: 'diagnostic' },
+                const standardProducts = [
+                    { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 100, is_service: true, stockable: false },
+                    { sku: 'CONS-GEN', name: 'General Consultation', uom: 'VISIT', price: 250, is_service: true, stockable: false },
+                    { sku: 'CONS-SPEC', name: 'Specialist Consultation', uom: 'VISIT', price: 500, is_service: true, stockable: false },
+                    { sku: 'PARA-500', name: 'Paracetamol 500mg', uom: 'TAB', price: 5, is_service: false, stockable: true },
+                    { sku: 'AMOX-500', name: 'Amoxicillin 500mg Strip', uom: 'STRIP', price: 85, is_service: false, stockable: true },
+                    { sku: 'SYR-5ML', name: 'Disposable Syringe 5ml', uom: 'PCS', price: 15, is_service: false, stockable: true },
+                    { sku: 'CBC-TEST', name: 'Complete Blood Count (CBC)', uom: 'TEST', price: 450, is_service: true, stockable: false },
+                    { sku: 'CXR-SCAN', name: 'Chest X-Ray', uom: 'SCAN', price: 1200, is_service: true, stockable: false },
                 ];
 
                 await prisma.hms_product.createMany({
-                    data: defaultProducts.map(p => ({
+                    data: standardProducts.map(p => ({
                         id: crypto.randomUUID(),
                         tenant_id: tenantId,
                         company_id: companyId,
                         sku: p.sku,
                         name: p.name,
-                        is_service: true,
+                        is_service: p.is_service,
+                        is_stockable: p.stockable,
                         price: p.price,
                         currency: resolvedCurrencyCode,
                         is_active: true,
-                        metadata: { type: p.type, tax_exempt: true }
+                        uom: p.uom,
+                        metadata: { tax_exempt: true }
                     }))
                 });
             }
-
-            // 10. Master Seeding
-            await initializeTenantMasters(tenantId, companyId, prisma);
-            const { seedCompanyTaxes } = await import("@/lib/services/tax-seed");
-            await seedCompanyTaxes(companyId, prisma);
         } catch (initError) {
             console.error("[AUTH] Domain Initialization failed, but User exists:", initError);
         }

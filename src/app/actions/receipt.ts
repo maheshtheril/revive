@@ -404,12 +404,95 @@ export async function createPurchaseReceipt(data: PurchaseReceiptData) {
                         }
                     });
                 }
-            }
-
-            // Execute Batch Receipt Line Inserts
+            }            // Execute Batch Receipt Line Inserts
             if (receiptLinesData.length > 0) {
                 // We use createMany which is faster and still triggers Postgres AFTER INSERT per row
                 await tx.hms_purchase_receipt_line.createMany({ data: receiptLinesData });
+
+                // --- WORLD CLASS STOCK INTEGRATION ---
+                // Every item in the receipt should now update Stock Levels and Stock History
+                for (let i = 0; i < receiptLinesData.length; i++) {
+                    const line = receiptLinesData[i];
+                    const itemPayload = data.items[i]; // 1-to-1 mapping guaranteed
+                    
+                    if (!itemPayload) {
+                        console.error("[Receipt] CRITICAL: itemPayload missing for line", i);
+                        continue;
+                    }
+
+                    const billedQty = Number(line.qty) || 0;
+                    const freeQty = Number((line.metadata as any)?.free_qty) || 0;
+                    const totalQty = billedQty + freeQty;
+
+                    // Calculate Stock Units (handling packs)
+                    let effectiveConversion = itemPayload.conversionFactor || 1;
+                    const stockQty = totalQty * effectiveConversion;
+
+                    // 1. Update Stock Levels (Upsert)
+                    const stockWhere = {
+                        tenant_id: session.user.tenantId!,
+                        company_id: companyId,
+                        product_id: line.product_id,
+                        location_id: line.location_id,
+                        batch_id: line.batch_id
+                    };
+
+                    const existingLevel = await tx.hms_stock_levels.findFirst({ where: stockWhere });
+
+                    if (existingLevel) {
+                        await tx.hms_stock_levels.update({
+                            where: { id: existingLevel.id },
+                            data: { quantity: { increment: stockQty } }
+                        });
+                    } else {
+                        await tx.hms_stock_levels.create({
+                            data: {
+                                ...stockWhere,
+                                id: crypto.randomUUID(),
+                                quantity: stockQty,
+                                reserved: 0
+                            }
+                        });
+                    }
+
+                    // 2. Log to Stock Ledger (History)
+                    await tx.hms_stock_ledger.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: session.user.tenantId!,
+                            company_id: companyId,
+                            product_id: line.product_id,
+                            movement_type: 'in',
+                            qty: stockQty,
+                            uom: (line.metadata as any)?.base_uom || 'PCS',
+                            unit_cost: billedQty > 0 ? (billedQty * line.unit_price) / stockQty : 0,
+                            total_cost: billedQty * line.unit_price,
+                            to_location_id: line.location_id,
+                            batch_id: line.batch_id,
+                            reference: receipt.name,
+                            related_type: 'hms_purchase_receipt',
+                            related_id: receipt.id
+                        }
+                    });
+
+                    // 3. Log to Stock Move (Audit Trail)
+                    await tx.hms_stock_move.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: session.user.tenantId!,
+                            company_id: companyId,
+                            product_id: line.product_id,
+                            location_to: line.location_id,
+                            qty: stockQty,
+                            uom: (line.metadata as any)?.base_uom || 'PCS',
+                            move_type: 'in' as any,
+                            source: 'Purchase Receipt',
+                            source_reference: receipt.id,
+                            cost: line.unit_price,
+                            created_by: session.user.id
+                        }
+                    });
+                }
             }
 
             // Execute Batch Product Updates (Optimized via pre-fetched map)

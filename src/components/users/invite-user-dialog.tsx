@@ -116,6 +116,7 @@ export function InviteUserDialog({ roles = [] }: InviteUserDialogProps) {
         const result = await inviteUser({
             email: formData.email,
             fullName: `${formData.firstName} ${formData.lastName}`.trim(),
+            username: formData.userName,
             systemRole: formData.systemRole,
             roleId: formData.roleId === 'no-role' ? undefined : formData.roleId,
             mobile: formData.mobile,

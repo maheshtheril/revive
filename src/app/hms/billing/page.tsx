@@ -6,6 +6,8 @@ import { auth } from "@/auth"
 
 import SearchInput from "@/components/search-input"
 import { BillingActions } from "@/components/billing/billing-actions"
+import { BillingDateRangeFilter } from "@/components/billing/billing-date-range-filter"
+import { BillingMethodFilter } from "@/components/billing/billing-method-filter"
 
 export default async function BillingPage({
     searchParams
@@ -13,27 +15,51 @@ export default async function BillingPage({
     searchParams: Promise<{
         q?: string
         status?: string
+        from?: string
+        to?: string
+        method?: string
     }>
 }) {
     const session = await auth();
     if (!session?.user?.companyId) return <div>Unauthorized</div>;
 
-    const { q, status } = await searchParams;
+    const { q, status, from, to, method } = await searchParams;
     const query = q || ''
     const currentStatus = status || 'all'
+    const fromQuery = from || null;
+    const toQuery = to || null;
+    const methodQuery = method || null;
 
     // Status filter logic
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const statusFilter: any = currentStatus !== 'all' ? { status: currentStatus } : {}
 
+    // Payment Method Filter Logic: Support for granular financial tracking
+    const methodFilter: any = methodQuery ? {
+        hms_invoice_payments: {
+            some: {
+                method: methodQuery as any
+            }
+        }
+    } : {};
+
+    // World-Standard Date Range Filter Logic: Handling From/To Periods
+    const dateFilter: any = (fromQuery || toQuery) ? {
+        invoice_date: {
+            gte: fromQuery ? new Date(`${fromQuery}T00:00:00.000Z`) : undefined,
+            lte: toQuery ? new Date(`${toQuery}T23:59:59.999Z`) : undefined
+        }
+    } : {};
+
     // Parallel fetch for stats and list
-    const [invoices, stats, draftCount] = await Promise.all([
+    const [invoices, stats, draftCount, methodSpecificRevenue] = await Promise.all([
         prisma.hms_invoice.findMany({
             orderBy: { created_at: 'desc' }, // Use created_at to see newest drafts first
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
                 ...statusFilter,
+                ...dateFilter,
+                ...methodFilter,
                 OR: query ? [
                     { invoice_number: { contains: query, mode: 'insensitive' } },
                     {
@@ -49,12 +75,15 @@ export default async function BillingPage({
             include: {
                 hms_patient: true
             },
-            take: 50 // Increased limit to see more
+            take: 100 // Increased limit to see more
         }),
         prisma.hms_invoice.aggregate({
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
+                ...statusFilter,
+                ...dateFilter,
+                ...methodFilter
             },
             _sum: {
                 total: true, // Total Billed
@@ -70,12 +99,32 @@ export default async function BillingPage({
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
-                status: 'draft' as any
+                status: 'draft' as any,
+                ...dateFilter,
+                ...methodFilter
             }
-        })
+        }),
+        // [WORLD-CLASS] Precision Revenue Calculation: When filtering by method, sum payments directly
+        methodQuery ? prisma.hms_invoice_payments.aggregate({
+            where: {
+                tenant_id: session.user.tenantId,
+                company_id: session.user.companyId,
+                method: methodQuery as any,
+                hms_invoice: {
+                    ...dateFilter,
+                    company_id: session.user.companyId
+                }
+            },
+            _sum: { amount: true }
+        }) : Promise.resolve(null)
     ]);
 
-    const totalRevenue = stats._sum.total_paid?.toNumber() || 0;
+    // If method is selected, Total Revenue = Sum of payments of that method
+    // If NO method selected, Total Revenue = Sum(total_paid) of filtered invoices
+    const totalRevenue = methodQuery 
+        ? (methodSpecificRevenue?._sum.amount?.toNumber() || 0)
+        : (stats._sum.total_paid?.toNumber() || 0);
+    
     const totalOutstanding = stats._sum.outstanding_amount?.toNumber() || 0;
     const totalBilled = stats._sum.total?.toNumber() || 0;
 
@@ -172,6 +221,11 @@ export default async function BillingPage({
                     </Link>
                 </div>
 
+                <div className="flex-1 flex justify-center gap-3 px-4">
+                    <BillingDateRangeFilter />
+                    <BillingMethodFilter />
+                </div>
+
                 <div className="w-full md:w-auto relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <Search className="h-4 w-4 text-slate-400" />
@@ -261,6 +315,19 @@ export default async function BillingPage({
                             ))
                         )}
                     </tbody>
+                    {invoices.length > 0 && (
+                        <tfoot className="bg-slate-50/50 border-t border-slate-100">
+                            <tr>
+                                <td colSpan={4} className="p-5 text-right text-xs font-black text-slate-400 uppercase tracking-widest">
+                                    Total for visible records
+                                </td>
+                                <td className="p-5 text-right font-black text-slate-900 text-lg tracking-tight">
+                                    ₹{invoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    )}
                 </table>
             </div>
         </div>

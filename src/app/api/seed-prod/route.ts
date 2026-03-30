@@ -11,6 +11,7 @@ export async function GET() {
         if (!tenant) {
             tenant = await prisma.tenant.create({
                 data: {
+                    id: crypto.randomUUID(),
                     name: 'Enterprise Prod',
                     slug: 'enterprise-prod',
                     mode: 'production',
@@ -29,16 +30,19 @@ export async function GET() {
         if (!company) {
             company = await prisma.company.create({
                 data: {
+                    id: crypto.randomUUID(),
                     tenant_id: tenant.id,
                     name: `${tenant.name} Hospital`, // Replaced hardcoded 'Main Hospital'
                     industry: 'Healthcare',
-                    // currency: 'INR', // Not in schema
-                    // country: 'India', // Not in schema (uses country_id relation)
-                    // timezone: 'Asia/Kolkata', // Not in schema
                 }
             });
             console.log("Created Company:", company.id);
         }
+
+        // 2.2 Initialize Masters (UOMs, Departments, etc.)
+        const { initializeTenantMasters } = await import("@/lib/services/tenant-init");
+        await initializeTenantMasters(tenant.id, company.id, prisma);
+        console.log("Masters Initialized.");
 
         // 2.5 Seed Currencies & Countries (Essential Master Data)
         const commonCurrencies = [
@@ -50,16 +54,17 @@ export async function GET() {
         ];
 
         for (const cur of commonCurrencies) {
-            await prisma.currencies.upsert({
-                where: { code: cur.code },
-                update: {},
-                create: {
-                    code: cur.code,
-                    name: cur.name,
-                    symbol: cur.symbol,
-                    is_active: true
-                }
-            });
+            const existing = await prisma.currencies.findUnique({ where: { code: cur.code } });
+            if (!existing) {
+                await prisma.currencies.create({
+                    data: {
+                        code: cur.code,
+                        name: cur.name,
+                        symbol: cur.symbol,
+                        is_active: true
+                    }
+                });
+            }
         }
         console.log("Currencies Seeded.");
 
@@ -71,119 +76,115 @@ export async function GET() {
         ];
 
         for (const c of commonCountries) {
-            await prisma.countries.upsert({
-                where: { iso2: c.iso2 },
-                update: {},
-                create: {
-                    iso2: c.iso2,
-                    iso3: c.iso3,
-                    name: c.name,
-                    flag: c.flag,
-                    region: c.region,
-                    is_active: true
-                }
-            });
+            const existing = await prisma.countries.findUnique({ where: { iso2: c.iso2 } });
+            if (!existing) {
+                await prisma.countries.create({
+                    data: {
+                        iso2: c.iso2,
+                        iso3: c.iso3,
+                        name: c.name,
+                        flag: c.flag,
+                        region: c.region,
+                        is_active: true
+                    }
+                });
+            }
         }
         console.log("Countries Seeded.");
-
-        const india = await prisma.countries.findUnique({ where: { iso2: 'IN' } });
 
         // 3. Enable Modules
         const modules = ['hms', 'crm', 'inventory', 'accounting'];
         for (const mod of modules) {
-            await prisma.tenant_module.upsert({
+            const existing = await prisma.tenant_module.findUnique({
                 where: {
                     tenant_id_module_key: {
                         tenant_id: tenant.id,
                         module_key: mod
                     }
-                },
-                update: { enabled: true },
-                create: {
-                    tenant_id: tenant.id,
-                    module_key: mod,
-                    enabled: true
                 }
             });
+
+            // Lookup module_id if possible
+            const moduleInfo = await prisma.modules.findFirst({
+                where: { module_key: mod }
+            });
+
+            if (!existing) {
+                await prisma.tenant_module.create({
+                    data: {
+                        id: crypto.randomUUID(), // Explicit ID
+                        tenant_id: tenant.id,
+                        module_key: mod,
+                        module_id: moduleInfo?.id, // Optional
+                        enabled: true
+                    }
+                });
+            } else {
+                await prisma.tenant_module.update({
+                    where: { id: existing.id },
+                    data: { enabled: true }
+                });
+            }
         }
         console.log("Modules Enabled.");
 
-        // 4. Create Admin User
+        // 4. Create Admin User (Logic remains same as it uses raw SQL)
         const adminEmail = 'admin@saaserp.com';
-        const password = 'password123'; // Logic will use pgcrypto in raw query
+        const password = 'password123'; 
 
         const existingUser = await prisma.app_user.findFirst({
             where: { email: { equals: adminEmail, mode: 'insensitive' } }
         });
 
         if (!existingUser) {
-            // Using raw query for pgcrypto compatibility
             await prisma.$executeRaw`
-                INSERT INTO app_user (
-                    tenant_id, 
-                    company_id,
-                    email, 
-                    password, 
-                    is_active, 
-                    is_admin, 
-                    is_tenant_admin,
-                    name,
-                    role,
-                    created_at
-                ) VALUES (
-                    ${tenant.id}::uuid,
-                    ${company.id}::uuid,
-                    ${adminEmail}, 
-                    crypt(${password}, gen_salt('bf')), 
-                    true, 
-                    true, 
-                    true,
-                    'System Admin',
-                    'admin',
-                    NOW()
-                )
+                INSERT INTO app_user (id, tenant_id, company_id, email, password, is_active, is_admin, is_tenant_admin, name, role, created_at)
+                VALUES (${crypto.randomUUID()}::uuid, ${tenant.id}::uuid, ${company.id}::uuid, ${adminEmail}, crypt(${password}, gen_salt('bf')), true, true, true, 'System Admin', 'admin', NOW())
             `;
             console.log("Admin User Created.");
-        } else {
-            // Force Update Password just in case
-            await prisma.$executeRaw`
-                UPDATE app_user 
-                SET password = crypt(${password}, gen_salt('bf')),
-                is_active = true,
-                is_admin = true,
-                is_tenant_admin = true
-                WHERE id = ${existingUser.id}::uuid
-            `;
-            console.log("Admin User Updated.");
         }
 
-        // 5. Seed Registration Fee Product (Essential for Auto-Billing)
-        const feeProduct = await prisma.hms_product.upsert({
-            where: {
-                tenant_id_sku: {
-                    tenant_id: tenant.id,
-                    sku: 'REG-FEE'
-                }
-            },
-            update: {
-                price: 100,
-                is_active: true,
-                is_service: true
-            },
-            create: {
-                tenant_id: tenant.id,
-                company_id: company.id,
-                sku: 'REG-FEE',
-                name: 'Patient Registration Fee',
-                description: 'Standard hospital registration fee',
-                price: 100,
-                is_service: true,
-                is_stockable: false,
-                is_active: true,
-                uom: 'each'
+        // 5. Seed Professional Standard Products (Fees, Meds, Diagnostics)
+        const standardProducts = [
+            { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 100, is_service: true, stockable: false },
+            { sku: 'CONS-GEN', name: 'General Consultation', uom: 'VISIT', price: 250, is_service: true, stockable: false },
+            { sku: 'CONS-SPEC', name: 'Specialist Consultation', uom: 'VISIT', price: 500, is_service: true, stockable: false },
+            { sku: 'PARA-500', name: 'Paracetamol 500mg', uom: 'TAB', price: 5, is_service: false, stockable: true },
+            { sku: 'AMOX-500', name: 'Amoxicillin 500mg Strip', uom: 'STRIP', price: 85, is_service: false, stockable: true },
+            { sku: 'SYR-5ML', name: 'Disposable Syringe 5ml', uom: 'PCS', price: 15, is_service: false, stockable: true },
+            { sku: 'CBC-TEST', name: 'Complete Blood Count (CBC)', uom: 'TEST', price: 450, is_service: true, stockable: false },
+            { sku: 'CXR-SCAN', name: 'Chest X-Ray', uom: 'SCAN', price: 1200, is_service: true, stockable: false },
+        ];
+
+        for (const p of standardProducts) {
+            const existing = await prisma.hms_product.findFirst({
+                where: { tenant_id: tenant.id, sku: p.sku }
+            });
+
+            if (!existing) {
+                await prisma.hms_product.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: tenant.id,
+                        company_id: company.id,
+                        sku: p.sku,
+                        name: p.name,
+                        description: `Default ${p.name}`,
+                        price: p.price,
+                        is_service: p.is_service,
+                        is_stockable: p.stockable,
+                        is_active: true,
+                        uom: p.uom
+                    }
+                });
+            } else {
+                await prisma.hms_product.update({
+                    where: { id: existing.id },
+                    data: { price: p.price, is_active: true, is_service: p.is_service, uom: p.uom }
+                });
             }
-        });
-        console.log("Registration Fee Product Seeded.");
+        }
+        console.log("Standard Products Seeded.");
 
         // VERIFY IMMEDIATE
         const verify = await prisma.$queryRaw`

@@ -31,9 +31,9 @@ export async function getConsumptionHistory(encounterId: string) {
     const productIds = [...new Set(moves.map(m => m.product_id))]
     const products = await prisma.hms_product.findMany({
         where: { id: { in: productIds } },
-        select: { id: true, name: true }
+        select: { id: true, name: true, price: true }
     })
-    const productMap = new Map(products.map(p => [p.id, p.name]))
+    const productMap = new Map(products.map(p => [p.id, p]))
 
     // Fetch Invoice Status for this Encounter
     // We assume items consumed for this encounter are added to the encounter's primary invoice.
@@ -53,6 +53,8 @@ export async function getConsumptionHistory(encounterId: string) {
 
     moves.forEach(move => {
         const moveTime = new Date(move.created_at).getTime()
+        const product = productMap.get(move.product_id)
+        
         // Find an existing event close to this time (within 2 seconds)
         let event = events.find(e => Math.abs(new Date(e.timestamp).getTime() - moveTime) < 2000 && e.nurseId === move.created_by)
 
@@ -70,9 +72,10 @@ export async function getConsumptionHistory(encounterId: string) {
         }
 
         event.items.push({
-            productName: productMap.get(move.product_id) || 'Unknown Item',
+            productName: product?.name || 'Unknown Item',
             quantity: move.qty.toNumber(),
-            uom: move.uom
+            uom: move.uom,
+            price: Number(product?.price || 0)
         })
     })
 

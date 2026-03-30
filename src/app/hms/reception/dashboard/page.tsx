@@ -207,7 +207,17 @@ export default async function ReceptionDashboardPage() {
         const [vitalsRaw, tagsRaw] = await Promise.all([
             prisma.hms_vitals.findMany({
                 where: { encounter_id: { in: appointmentIds }, tenant_id: tenantId },
-                select: { encounter_id: true }
+                select: { 
+                    encounter_id: true,
+                    temperature: true,
+                    pulse: true,
+                    respiration: true,
+                    systolic: true,
+                    diastolic: true,
+                    spo2: true,
+                    weight: true,
+                    height: true
+                }
             }),
             prisma.hms_appointment_tags.findMany({
                 where: { appointment_id: { in: appointmentIds }, tenant_id: tenantId },
@@ -215,7 +225,10 @@ export default async function ReceptionDashboardPage() {
             })
         ]);
 
-        const vitalsSet = new Set(vitalsRaw.map(v => v.encounter_id));
+        const vitalsMap: Record<string, any> = {};
+        vitalsRaw.forEach(v => {
+            if (v.encounter_id) vitalsMap[v.encounter_id] = v;
+        });
 
         const tagsMap: Record<string, string[]> = {};
         tagsRaw.forEach(t => {
@@ -258,7 +271,8 @@ export default async function ReceptionDashboardPage() {
                 patient: apt.hms_patient,
                 clinician: apt.hms_clinician,
                 // Enhanced Status Flags
-                hasVitals: vitalsSet.has(apt.id),
+                hasVitals: !!vitalsMap[apt.id],
+                vitals: vitalsMap[apt.id] || null,
                 hasPrescription: apt.prescription && apt.prescription.length > 0,
                 tags: tagsMap[apt.id] || [],
                 invoiceStatus: hasPendingInvoice ? 'pending' : (isPaid ? 'paid' : 'none'),

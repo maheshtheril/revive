@@ -2,18 +2,12 @@ import { getUOMs, deleteUOM } from "@/app/actions/inventory"
 import { Scale, X, Ruler, Trash2, Box, Edit2, PackageOpen, HelpCircle } from "lucide-react"
 import Link from "next/link"
 import { CreateUOMForm } from "@/components/inventory/create-uom-form"
+import { UOMListClient } from "@/components/inventory/uom-list-client"
 import { seedPharmacyUOMs } from "@/app/actions/uom"
 import { revalidatePath } from "next/cache"
 
-export default async function UOMMasterPage({
-    searchParams
-}: {
-    searchParams: Promise<{ edit?: string }>
-}) {
-    const { edit } = await searchParams;
+export default async function UOMMasterPage() {
     const uoms = await getUOMs();
-
-    const editInitialData = edit ? uoms.find(u => u.id === edit) : undefined;
 
     return (
         <div className="min-h-screen bg-gray-50/40 pb-20">
@@ -67,15 +61,10 @@ export default async function UOMMasterPage({
                             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
-                                        {editInitialData ? 'Edit Unit' : 'New Unit'}
+                                        New Unit
                                     </h3>
-                                    {editInitialData && (
-                                        <Link href="/hms/inventory/uom" className="text-sm text-blue-600 hover:text-blue-800 font-bold px-3 py-1.5 bg-blue-50 rounded-lg transition-colors">
-                                            Cancel Edit
-                                        </Link>
-                                    )}
                                 </div>
-                                <CreateUOMForm initialData={editInitialData} uoms={uoms} />
+                                <CreateUOMForm uoms={uoms} />
                             </div>
 
                             {/* Info Card */}
@@ -124,70 +113,7 @@ export default async function UOMMasterPage({
                                 </p>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                                {uoms.map((u: any, i: number) => {
-                                    return (
-                                        <div
-                                            key={u.id}
-                                            className="group bg-white rounded-3xl border border-gray-200 p-6 hover:shadow-xl hover:-translate-y-1 hover:border-purple-300 transition-all duration-300 flex flex-col justify-between h-full relative overflow-hidden"
-                                            style={{ animationDelay: `${i * 50}ms` }}
-                                        >
-                                            {/* Decorative background element */}
-                                            <div className="absolute -right-6 -top-6 w-24 h-24 bg-gradient-to-br from-gray-50 to-gray-100 rounded-full opacity-50 group-hover:scale-150 group-hover:from-purple-50 group-hover:to-purple-100/50 transition-transform duration-700 ease-out z-0" />
-
-                                            <div className="relative z-10 flex items-start justify-between mb-8">
-                                                <div className="h-12 w-12 rounded-2xl flex items-center justify-center transition-colors shadow-sm bg-purple-100 text-purple-600 border border-purple-200">
-                                                    <Ruler className="h-6 w-6" />
-                                                </div>
-                                                <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
-                                                    <Link
-                                                        href={`/hms/inventory/uom?edit=${u.id}`}
-                                                        className="p-2.5 bg-gray-50 text-gray-600 hover:text-blue-700 hover:bg-blue-50/80 rounded-xl transition-all shadow-sm"
-                                                        title="Edit Unit"
-                                                    >
-                                                        <Edit2 className="h-4 w-4" />
-                                                    </Link>
-                                                    <form action={async () => {
-                                                        'use server'
-                                                        await deleteUOM(u.id)
-                                                    }}>
-                                                        <button
-                                                            type="submit"
-                                                            className="p-2.5 bg-gray-50 text-gray-600 hover:text-red-700 hover:bg-red-50/80 rounded-xl transition-all shadow-sm"
-                                                            title="Delete Unit"
-                                                        >
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </button>
-                                                    </form>
-                                                </div>
-                                            </div>
-
-                                            <div className="relative z-10">
-                                                <div className="flex items-center gap-3 mb-2">
-                                                    <h3 className="font-extrabold text-gray-900 text-xl tracking-tight">
-                                                        {u.name}
-                                                    </h3>
-                                                    {u.uom_type === 'reference' ? (
-                                                        <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-700 uppercase tracking-widest shadow-sm border border-purple-200">
-                                                            Base Unit
-                                                        </span>
-                                                    ) : (
-                                                        (() => {
-                                                            const baseUnit = uoms.find((bu: any) => bu.category_id === u.category_id && bu.uom_type === 'reference');
-                                                            const baseName = baseUnit ? baseUnit.name : 'Base Units';
-                                                            return (
-                                                                <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-blue-100 text-blue-700 uppercase tracking-widest shadow-sm border border-blue-200">
-                                                                    {`1 ${u.name} = ${Number(u.ratio)} ${baseName}`}
-                                                                </span>
-                                                            );
-                                                        })()
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
+                            <UOMListClient uoms={uoms} />
                         )}
                     </div>
                 </div>
@@ -195,3 +121,4 @@ export default async function UOMMasterPage({
         </div>
     )
 }
+

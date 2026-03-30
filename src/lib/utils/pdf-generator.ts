@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { getPDFConfig } from '@/app/actions/settings';
 
-export async function generateInvoicePDFBase64(invoice: any, company?: any): Promise<string> {
+export async function generateInvoicePDFBase64(invoice: any, company?: any, autoPrint: boolean = false): Promise<string> {
     try {
         const doc = new jsPDF('p', 'pt', 'a4');
         const pageWidth = doc.internal.pageSize.getWidth();
@@ -25,15 +25,20 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any): Pro
             : 'Premium Healthcare Services';
 
         // 1. Draw Title (TAX INVOICE) - always top left
-        doc.setTextColor(68, 68, 68);
-        doc.setFontSize(14); // Reduced from 26
-        doc.setFont('helvetica', 'bold');
-        doc.text('TAX INVOICE', margin, headerY);
+        const showTaxInvoice = config?.showTaxInvoiceTitle ?? true;
+        if (showTaxInvoice) {
+            doc.setTextColor(68, 68, 68);
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.text('TAX INVOICE', margin, headerY);
+            headerY += 15;
+        }
 
-        doc.setFontSize(8); // Slightly smaller
+        doc.setFontSize(8); 
         doc.setFont('helvetica', 'normal');
-        doc.text(`Invoice #: ${invoice.invoice_number}`, margin, headerY + 15);
-        doc.text(`Date: ${new Date(invoice.invoice_date || invoice.created_at).toLocaleDateString()}`, margin, headerY + 27);
+        doc.setTextColor(68, 68, 68);
+        doc.text(`Invoice #: ${invoice.invoice_number}`, margin, headerY);
+        doc.text(`Date: ${new Date(invoice.invoice_date || invoice.created_at).toLocaleDateString()}`, margin, headerY + 12);
 
         // 2. Draw Logo if enabled
         let logoHeight = 0;
@@ -189,6 +194,10 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any): Pro
         doc.text(footerText1, pageWidth / 2, 780, { align: 'center' });
         doc.text(footerText2, pageWidth / 2, 795, { align: 'center' });
 
+        if (autoPrint) {
+            doc.autoPrint({ variant: 'non-conform' });
+        }
+
         return doc.output('datauristring').split(',')[1];
     } catch (err) {
         throw err;
@@ -198,19 +207,30 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any): Pro
 /**
  * Helper to fetch external image and convert to Base64 for PDF embedding
  */
-async function fetchImageAsBase64(url: string): Promise<string | null> {
+async function fetchImageAsBase64(url: string, timeoutMs: number = 3000): Promise<string | null> {
     try {
         if (!url) return null;
         if (url.startsWith('data:')) return url;
 
-        const response = await fetch(url);
-        if (!response.ok) return null;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const mimeType = response.headers.get('content-type') || 'image/png';
+        try {
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeout);
+            
+            if (!response.ok) return null;
 
-        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const mimeType = response.headers.get('content-type') || 'image/png';
+
+            return `data:${mimeType};base64,${buffer.toString('base64')}`;
+        } catch (fetchErr) {
+            clearTimeout(timeout);
+            console.error("[PDF-Logo] Fetch timed out or failed:", url);
+            return null;
+        }
     } catch (error) {
         console.error("fetchImageAsBase64 failed:", error);
         return null;

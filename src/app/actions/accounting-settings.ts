@@ -45,10 +45,10 @@ export async function updateAccountingSettings(data: any) {
             fiscal_year_end,
             currency_precision,
             rounding_method,
-            // lock_date, // REMOVED: Managed by lockAccountingPeriod
             retained_earnings_account_id,
+            default_tax_mode,
 
-            // Journals (Existing fields exposed)
+            // Journals
             sales_journal_id,
             purchase_journal_id,
             bank_journal_id,
@@ -77,90 +77,73 @@ export async function updateAccountingSettings(data: any) {
             exchange_gain_loss_account_id
         } = data;
 
-        // Upsert settings for this company
-        await (prisma.company_accounting_settings.upsert as any)({
-            where: { company_id: session.user.companyId },
-            create: {
-                tenant_id: session.user.tenantId!,
-                company_id: session.user.companyId!,
+        await Promise.all([
+            // 1. Update Accounting Settings
+            (prisma.company_accounting_settings.upsert as any)({
+                where: { company_id: session.user.companyId },
+                create: {
+                    tenant_id: session.user.tenantId!,
+                    company_id: session.user.companyId!,
+                    fiscal_year_start: fiscal_year_start ? new Date(fiscal_year_start) : new Date(new Date().getFullYear(), 0, 1),
+                    fiscal_year_end: fiscal_year_end ? new Date(fiscal_year_end) : new Date(new Date().getFullYear(), 11, 31),
+                    currency_precision: currency_precision ? parseInt(currency_precision) : 2,
+                    rounding_method: rounding_method || 'ROUND_HALF_UP',
+                    retained_earnings_account_id: retained_earnings_account_id || null,
+                    sales_journal_id: sales_journal_id || null,
+                    purchase_journal_id: purchase_journal_id || null,
+                    bank_journal_id: bank_journal_id || null,
+                    cash_journal_id: cash_journal_id || null,
+                    general_journal_id: general_journal_id || null,
+                    ar_account_id: ar_account_id || null,
+                    sales_account_id: sales_account_id || null,
+                    output_tax_account_id: output_tax_account_id || null,
+                    default_sale_tax_id: default_sale_tax_id || null,
+                    sales_discount_account_id: sales_discount_account_id || null,
+                    ap_account_id: ap_account_id || null,
+                    purchase_account_id: purchase_account_id || null,
+                    input_tax_account_id: input_tax_account_id || null,
+                    purchase_discount_account_id: purchase_discount_account_id || null,
+                    inventory_asset_account_id: inventory_asset_account_id || null,
+                    cogs_account_id: cogs_account_id || null,
+                    stock_adjustment_account_id: stock_adjustment_account_id || null,
+                    exchange_gain_loss_account_id: exchange_gain_loss_account_id || null
+                },
+                update: {
+                    fiscal_year_start: fiscal_year_start ? new Date(fiscal_year_start) : undefined,
+                    fiscal_year_end: fiscal_year_end ? new Date(fiscal_year_end) : undefined,
+                    currency_precision: currency_precision ? parseInt(currency_precision) : 2,
+                    rounding_method: rounding_method || 'ROUND_HALF_UP',
+                    retained_earnings_account_id: retained_earnings_account_id || null,
+                    sales_journal_id: sales_journal_id || null,
+                    purchase_journal_id: purchase_journal_id || null,
+                    bank_journal_id: bank_journal_id || null,
+                    cash_journal_id: cash_journal_id || null,
+                    general_journal_id: general_journal_id || null,
+                    ar_account_id: ar_account_id || null,
+                    sales_account_id: sales_account_id || null,
+                    output_tax_account_id: output_tax_account_id || null,
+                    default_sale_tax_id: default_sale_tax_id || null,
+                    sales_discount_account_id: sales_discount_account_id || null,
+                    ap_account_id: ap_account_id || null,
+                    purchase_account_id: purchase_account_id || null,
+                    input_tax_account_id: input_tax_account_id || null,
+                    purchase_discount_account_id: purchase_discount_account_id || null,
+                    inventory_asset_account_id: inventory_asset_account_id || null,
+                    cogs_account_id: cogs_account_id || null,
+                    stock_adjustment_account_id: stock_adjustment_account_id || null,
+                    exchange_gain_loss_account_id: exchange_gain_loss_account_id || null
+                }
+            }),
 
-                // General
-                fiscal_year_start: fiscal_year_start ? new Date(fiscal_year_start) : new Date(new Date().getFullYear(), 0, 1),
-                fiscal_year_end: fiscal_year_end ? new Date(fiscal_year_end) : new Date(new Date().getFullYear(), 11, 31),
-                currency_precision: currency_precision ? parseInt(currency_precision) : 2,
-                rounding_method: rounding_method || 'ROUND_HALF_UP',
-                // lock_date: lock_date ? new Date(lock_date) : undefined, // REMOVED
-                retained_earnings_account_id: retained_earnings_account_id || null,
+            // 2. Sync with Company Settings for Billing Mode
+            prisma.company_settings.update({
+                where: { company_id: session.user.companyId },
+                data: { hms_billing_mode: default_tax_mode || 'exclusive' }
+            })
+        ]);
 
-                // Journals
-                sales_journal_id: sales_journal_id || null,
-                purchase_journal_id: purchase_journal_id || null,
-                bank_journal_id: bank_journal_id || null,
-                cash_journal_id: cash_journal_id || null,
-                general_journal_id: general_journal_id || null,
-
-                // Sales
-                ar_account_id: ar_account_id || null,
-                sales_account_id: sales_account_id || null,
-                output_tax_account_id: output_tax_account_id || null,
-                default_sale_tax_id: default_sale_tax_id || null,
-                sales_discount_account_id: sales_discount_account_id || null,
-
-                // Purchases
-                ap_account_id: ap_account_id || null,
-                purchase_account_id: purchase_account_id || null,
-                input_tax_account_id: input_tax_account_id || null,
-                purchase_discount_account_id: purchase_discount_account_id || null,
-
-                // Inventory
-                inventory_asset_account_id: inventory_asset_account_id || null,
-                cogs_account_id: cogs_account_id || null,
-                stock_adjustment_account_id: stock_adjustment_account_id || null,
-
-                // Advanced
-                exchange_gain_loss_account_id: exchange_gain_loss_account_id || null
-            },
-            update: {
-                // General
-                fiscal_year_start: fiscal_year_start ? new Date(fiscal_year_start) : undefined,
-                fiscal_year_end: fiscal_year_end ? new Date(fiscal_year_end) : undefined,
-                currency_precision: currency_precision ? parseInt(currency_precision) : 2,
-                rounding_method: rounding_method || 'ROUND_HALF_UP',
-                // lock_date: lock_date ? new Date(lock_date) : null, // REMOVED
-                retained_earnings_account_id: retained_earnings_account_id || null,
-
-                // Journals
-                sales_journal_id: sales_journal_id || null,
-                purchase_journal_id: purchase_journal_id || null,
-                bank_journal_id: bank_journal_id || null,
-                cash_journal_id: cash_journal_id || null,
-                general_journal_id: general_journal_id || null,
-
-                // Sales
-                ar_account_id: ar_account_id || null,
-                sales_account_id: sales_account_id || null,
-                output_tax_account_id: output_tax_account_id || null,
-                default_sale_tax_id: default_sale_tax_id || null,
-                sales_discount_account_id: sales_discount_account_id || null,
-
-                // Purchases
-                ap_account_id: ap_account_id || null,
-                purchase_account_id: purchase_account_id || null,
-                input_tax_account_id: input_tax_account_id || null,
-                purchase_discount_account_id: purchase_discount_account_id || null,
-
-                // Inventory
-                inventory_asset_account_id: inventory_asset_account_id || null,
-                cogs_account_id: cogs_account_id || null,
-                stock_adjustment_account_id: stock_adjustment_account_id || null,
-
-                // Advanced
-                exchange_gain_loss_account_id: exchange_gain_loss_account_id || null
-            }
-        })
-
-        revalidatePath('/settings/accounting')
-        return { success: true }
+        revalidatePath('/settings/accounting');
+        return { success: true };
     } catch (error: any) {
         console.error("Error updating settings:", error);
         return { error: error.message || "Failed to update settings" };

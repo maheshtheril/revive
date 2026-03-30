@@ -60,6 +60,7 @@ export function AccountingSettingsForm({ settings, accounts, taxRates, taxLabel,
         stock_adjustment_account_id: settings?.stock_adjustment_account_id || '',
 
         rounding_method: settings?.rounding_method || 'ROUND_HALF_UP',
+        default_tax_mode: settings?.default_tax_mode || 'exclusive',
     })
 
     const [paymentMap, setPaymentMap] = useState(paymentMappings || {
@@ -298,6 +299,19 @@ export function AccountingSettingsForm({ settings, accounts, taxRates, taxLabel,
                             {accounts.filter(a => a.type === 'Liability').map(a => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}
                         </select>
                         <p className={subLabelClass}>Tax collected from customers (Liability).</p>
+                    </div>
+                    <div className="space-y-1">
+                        <label className={labelClass}>Default Tax Mode (Billing)</label>
+                        <select 
+                            value={formData.default_tax_mode} 
+                            onChange={e => setFormData({ ...formData, default_tax_mode: e.target.value })} 
+                            className={inputClass}
+                        >
+                            <option value="exclusive">Exclusive (Price + Tax)</option>
+                            <option value="inclusive">Inclusive (Price includes Tax)</option>
+                            <option value="exempt">Exempt (No Tax for B2C/Unregistered)</option>
+                        </select>
+                        <p className={subLabelClass}>Determines the default behavior for new Pharmacy bills.</p>
                     </div>
                 </div>
             </div>

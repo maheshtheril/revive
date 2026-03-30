@@ -540,6 +540,17 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                             const rate = !isNaN(parseFloat(item.taxRate)) ? parseFloat(item.taxRate) : 0;
                             const freeQty = !isNaN(parseFloat(item.freeQty)) ? parseFloat(item.freeQty) : 0;
 
+                            const discPct = Number(item.discountPct) || 0;
+                            const schAmt = Number(item.schemeDiscount) || 0;
+                            
+                            // Smart Correction: If AI puts a large amount in Pct field by mistake (e.g. 568.22)
+                            let finalDiscPct = discPct;
+                            let finalSchAmt = schAmt;
+                            if (discPct > 50 && schAmt === 0) { // Large percentages are usually amounts
+                                finalSchAmt = discPct;
+                                finalDiscPct = 0;
+                            }
+
                             const rawItem = {
                                 productId: pId,
                                 productName: item.productName || "Unknown Item",
@@ -558,8 +569,8 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                 packing: item.packing || "",
                                 uom: item.uom ? item.uom.trim().toUpperCase() : "PCS",
                                 conversionFactor: 1,
-                                schemeDiscount: Number(item.schemeDiscount) || 0,
-                                discountPct: Number(item.discountPct) || 0,
+                                schemeDiscount: finalSchAmt,
+                                discountPct: finalDiscPct,
                                 discountAmt: Number(item.discountAmt) || 0,
                                 freeQty: freeQty
                             };
@@ -604,7 +615,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
     };
 
     const normalizeDate = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString().split('T')[0];
+        if (!dateStr) return "";
 
         // If already YYYY-MM-DD
         if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -616,13 +627,30 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
             return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
         }
 
+        // Handle MM/YY (Common in Pharma) - Convert to YYYY-MM-DD (last day of month)
+        const mmyyMatch = dateStr.match(/^(\d{1,2})[/-](\d{2,4})$/);
+        if (mmyyMatch) {
+            let [_, m, y] = mmyyMatch;
+            if (y.length === 2) y = "20" + y;
+            const lastDay = new Date(Number(y), Number(m), 0).getDate();
+            return `${y}-${m.padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        }
+
         // Try native parsing
         const parsed = new Date(dateStr);
         if (!isNaN(parsed.getTime())) {
             return parsed.toISOString().split('T')[0];
         }
 
-        return new Date().toISOString().split('T')[0];
+        return dateStr; // Fallback to raw if unparseable
+    };
+
+    const formatDisplayDate = (dateStr: string): string => {
+        if (!dateStr || !dateStr.includes('-')) return dateStr;
+        const [y, m, d] = dateStr.split('-');
+        if (!y || !m || !d) return dateStr;
+        // Global choice: DD/MM/YYYY (European)
+        return `${d}/${m}/${y}`;
     };
 
     const handleSubmit = async () => {
@@ -1192,7 +1220,16 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                 <input value={item.batch || ''} onChange={(e) => { const n = [...items]; n[index].batch = e.target.value; setItems(n); }} className="w-full bg-transparent border-none text-[10px] font-mono p-0 focus:ring-0 text-foreground" />
                                             </td>
                                             <td className="py-1.5 px-2 text-center">
-                                                <input value={item.expiry || ''} onChange={(e) => { const n = [...items]; n[index].expiry = e.target.value; setItems(n); }} placeholder="MM/YY" className="w-full bg-transparent border-none text-[10px] font-mono p-0 focus:ring-0 text-muted-foreground text-center" />
+                                                <input 
+                                                    value={formatDisplayDate(item.expiry)} 
+                                                    onChange={(e) => { 
+                                                        const n = [...items]; 
+                                                        n[index].expiry = normalizeDate(e.target.value); 
+                                                        setItems(n); 
+                                                    }} 
+                                                    placeholder="DD/MM/YYYY" 
+                                                    className="w-full bg-transparent border-none text-[10px] font-mono p-0 focus:ring-0 text-muted-foreground text-center" 
+                                                />
                                             </td>
                                             <td className="py-1.5 px-2 text-right">
                                                 <input

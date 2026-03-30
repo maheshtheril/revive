@@ -42,18 +42,15 @@ export default async function DoctorsPage({
 
     // World-class auto-seeding if data is missing
     if (departments.length < 5 || roles.length < 5) {
-        // Departments Seeding
+        // Departments Seeding (Optimized)
         const deptNames = ["Clinical Services", "Accounts & Finance", "Human Resources", "Administration", "Pharmacy", "Laboratory", "Emergency (ER)"];
-        for (const name of deptNames) {
-            const exists = departments.find(d => d.name === name);
-            if (!exists) {
-                await prisma.hms_departments.create({
-                    data: { id: randomUUID(), tenant_id: tenantId, company_id: companyId, name, code: name.substring(0, 3).toUpperCase() }
-                });
-            }
-        }
+        const deptPromises = deptNames
+            .filter(name => !departments.find(d => d.name === name))
+            .map(name => prisma.hms_departments.create({
+                data: { id: randomUUID(), tenant_id: tenantId, company_id: companyId, name, code: name.substring(0, 3).toUpperCase() }
+            }));
 
-        // Roles Seeding
+        // Roles Seeding (Optimized)
         const roleData = [
             { name: "Senior Consultant", clinical: true },
             { name: "Resident Doctor", clinical: true },
@@ -63,14 +60,14 @@ export default async function DoctorsPage({
             { name: "Front Desk Executive", clinical: false },
             { name: "HR Manager", clinical: false }
         ];
-        for (const r of roleData) {
-            const exists = roles.find(role => role.name === r.name);
-            if (!exists) {
-                await prisma.hms_roles.create({
-                    data: { id: randomUUID(), tenant_id: tenantId, company_id: companyId, name: r.name, is_clinical: r.clinical }
-                });
-            }
-        }
+        const rolePromises = roleData
+            .filter(r => !roles.find(role => role.name === r.name))
+            .map(r => prisma.hms_roles.create({
+                data: { id: randomUUID(), tenant_id: tenantId, company_id: companyId, name: r.name, is_clinical: r.clinical }
+            }));
+
+        // Execute all creates in parallel
+        await Promise.all([...deptPromises, ...rolePromises]);
 
         // Re-fetch after seeding
         [departments, roles, specializations] = await Promise.all([

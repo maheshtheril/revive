@@ -61,7 +61,7 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                         invoiceId={invoice.id}
                         patientId={invoice.hms_patient?.id || ''}
                         patientName={`${invoice.hms_patient?.first_name || 'Guest'} ${invoice.hms_patient?.last_name || ''}`}
-                        items={invoice.hms_invoice_lines}
+                        items={JSON.parse(JSON.stringify(invoice.hms_invoice_lines))}
                     />
                     <Link href={invoice.hms_patient?.id ? `/hms/billing/new?patientId=${invoice.hms_patient.id}` : '/hms/billing/new'}>
                         <Button variant="outline" size="sm">
@@ -73,7 +73,7 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                         currentStatus={invoice.status || 'draft'}
                         outstandingAmount={Number(invoice.outstanding_amount || 0)}
                         patientEmail={(invoice.hms_patient?.contact as any)?.email}
-                        invoiceData={{ ...invoice, company: company }} // Pass merged data
+                        invoiceData={JSON.parse(JSON.stringify({ ...invoice, company: company }))} // Pass serialized data
                     />
                 </div>
             </div>

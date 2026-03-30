@@ -81,8 +81,14 @@ export function SearchableSelect({
         // We only want to sync options with propOptions when search is cleared/idle.
         if (query) return;
 
-        setOptions(propOptions);
-    }, [propOptions, query]);
+        // Content comparison to avoid infinite loops from unmemoized props (e.g. .slice() or filtered arrays)
+        const currentOptionsIds = options.map(o => o.id).join(',');
+        const propOptionsIds = propOptions.map(o => o.id).join(',');
+        
+        if (currentOptionsIds !== propOptionsIds) {
+            setOptions(propOptions);
+        }
+    }, [propOptions, query, options]);
 
     // Reset active index when options change
     React.useEffect(() => {
@@ -389,7 +395,7 @@ export function SearchableSelect({
                         }
                     }}
                 >
-                    <div className="flex items-center min-h-[42px] gap-2">
+                    <div className="flex items-center min-h-[40px] gap-2">
                         {variant === 'default' && <Search className="h-4 w-4 text-gray-400 dark:text-neutral-500 shrink-0" />}
 
                         {selectedOption && !open && variant === 'default' ? (

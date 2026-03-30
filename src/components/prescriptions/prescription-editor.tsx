@@ -117,36 +117,41 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
 
     // If no patientId but have appointmentId, fetch appointment to get patientId
     useEffect(() => {
+        let isMounted = true;
         if (patientId || !appointmentId) return;
 
         fetch(`/api/appointments/${appointmentId}`)
             .then(res => res.json())
             .then(data => {
-                if (data.appointment?.patient_id) {
+                if (isMounted && data.appointment?.patient_id) {
                     setResolvedPatientId(data.appointment.patient_id);
                     fetch(`/api/patients/${data.appointment.patient_id}`)
                         .then(res => res.json())
                         .then(pData => {
-                            if (pData.patient) setPatientInfo(pData.patient)
+                            if (isMounted && pData.patient) setPatientInfo(pData.patient)
                         });
                 }
             })
             .catch(err => console.error('Error fetching appointment for patient info:', err));
+        return () => { isMounted = false; };
     }, [appointmentId, patientId]);
 
     useEffect(() => {
+        let isMounted = true;
         if (appointmentId) {
             getLabReportForAppointment(appointmentId).then(res => {
-                if (res.success && res.reportUrl) {
+                if (isMounted && res.success && res.reportUrl) {
                     setLabReportUrl(res.reportUrl)
                 }
             })
         }
+        return () => { isMounted = false; };
     }, [appointmentId])
 
     // Fetch existing prescription and nurse vitals
     useEffect(() => {
-        if (!appointmentId && !prescriptionId) return;
+        let isMounted = true;
+        if (!appointmentId && !prescriptionId && !patientId) return;
 
         const endpoint = prescriptionId
             ? `/api/prescriptions/${prescriptionId}`
@@ -155,6 +160,7 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
         fetch(endpoint)
             .then(res => res.json())
             .then(data => {
+                if (!isMounted) return;
                 if (data.success) {
                     const pr = data.prescription;
                     const vt = data.vitals;
@@ -181,44 +187,52 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                             fetch(`/api/patients/${pr.patient_id}`)
                                 .then(res => res.json())
                                 .then(pData => {
-                                    if (pData.patient) setPatientInfo(pData.patient)
+                                    if (isMounted && pData.patient) setPatientInfo(pData.patient)
                                 });
                         }
                     }
                 }
             })
             .catch(err => console.error('Error fetching existing data:', err));
+
+        return () => { isMounted = false; };
     }, [appointmentId, prescriptionId, patientId]);
 
     useEffect(() => {
+        let isMounted = true;
         fetch('/api/medicines')
             .then(res => res.json())
             .then(data => {
-                if (data.medicines) setMedicines(data.medicines)
+                if (isMounted && data.medicines) setMedicines(data.medicines)
             })
             .catch(err => console.error(err))
+        return () => { isMounted = false; };
     }, [])
 
     // Fetch lab tests
     useEffect(() => {
+        let isMounted = true;
         const timer = setTimeout(() => {
             if (labSearch.trim()) {
                 setIsSearchingLabs(true)
                 fetch(`/api/hms/lab-tests?q=${encodeURIComponent(labSearch)}`)
                     .then(res => res.json())
                     .then(data => {
-                        if (data.success) {
+                        if (isMounted && data.success) {
                             setFilteredLabs(data.tests)
                             setShowLabDropdown(true)
                         }
                     })
-                    .finally(() => setIsSearchingLabs(false))
+                    .finally(() => { if (isMounted) setIsSearchingLabs(false) })
             } else {
                 setFilteredLabs([])
                 setShowLabDropdown(false)
             }
         }, 300)
-        return () => clearTimeout(timer)
+        return () => {
+            isMounted = false;
+            clearTimeout(timer);
+        }
     }, [labSearch])
 
     const addLabTest = (test: any) => {

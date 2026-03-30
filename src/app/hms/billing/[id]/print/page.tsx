@@ -8,18 +8,40 @@ import { getCurrentCompany } from "@/app/actions/company"
 import { Printer } from "lucide-react"
 import { InvoiceControlPanel } from "@/components/billing/invoice-control-panel"
 
+import { getHMSSettings, getPDFSettings } from "@/app/actions/settings"
+
 export default async function PrintPage({ params, searchParams }: {
     params: Promise<{ id: string }>,
     searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
     const session = await auth();
     const { id } = await params;
-    const { type, action } = await searchParams;
+    const { type, action, mode } = await searchParams;
 
     if (!session?.user?.companyId) return <div>Unauthorized</div>;
 
     const companyData = await getCurrentCompany();
     if (!companyData) return <div>Company configuration not found</div>;
+
+    const hmsSettingsRes = await getHMSSettings();
+    const hmsSettings = hmsSettingsRes.success ? hmsSettingsRes.settings : null;
+    
+    // Support manual override 'mode' from URL, otherwise fallback to decoupled settings
+    const isPrescription = type === 'prescription';
+    
+    let printMode: 'standard' | 'letterhead' = 'standard';
+    if (mode === 'letterhead' || mode === 'standard') {
+        printMode = mode as 'standard' | 'letterhead';
+    } else {
+        // Fallback to settings
+        printMode = isPrescription 
+            ? (hmsSettings?.opSlipPreprintedLetterhead ? 'letterhead' : 'standard')
+            : (hmsSettings?.billPreprintedLetterhead ? 'letterhead' : 'standard');
+    }
+
+    const headerHeight = isPrescription 
+        ? (hmsSettings?.opSlipHeaderHeight || '4.5')
+        : (hmsSettings?.billHeaderHeight || '4.5');
 
     // --- Prescription Print View ---
     if (type === 'prescription') {
@@ -36,12 +58,13 @@ export default async function PrintPage({ params, searchParams }: {
         if (!prescription) return notFound();
 
         return (
-            <PremiumPrintWrapper>
+            <PremiumPrintWrapper printMode={printMode} headerHeight={headerHeight}>
                 <PremiumPrintHeader
                     company={companyData as any}
                     title="PRESCRIPTION"
                     subtitle="Clinical EMR Record"
                     documentNumber={prescription.id.substring(0, 8).toUpperCase()}
+                    hide={printMode === 'letterhead'}
                 />
 
                 <div className="flex-1">
@@ -49,7 +72,7 @@ export default async function PrintPage({ params, searchParams }: {
                     <div className="grid grid-cols-2 gap-8 mb-10 bg-slate-50 p-8 rounded-2xl border border-slate-100 relative overflow-hidden">
                         <div className="relative z-10 font-sans">
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-2 text-left">Patient Details</p>
-                            <p className="text-2xl font-bold text-slate-800 mb-1">{prescription.hms_patient?.first_name} {prescription.hms_patient?.last_name}</p>
+                            <p className="text-2xl font-bold text-slate-800 mb-1">Dr. {prescription.hms_patient?.first_name} {prescription.hms_patient?.last_name}</p>
                             <div className="flex gap-4 text-sm font-bold text-slate-600">
                                 <span>{prescription.hms_patient?.gender}</span>
                                 <span className="text-slate-300">|</span>
@@ -144,7 +167,7 @@ export default async function PrintPage({ params, searchParams }: {
     if (!invoice) return notFound();
 
     return (
-        <PremiumPrintWrapper>
+        <PremiumPrintWrapper printMode={printMode} headerHeight={headerHeight}>
             {/* Interactive Control Panel (Hidden when printing) */}
             <div className="print:hidden w-full flex items-center justify-between gap-4 mb-8 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
                 <div className="flex items-center gap-3">
@@ -173,6 +196,7 @@ export default async function PrintPage({ params, searchParams }: {
                 title="TAX INVOICE"
                 subtitle="Financial Transaction Record"
                 documentNumber={invoice.invoice_number}
+                hide={printMode === 'letterhead'}
             />
 
             <div className="flex-1">

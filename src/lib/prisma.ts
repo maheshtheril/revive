@@ -13,7 +13,7 @@ const prismaClientSingleton = () => {
     connectionString,
     connectionTimeoutMillis: 5000,  // Reduced from 10s — fail fast, don't hang the user
     idleTimeoutMillis: 10000,       // Release idle connections quickly
-    max: 3,                         // Reduced from 20 — serverless doesn't need large pools
+    max: isLocal ? 10 : 3,                         // Increased for local dev to avoid exhaustion
     keepAlive: true,                // Keeps TCP connection warm to reduce Neon wake-up time
     ssl: isLocal ? false : { rejectUnauthorized: false }
   });

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 // Version 1.0.6 - Hardened Against DB Failures
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/contexts/theme-context";
@@ -10,13 +10,13 @@ import { LocalizationProvider } from "@/contexts/localization-context";
 // Force dynamic rendering for all pages to prevent build-time database access
 export const dynamic = 'force-dynamic'
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-geist-sans", // Keeping variable name consistent with existing CSS
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const robotoMono = Roboto_Mono({
+  variable: "--font-geist-mono", // Keeping variable name consistent with existing CSS
   subsets: ["latin"],
 });
 
@@ -71,15 +71,14 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // HARDENED: This must NEVER crash the app.
-  try { await auditAndFixMenuPermissions(); } catch (e) {
-    console.error('[layout] auditAndFixMenuPermissions failed silently:', e);
-  }
+  // ASYNC SELF-HEALING: We fire this in the background so it doesn't block the UI render.
+  // This prevents the 'Blank Screen' issue caused by Prisma pool exhaustion during startup.
+  auditAndFixMenuPermissions().catch(e => console.error('[layout] background audit failed:', e));
 
   return (
     <html lang="en" suppressHydrationWarning className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${robotoMono.variable} antialiased`}
       >
         <AuthProvider>
           <LocalizationProvider>

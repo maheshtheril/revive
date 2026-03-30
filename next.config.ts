@@ -30,6 +30,10 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  // PERMANENT CACHE BUSTING: Forces the browser to refresh all resources on every restart.
+  generateBuildId: async () => {
+    return `ziona-hms-${Date.now()}`;
+  },
 };
 
 export default nextConfig;

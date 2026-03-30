@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { updateGlobalSettings, updateTenantSettings, updateWhatsAppSettings, updatePDFSettings } from '@/app/actions/settings'
+import { updateGlobalSettings, updateTenantSettings, updateWhatsAppSettings, updatePDFSettings, updateAISettings } from '@/app/actions/settings'
 import { Loader2, Save, Building2, Coins, ShieldCheck, Database, Layout, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Eye, EyeOff, Zap, Sparkles } from 'lucide-react'
 import { toast } from '@/components/ui/use-toast'
 import { FileUpload } from '@/components/ui/file-upload'
@@ -23,9 +23,10 @@ interface Props {
     isAdmin: boolean
     whatsappSettings?: any
     pdfSettings?: any
+    aiSettings?: any
 }
 
-export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin, isAdmin, whatsappSettings, pdfSettings }: Props) {
+export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin, isAdmin, whatsappSettings, pdfSettings, aiSettings }: Props) {
     const { update } = useSession()
     const router = useRouter()
     const [loading, setLoading] = useState(false)
@@ -65,6 +66,12 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [pdfAddressSize, setPdfAddressSize] = useState(pdfSettings?.addressSize || 10)
     const [pdfShowContactInfo, setPdfShowContactInfo] = useState(pdfSettings?.showContactInfo ?? true)
     const [pdfAutoPrint, setPdfAutoPrint] = useState(pdfSettings?.autoPrint ?? false)
+    
+    // AI Settings
+    const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
+    const [aiApiKey, setAiApiKey] = useState('')
+    const [showAiApiKey, setShowAiApiKey] = useState(false)
+    const [hasExistingAiKey, setHasExistingAiKey] = useState(aiSettings?.hasKey ?? false)
 
     // Sync state with props when they change from server
     useEffect(() => {
@@ -108,12 +115,19 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
         }
     }, [pdfSettings]);
 
+    useEffect(() => {
+        if (aiSettings) {
+            setAiEnabled(aiSettings.enabled ?? true);
+            setHasExistingAiKey(aiSettings.hasKey ?? false);
+        }
+    }, [aiSettings]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setLoading(true)
 
         try {
-            const [result, whatsappRes, pdfRes] = await Promise.all([
+            const [result, whatsappRes, pdfRes, aiRes] = await Promise.all([
                 updateGlobalSettings({
                     companyId: company.id,
                     name,
@@ -141,12 +155,18 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     hospitalNameSize: pdfHospitalNameSize,
                     addressSize: pdfAddressSize,
                     showContactInfo: pdfShowContactInfo,
-                    autoPrint: pdfAutoPrint
+                    autoPrint: pdfAutoPrint,
+                    showTaxInvoiceTitle: true // Add required property
+                }),
+                updateAISettings({
+                    enabled: aiEnabled,
+                    apiKey: aiApiKey || undefined
+                    // removed invalid companyId
                 })
             ])
 
             let tenantResult = { success: true, error: null as string | null };
-            if (isTenantAdmin) {
+            if (isTenantAdmin || isAdmin) {
                 const res = await updateTenantSettings({
                     tenantId: tenant.id,
                     appName,
@@ -160,15 +180,16 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                 }
             }
 
-            if (result.success && tenantResult.success && whatsappRes.success && pdfRes.success) {
-                if (isTenantAdmin) {
+            if (result.success && tenantResult.success && whatsappRes.success && pdfRes.success && aiRes.success) {
+                if (isTenantAdmin || isAdmin) {
                     await update({ dbUrl: dbUrl || null });
                 }
-                toast({ title: "Settings Updated", description: "Global, WhatsApp, and PDF settings saved successfully." });
+                toast({ title: "Settings Updated", description: "Global, WhatsApp, PDF, and AI settings saved successfully." });
                 if (whatsappToken) { setWhatsappToken(''); setHasExistingWhatsappToken(true); }
+                if (aiApiKey) { setAiApiKey(''); setHasExistingAiKey(true); }
                 router.refresh()
             } else {
-                const errorMsg = result.error || tenantResult.error || whatsappRes.error || pdfRes.error;
+                const errorMsg = result.error || tenantResult.error || whatsappRes.error || pdfRes.error || aiRes.error;
                 toast({ title: "Error", description: errorMsg || "Something went wrong", variant: "destructive" });
             }
         } catch (err: any) {
@@ -177,6 +198,45 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
             setLoading(false)
         }
     }
+
+    const handleTestAi = async () => {
+        setLoading(true);
+        toast({ title: "Testing AI...", description: "Connecting to Google Gemini..." });
+
+        try {
+            const res = await fetch('/api/ai-verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ testKey: aiApiKey })
+            });
+
+            const result = await res.json();
+            
+            if (result.success) {
+                toast({ 
+                    title: "AI Connection OK! ✓", 
+                    description: "Your key is working perfectly. Don't forget to SAVE all settings.",
+                    variant: "default",
+                    className: "bg-emerald-600 text-white"
+                });
+                setHasExistingAiKey(true);
+            } else {
+                const isNotEnabled = (result.error || "").toLowerCase().includes("not enabled") || (result.error || "").includes("404");
+                toast({ 
+                    title: isNotEnabled ? "⚠️ FIX REQUIRED: Enable API" : "AI Test FAILED ✗", 
+                    description: isNotEnabled 
+                        ? "Google says 'API Not Enabled'. Please use a key from https://aistudio.google.com/app/apikey - it works instantly!"
+                        : result.error || "Connection error. Please check your key.", 
+                    variant: "destructive",
+                    duration: 10000 // Show longer to allow reading
+                });
+            }
+        } catch (err: any) {
+            toast({ title: "Error", description: err.message, variant: "destructive" });
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return (
         <form onSubmit={handleSubmit} className="space-y-8 max-w-4xl pb-24 animate-in fade-in duration-500">
@@ -379,13 +439,82 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                 </CardContent>
             </Card>
 
+            {/* 4. AI & AUTOMATION (Gemini) */}
+            <Card className="border-indigo-200 dark:border-slate-800 shadow-md bg-white dark:bg-slate-900 border-l-4 border-l-indigo-600">
+                <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50">
+                    <CardTitle className="flex items-center gap-3 text-indigo-900 dark:text-indigo-100 italic font-black">
+                        <Sparkles className="h-5 w-5 text-indigo-600 animate-pulse" />
+                        AI POWERED AUTOMATION
+                    </CardTitle>
+                    <CardDescription className="text-xs font-bold text-slate-500 uppercase tracking-widest">Configure Google Gemini for Invoice & PDF Scanning</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-6">
+                    <div className="flex items-center justify-between p-4 bg-indigo-50/30 dark:bg-indigo-900/10 rounded-2xl border border-indigo-100 dark:border-indigo-900/20">
+                        <div className="flex items-center gap-3">
+                            <Zap className="h-5 w-5 text-indigo-500" />
+                            <div>
+                                <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 italic">Enable AI Scanning</h4>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Auto-populate Purchase Entries from PDF bills</p>
+                            </div>
+                        </div>
+                        <Switch checked={aiEnabled} onCheckedChange={setAiEnabled} />
+                    </div>
+
+                    <div className={`space-y-4 ${!aiEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">
+                                Google Gemini API Key
+                                <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-600 hover:underline">Get Free Key →</a>
+                            </Label>
+                            <div className="relative">
+                                <Input 
+                                    type={showAiApiKey ? 'text' : 'password'} 
+                                    value={aiApiKey} 
+                                    onChange={e => setAiApiKey(e.target.value)} 
+                                    placeholder={
+                                        aiApiKey 
+                                            ? 'Entering new key...' 
+                                            : hasExistingAiKey 
+                                                ? (showAiApiKey ? '[KEY SAVED & PROTECTED]' : '✓ AI SERVICE ACTIVE')
+                                                : 'Enter your Gemini API Key here'
+                                    } 
+                                    className={`font-mono text-sm border-2 rounded-xl pr-10 ${hasExistingAiKey && !aiApiKey ? 'bg-indigo-50/10 border-indigo-200' : 'border-slate-200'}`} 
+                                />
+                                <button 
+                                    type="button" 
+                                    onClick={() => setShowAiApiKey(!showAiApiKey)} 
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-600 transition-colors"
+                                >
+                                    {showAiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </button>
+                            </div>
+                            <p className="text-[9px] text-slate-400 font-medium italic">
+                                * This key will be stored securely in your database. Using the database key is more stable than .env files.
+                            </p>
+                        </div>
+                        
+                        <div className="pt-2">
+                             <Button 
+                                type="button" 
+                                onClick={handleTestAi} 
+                                 disabled={loading || (!aiApiKey && !hasExistingAiKey)}
+                                className="w-full bg-slate-900 hover:bg-black text-white rounded-xl font-bold gap-2 py-6 border-2 border-indigo-500/30"
+                            >
+                                <Zap className="h-4 w-4 text-indigo-400" />
+                                TEST AI NOW [VER 4]
+                            </Button>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
             {/* 4. Financial & White-Labeling */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-3 text-slate-800 dark:text-slate-100 italic font-black text-sm">
                             <Coins className="h-4 w-4 text-indigo-600" />
-                            FINANCIAL DEFAULTS
+                            SYSTEM & FINANCIAL DEFAULTS
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -408,6 +537,22 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                             />
                             <p className="text-[9px] text-slate-400 italic">Example: 2 =&gt; 10.00, 0 =&gt; 10</p>
                         </div>
+                        
+                        <div className="space-y-2 pt-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Date Format</Label>
+                            <Select value={dateFormat} onValueChange={setDateFormat}>
+                                <SelectTrigger className="font-bold rounded-xl">
+                                    <SelectValue placeholder="Select date format" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="PPP">Default (e.g. May 24th, 2024)</SelectItem>
+                                    <SelectItem value="dd/MM/yyyy">European (24/05/2024)</SelectItem>
+                                    <SelectItem value="MM/dd/yyyy">US (05/24/2024)</SelectItem>
+                                    <SelectItem value="yyyy-MM-dd">ISO (2024-05-24)</SelectItem>
+                                    <SelectItem value="dd MMM yyyy">Short Month (24 May 2024)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -416,27 +561,11 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                         <CardHeader>
                             <CardTitle className="flex items-center gap-3 text-indigo-900 dark:text-indigo-100 italic font-black text-sm">
                                 <Layout className="h-4 w-4 text-indigo-600" />
-                                SOFTWARE BRANDING
+                                PORTAL BRANDING
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
                              <FileUpload label="Portal Logo" folder="tenant-logos" accept="image/*" currentFileUrl={tenantLogoUrl} onUploadComplete={(url) => setTenantLogoUrl(url)} />
-                             
-                             <div className="space-y-2 pt-2">
-                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Date Format</Label>
-                                <Select value={dateFormat} onValueChange={setDateFormat}>
-                                    <SelectTrigger className="font-bold rounded-xl">
-                                        <SelectValue placeholder="Select date format" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="PPP">Default (e.g. May 24th, 2024)</SelectItem>
-                                        <SelectItem value="dd/MM/yyyy">European (24/05/2024)</SelectItem>
-                                        <SelectItem value="MM/dd/yyyy">US (05/24/2024)</SelectItem>
-                                        <SelectItem value="yyyy-MM-dd">ISO (2024-05-24)</SelectItem>
-                                        <SelectItem value="dd MMM yyyy">Short Month (24 May 2024)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
                         </CardContent>
                     </Card>
                 )}

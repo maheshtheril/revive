@@ -4,65 +4,132 @@ export async function internalSeedUOMs(tenantId: string, companyId: string, tx?:
     const db = tx || prisma;
     console.log(`[UOM Service] Seeding UOMs for Tenant: ${tenantId}, Company: ${companyId}`);
     try {
-        // 1. Create or get Categories
-        const pharmaCategory = await db.hms_uom_category.upsert({
-            where: { ux_hms_uom_category_name: { tenant_id: tenantId, company_id: companyId, name: 'Pharmaceutical Packaging' } },
-            update: {},
-            create: { tenant_id: tenantId, company_id: companyId, name: 'Pharmaceutical Packaging' }
-        });
+        // 0. MIGRATION: Normalize 'each' to 'EACH'
+        // This cleans up previous duplicate seeds
+        console.log("[UOM Service] Normalizing UOMs (each -> EACH)...");
+        try {
+            // Update products to use 'EACH'
+            await db.hms_product.updateMany({
+                where: { uom: 'each' },
+                data: { uom: 'EACH' }
+            });
 
-        const serviceCategory = await db.hms_uom_category.upsert({
-            where: { ux_hms_uom_category_name: { tenant_id: tenantId, company_id: companyId, name: 'Services' } },
-            update: {},
-            create: { tenant_id: tenantId, company_id: companyId, name: 'Services' }
-        });
+            // Find the lowercase UOM record to delete it
+            const lowercaseEach = await db.hms_uom.findFirst({
+                where: { tenant_id: tenantId, company_id: companyId, name: 'each' }
+            });
+            if (lowercaseEach) {
+                await db.hms_uom.delete({ where: { id: lowercaseEach.id } });
+                console.log("[UOM Service] Deleted duplicate lowercase 'each' UOM.");
+            }
+        } catch (migError) {
+            console.warn("[UOM Service] Migration warning (non-fatal):", migError);
+        }
 
-        // 2. Define common pharma UOMs
-        const uoms = [
-            { name: 'PCS', type: 'reference', ratio: 1.0, description: 'Individual pieces/tablets', categoryId: pharmaCategory.id },
-            { name: 'PACK-10', type: 'bigger', ratio: 10.0, description: 'Pack of 10 pieces', categoryId: pharmaCategory.id },
-            { name: 'PACK-15', type: 'bigger', ratio: 15.0, description: 'Pack of 15 pieces', categoryId: pharmaCategory.id },
-            { name: 'PACK-20', type: 'bigger', ratio: 20.0, description: 'Pack of 20 pieces', categoryId: pharmaCategory.id },
-            { name: 'PACK-30', type: 'bigger', ratio: 30.0, description: 'Pack of 30 pieces', categoryId: pharmaCategory.id },
-            { name: 'STRIP', type: 'bigger', ratio: 10.0, description: 'Strip (typically 10)', categoryId: pharmaCategory.id },
-            { name: 'BOX', type: 'bigger', ratio: 100.0, description: 'Box (typically 100)', categoryId: pharmaCategory.id },
-            { name: 'BOTTLE', type: 'bigger', ratio: 1.0, description: 'Bottle (count as 1 unit)', categoryId: pharmaCategory.id },
-            { name: 'UNIT', type: 'reference', ratio: 1.0, description: 'Standard unit', categoryId: serviceCategory.id },
-            { name: 'VISIT', type: 'reference', ratio: 1.0, description: 'Consultation visit', categoryId: serviceCategory.id },
-            { name: 'TEST', type: 'reference', ratio: 1.0, description: 'Lab test unit', categoryId: serviceCategory.id },
-        ]
+        // 1. Ensure Categories
+        const categories = [
+            'Pharmaceutical Packaging', 
+            'Generic Units', 
+            'Volume', 
+            'Weight', 
+            'Services'
+        ];
+        const catMap: Record<string, any> = {};
 
-        let created = 0
-        for (const uom of uoms) {
-            await db.hms_uom.upsert({
-                where: {
-                    ux_hms_uom_name: {
+        for (const catName of categories) {
+            let cat = await db.hms_uom_category.findFirst({
+                where: { tenant_id: tenantId, company_id: companyId, name: catName }
+            });
+
+            if (!cat) {
+                cat = await db.hms_uom_category.create({
+                    data: {
+                        id: crypto.randomUUID(),
                         tenant_id: tenantId,
                         company_id: companyId,
-                        category_id: uom.categoryId,
-                        name: uom.name
+                        name: catName
                     }
-                },
-                update: {},
-                create: {
+                });
+            }
+            catMap[catName] = cat;
+        }
+
+        const pharmaCat = catMap['Pharmaceutical Packaging'];
+        const genericCat = catMap['Generic Units'];
+        const volCat = catMap['Volume'];
+        const weightCat = catMap['Weight'];
+        const serviceCat = catMap['Services'];
+
+        // 2. Define world-standard UOMs
+        const uomDefinitions = [
+            // Generic
+            { name: 'EACH', type: 'reference', ratio: 1.0, description: 'Each / Single Unit', categoryId: genericCat.id },
+            { name: 'PCS', type: 'reference', ratio: 1.0, description: 'Pieces', categoryId: genericCat.id },
+            { name: 'UNIT', type: 'reference', ratio: 1.0, description: 'Standard Unit', categoryId: genericCat.id },
+            { name: 'NOS', type: 'reference', ratio: 1.0, description: 'Numbers', categoryId: genericCat.id },
+
+            // Pharma Packaging
+            { name: 'TAB', type: 'reference', ratio: 1.0, description: 'Tablet', categoryId: pharmaCat.id },
+            { name: 'CAP', type: 'reference', ratio: 1.0, description: 'Capsule', categoryId: pharmaCat.id },
+            { name: 'STRIP', type: 'reference', ratio: 1.0, description: 'Strip', categoryId: pharmaCat.id },
+            { name: 'VIAL', type: 'reference', ratio: 1.0, description: 'Vial', categoryId: pharmaCat.id },
+            { name: 'AMPOULE', type: 'reference', ratio: 1.0, description: 'Ampoule', categoryId: pharmaCat.id },
+            { name: 'BOTTLE', type: 'reference', ratio: 1.0, description: 'Bottle', categoryId: pharmaCat.id },
+            { name: 'PACK', type: 'reference', ratio: 1.0, description: 'Pack', categoryId: pharmaCat.id },
+            { name: 'BOX', type: 'reference', ratio: 1.0, description: 'Box', categoryId: pharmaCat.id },
+
+            // Weight
+            { name: 'MG', type: 'reference', ratio: 1.0, description: 'Milligram', categoryId: weightCat.id },
+            { name: 'G', type: 'bigger', ratio: 1000.0, description: 'Gram', categoryId: weightCat.id },
+            { name: 'KG', type: 'bigger', ratio: 1000000.0, description: 'Kilogram', categoryId: weightCat.id },
+            { name: 'MCG', type: 'smaller', ratio: 0.001, description: 'Microgram', categoryId: weightCat.id },
+
+            // Volume
+            { name: 'ML', type: 'reference', ratio: 1.0, description: 'Milliliter', categoryId: volCat.id },
+            { name: 'L', type: 'bigger', ratio: 1000.0, description: 'Liter', categoryId: volCat.id },
+
+            // Services
+            { name: 'VISIT', type: 'reference', ratio: 1.0, description: 'Consultation Visit', categoryId: serviceCat.id },
+            { name: 'TEST', type: 'reference', ratio: 1.0, description: 'Lab Test', categoryId: serviceCat.id },
+            { name: 'SCAN', type: 'reference', ratio: 1.0, description: 'Radiology Scan', categoryId: serviceCat.id },
+            { name: 'SESSION', type: 'reference', ratio: 1.0, description: 'Procedure Session', categoryId: serviceCat.id },
+            { name: 'DAY', type: 'reference', ratio: 1.0, description: 'Day (IPD)', categoryId: serviceCat.id },
+        ];
+
+        // 3. Seed UOMs
+        let createdCount = 0;
+        for (const uomDef of uomDefinitions) {
+            const existing = await db.hms_uom.findFirst({
+                where: {
                     tenant_id: tenantId,
                     company_id: companyId,
-                    category_id: uom.categoryId,
-                    name: uom.name,
-                    uom_type: uom.type,
-                    ratio: uom.ratio,
-                    is_active: true
+                    name: uomDef.name
                 }
-            })
-            created++
+            });
+
+            if (!existing) {
+                await db.hms_uom.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        category_id: uomDef.categoryId,
+                        name: uomDef.name,
+                        uom_type: uomDef.type,
+                        ratio: uomDef.ratio,
+                        is_active: true
+                    }
+                });
+                createdCount++;
+            }
         }
 
         return {
             success: true,
-            message: `Seeded ${created} UOMs`
-        }
+            message: `Seeded ${createdCount} new UOMs`
+        };
     } catch (error) {
-        console.error('Internal Seed UOM error:', error)
-        throw error
+        console.error("Error in internalSeedUOMs:", error);
+        throw error;
     }
 }

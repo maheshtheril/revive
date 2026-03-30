@@ -2,8 +2,15 @@
 
 import { useState } from "react"
 import { ProductForm } from "@/components/inventory/product-form"
-import { Plus, X } from "lucide-react"
+import { Plus } from "lucide-react"
 import { useRouter } from "next/navigation"
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+} from "@/components/ui/dialog"
 
 interface CreateProductModalProps {
     suppliers: any[]
@@ -40,24 +47,28 @@ export function CreateProductModal({
                 Create Product
             </button>
 
-            {isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-7xl h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 ring-1 ring-black/5">
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                            <ProductForm
-                                suppliers={suppliers}
-                                taxRates={taxRates}
-                                uoms={uoms}
-                                categories={categories}
-                                manufacturers={manufacturers}
-                                uomCategories={uomCategories}
-                                onSuccess={handleSuccess}
-                                onCancel={() => setIsOpen(false)}
-                            />
-                        </div>
+            <Dialog open={isOpen} onOpenChange={setIsOpen}>
+                <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0 border-none bg-transparent shadow-none">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Create New Product</DialogTitle>
+                        <DialogDescription>
+                            Enter details to add a new product to your inventory.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-gray-100 p-6">
+                        <ProductForm
+                            suppliers={suppliers}
+                            taxRates={taxRates}
+                            uoms={uoms}
+                            categories={categories}
+                            manufacturers={manufacturers}
+                            uomCategories={uomCategories}
+                            onSuccess={handleSuccess}
+                            onCancel={() => setIsOpen(false)}
+                        />
                     </div>
-                </div>
-            )}
+                </DialogContent>
+            </Dialog>
         </>
     )
 }

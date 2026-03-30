@@ -89,7 +89,8 @@ export function AppSidebar({ menuItems, currentCompany, tenant, user: initialUse
         localStorage.setItem('sidebar-collapsed', JSON.stringify(newState));
     };
 
-    if (!mounted) return null; // or a skeleton
+    // We no longer block the entire app from rendering while the sidebar mounts.
+    // Instead, we always render the layout shell so the user sees the dashboard content immediately.
 
     return (
         <div className="flex h-screen bg-slate-50 dark:bg-black font-sans overflow-hidden">
@@ -105,15 +106,17 @@ export function AppSidebar({ menuItems, currentCompany, tenant, user: initialUse
                     "shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]"
                 )}
             >
-                <SidebarContent
-                    menuItems={menuItems}
-                    currentCompany={currentCompany}
-                    tenant={tenant}
-                    user={user}
-                    collapsed={collapsed}
-                    setCollapsed={toggleCollapse}
-                    isMobile={false}
-                />
+                {mounted && (
+                    <SidebarContent
+                        menuItems={menuItems}
+                        currentCompany={currentCompany}
+                        tenant={tenant}
+                        user={user}
+                        collapsed={collapsed}
+                        setCollapsed={toggleCollapse}
+                        isMobile={false}
+                    />
+                )}
             </motion.aside>
 
             {/* Mobile Sidebar System */}
@@ -354,14 +357,6 @@ function SidebarContent({ menuItems, currentCompany, tenant, user, collapsed, se
                 )
             }
 
-            {/* DEBUG VERSION BADGE */}
-            {!collapsed && (
-                <div className="px-6 py-2">
-                    <div className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-1 rounded text-center animate-pulse">
-                        FIX-DOC-SLOTS
-                    </div>
-                </div>
-            )}
 
             {/* User Profile Footer */}
             <div className="p-4 border-t border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 backdrop-blur-sm">

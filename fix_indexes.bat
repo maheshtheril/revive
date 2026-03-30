@@ -1,0 +1,6 @@
+@echo off
+set PAGER=
+echo Creating unique index ux_hms_uom_category_name...
+"C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -d hms_db -c "CREATE UNIQUE INDEX ux_hms_uom_category_name ON hms_uom_category(tenant_id, company_id, name);"
+echo Creating unique index ux_hms_uom_name...
+"C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -d hms_db -c "CREATE UNIQUE INDEX ux_hms_uom_name ON hms_uom(tenant_id, company_id, category_id, name);"

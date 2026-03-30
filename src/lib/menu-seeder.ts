@@ -11,7 +11,7 @@ export async function ensureAccountingMenu() {
         if (!existingDash) {
             await prisma.menu_items.create({
                 data: {
-                    label: 'Financial Dashboard',
+                    label: 'Gateway of Tally',
                     url: '/hms/accounting',
                     key: dashKey,
                     module_key: 'finance',
@@ -20,11 +20,11 @@ export async function ensureAccountingMenu() {
                     is_global: true
                 }
             });
-            console.log("Seeded Accounting Dashboard menu item.");
-        } else if (existingDash.url !== '/hms/accounting') {
+            console.log("Seeded Tally Dashboard menu item.");
+        } else if (existingDash.url !== '/hms/accounting' || existingDash.label !== 'Gateway of Tally') {
             await prisma.menu_items.update({
                 where: { id: existingDash.id },
-                data: { url: '/hms/accounting', module_key: 'finance' }
+                data: { url: '/hms/accounting', label: 'Gateway of Tally', module_key: 'finance' }
             });
         }
 
@@ -52,8 +52,10 @@ async function ensurePaymentMenus() {
     const receiptMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-receipts' } });
     if (!receiptMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Receipts', url: '/accounting/customer/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: custParent.id, sort_order: 20, is_global: true }
+            data: { label: 'Receipt Vouchers', url: '/hms/accounting/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: custParent.id, sort_order: 20, is_global: true }
         });
+    } else if (receiptMenu.url !== '/hms/accounting/receipts') {
+        await prisma.menu_items.update({ where: { id: receiptMenu.id }, data: { url: '/hms/accounting/receipts', label: 'Receipt Vouchers' } });
     }
 
     // Vendors -> Payments
@@ -67,8 +69,10 @@ async function ensurePaymentMenus() {
     const paymentMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-payments' } });
     if (!paymentMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Payments', url: '/accounting/vendor/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: vendParent.id, sort_order: 20, permission_code: 'billing:view', is_global: true }
+            data: { label: 'Payment Vouchers', url: '/hms/accounting/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: vendParent.id, sort_order: 20, permission_code: 'billing:view', is_global: true }
         });
+    } else if (paymentMenu.url !== '/hms/accounting/payments') {
+        await prisma.menu_items.update({ where: { id: paymentMenu.id }, data: { url: '/hms/accounting/payments', label: 'Payment Vouchers' } });
     }
 
     // BULK SAFETY: Lock ALL Accounting Menus if they don't have permissions
@@ -117,8 +121,8 @@ async function ensureJournalMenu() {
             console.log("Creating Journal Entries menu...");
             await prisma.menu_items.create({
                 data: {
-                    label: 'Journal Entries',
-                    url: '/accounting/journals',
+                    label: 'Journal Register',
+                    url: '/hms/accounting/journals',
                     key: 'acc-journals',
                     module_key: 'finance',
                     icon: 'BookOpen',
@@ -128,8 +132,8 @@ async function ensureJournalMenu() {
                     is_global: true
                 }
             });
-        } else if (!journalsMenu.permission_code) {
-            await prisma.menu_items.update({ where: { id: journalsMenu.id }, data: { permission_code: 'billing:view' } });
+        } else if (journalsMenu.url !== '/hms/accounting/journals') {
+            await prisma.menu_items.update({ where: { id: journalsMenu.id }, data: { url: '/hms/accounting/journals', label: 'Journal Register', permission_code: 'billing:view' } });
         }
 
         // C. Ensure 'Chart of Accounts' Child Exists
@@ -142,7 +146,7 @@ async function ensureJournalMenu() {
             await prisma.menu_items.create({
                 data: {
                     label: 'Chart of Accounts',
-                    url: '/accounting/coa',
+                    url: '/hms/accounting/coa',
                     key: 'acc-coa',
                     module_key: 'finance',
                     icon: 'ListTree',
@@ -152,8 +156,8 @@ async function ensureJournalMenu() {
                     is_global: true
                 }
             });
-        } else if (!coaMenu.permission_code) {
-            await prisma.menu_items.update({ where: { id: coaMenu.id }, data: { permission_code: 'billing:view' } });
+        } else if (coaMenu.url !== '/hms/accounting/coa') {
+            await prisma.menu_items.update({ where: { id: coaMenu.id }, data: { url: '/hms/accounting/coa', permission_code: 'billing:view' } });
         }
     } catch (error) {
         console.error("Failed to seed journal menus:", error);
@@ -564,16 +568,26 @@ export async function ensurePurchasingMenus() {
         } else if (!existingDash.permission_code || existingDash.parent_id || existingDash.label !== 'Inventory Overview') {
             await prisma.menu_items.update({ where: { id: existingDash.id }, data: { parent_id: null, permission_code: 'inventory:view', label: 'Inventory Overview' } });
         }
-
         // Ensure Product Master Exists
         const prodKey = 'inv-products';
         const existingProd = await prisma.menu_items.findFirst({ where: { key: prodKey } });
         if (!existingProd) {
             await prisma.menu_items.create({
-                data: { label: 'Product Master', url: '/hms/inventory/products', key: prodKey, module_key: 'inventory', icon: 'Package', sort_order: 6, permission_code: 'inventory:view', is_global: true }
+                data: { label: 'Product Master', url: '/hms/inventory/products', key: prodKey, module_key: 'inventory', icon: 'Package', sort_order: 20, permission_code: 'inventory:view', is_global: true }
             });
         } else if (!existingProd.permission_code) {
             await prisma.menu_items.update({ where: { id: existingProd.id }, data: { permission_code: 'inventory:view' } });
+        }
+
+        // Ensure Bulk Import Exists (Direct Access)
+        const importKey = 'inv-import';
+        const existingImport = await prisma.menu_items.findFirst({ where: { key: importKey } });
+        if (!existingImport) {
+            await prisma.menu_items.create({
+                data: { label: 'Bulk Import Products', url: '/hms/inventory/products?import=true', key: importKey, module_key: 'inventory', icon: 'Upload', sort_order: 21, permission_code: 'inventory:view', is_global: true }
+            });
+        } else if (existingImport.url !== '/hms/inventory/products?import=true') {
+            await prisma.menu_items.update({ where: { id: existingImport.id }, data: { url: '/hms/inventory/products?import=true' } });
         }
 
         for (const item of items) {

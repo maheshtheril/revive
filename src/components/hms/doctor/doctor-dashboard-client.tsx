@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
     Activity, Stethoscope, Users, Clock, Calendar,
@@ -27,6 +27,11 @@ export function DoctorDashboardClient({ doctorName, doctorId, appointments, stat
     const router = useRouter()
     const [selectedTab, setSelectedTab] = useState<'queue' | 'history'>('queue')
     const [searchQuery, setSearchQuery] = useState("")
+    const [mounted, setMounted] = useState(false)
+
+    useEffect(() => {
+        setMounted(true)
+    }, [])
 
     // Scanner State
     const [isScannerOpen, setIsScannerOpen] = useState(false)
@@ -80,7 +85,7 @@ export function DoctorDashboardClient({ doctorName, doctorId, appointments, stat
                         </motion.h1>
                         <p className="text-slate-500 dark:text-slate-400 font-medium mt-1 flex items-center gap-2">
                             <Calendar className="h-4 w-4" />
-                            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                            {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Loading Date...'}
                             <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">v2.0 Live</span>
                         </p>
                     </div>

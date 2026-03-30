@@ -153,7 +153,7 @@ export default function PurchaseReceiptsPage() {
                                     </div>
                                     <div className="col-span-2 flex items-center gap-2 text-sm text-muted-foreground">
                                         <Calendar className="h-3 w-3 text-muted-foreground/70" />
-                                        {new Date(receipt.date).toLocaleDateString()}
+                                        {new Date(receipt.date).toLocaleDateString('en-GB')}
                                     </div>
                                     <div className="col-span-3 text-sm text-foreground font-medium truncate">
                                         {receipt.supplierName}

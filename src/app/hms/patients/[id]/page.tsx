@@ -146,9 +146,12 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
         }))
     ].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
 
+    // [CRITICAL] Serialize Prisma Decimal objects for Client Components
+    const serializedTimelineEvents = JSON.parse(JSON.stringify(timelineEvents));
+
     // Group Timeline Events by Date for World-Class Presentation
     const groupedTimeline: { [key: string]: any[] } = {};
-    timelineEvents.forEach(event => {
+    serializedTimelineEvents.forEach((event: any) => {
         const dateKey = new Date(event.date || 0).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         if (!groupedTimeline[dateKey]) groupedTimeline[dateKey] = [];
         groupedTimeline[dateKey].push(event);
@@ -519,33 +522,36 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                                     <h3 className="font-bold text-slate-900 text-lg">Invoices & Payments</h3>
                                 </div>
                                 <div className="divide-y divide-slate-100">
-                                    {patient.hms_invoice.map((inv, i) => (
-                                        <InvoicePreviewDialog
-                                            key={i}
-                                            invoice={inv}
-                                            trigger={
-                                                <div className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group cursor-pointer w-full">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className={`h-10 w-10 rounded-full flex items-center justify-center transition-colors ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200' : 'bg-orange-100 text-orange-600 group-hover:bg-orange-200'}`}>
-                                                            <Receipt className="h-5 w-5" />
+                                    {patient.hms_invoice.map((inv, i) => {
+                                        const serializedInv = JSON.parse(JSON.stringify(inv));
+                                        return (
+                                            <InvoicePreviewDialog
+                                                key={i}
+                                                invoice={serializedInv}
+                                                trigger={
+                                                    <div className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group cursor-pointer w-full">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className={`h-10 w-10 rounded-full flex items-center justify-center transition-colors ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200' : 'bg-orange-100 text-orange-600 group-hover:bg-orange-200'}`}>
+                                                                <Receipt className="h-5 w-5" />
+                                                            </div>
+                                                            <div className="text-left">
+                                                                <p className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                                                                    {inv.invoice_no || inv.invoice_number ? `Invoice #${inv.invoice_no || inv.invoice_number}` : 'DRAFT INVOICE'}
+                                                                </p>
+                                                                <p className="text-xs text-slate-500">{new Date(inv.created_at).toLocaleDateString()}</p>
+                                                            </div>
                                                         </div>
-                                                        <div className="text-left">
-                                                            <p className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                                                                {inv.invoice_no || inv.invoice_number ? `Invoice #${inv.invoice_no || inv.invoice_number}` : 'DRAFT INVOICE'}
-                                                            </p>
-                                                            <p className="text-xs text-slate-500">{new Date(inv.created_at).toLocaleDateString()}</p>
+                                                        <div className="text-right">
+                                                            <p className="font-mono font-bold text-slate-900">₹{Number(inv.total || 0).toLocaleString()}</p>
+                                                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                                {inv.status}
+                                                            </span>
                                                         </div>
                                                     </div>
-                                                    <div className="text-right">
-                                                        <p className="font-mono font-bold text-slate-900">₹{Number(inv.total || 0).toLocaleString()}</p>
-                                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
-                                                            {inv.status}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            }
-                                        />
-                                    ))}
+                                                }
+                                            />
+                                        )
+                                    })}
                                     {patient.hms_invoice.length === 0 && <p className="p-6 text-slate-400 text-center italic">No invoices found.</p>}
                                 </div>
                             </div>

@@ -10,6 +10,8 @@ interface Patient {
     last_name: string | null
     patient_number: string | null
     gender: string | null
+    phone?: string | null
+    contact?: any
 }
 
 interface Doctor {
@@ -37,11 +39,16 @@ export function PatientDoctorSelectors({
     onPatientSelect?: (id: string) => void
     onNewPatientClick?: () => void
 }) {
-    const patientOptions = patients.map(p => ({
-        id: p.id,
-        label: `${p.first_name} ${p.last_name || ''}`.trim(),
-        subLabel: `${p.patient_number || 'No Number'} • ${p.gender || 'N/A'}`
-    }))
+    const patientOptions = patients.map(p => {
+        const phoneRaw = p.phone || p.contact?.phone || p.contact?.mobile || '';
+        const phoneFormatted = phoneRaw ? ` • ${phoneRaw}` : '';
+        return {
+            id: p.id,
+            label: `${p.first_name} ${p.last_name || ''}`.trim(),
+            subLabel: `${p.patient_number || 'No ID'} • ${p.gender || 'Unknown'}${phoneFormatted}`,
+            searchString: `${p.first_name} ${p.last_name || ''} ${p.patient_number || ''} ${phoneRaw}`.toLowerCase()
+        }
+    })
 
     const doctorOptions = doctors.map(d => ({
         id: d.id,
@@ -116,7 +123,7 @@ export function PatientDoctorSelectors({
                             options={patientOptions}
                             onSearch={async (q) => {
                                 const lower = q.toLowerCase()
-                                return patientOptions.filter(p => p.label.toLowerCase().includes(lower) || p.subLabel.toLowerCase().includes(lower))
+                                return patientOptions.filter(p => p.searchString.includes(lower))
                             }}
                             value={selectedPatientId}
                             onChange={(id) => onPatientSelect?.(id || '')}

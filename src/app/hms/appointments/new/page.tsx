@@ -29,6 +29,7 @@ export default async function NewAppointmentPage({
                 last_name: true,
                 patient_number: true,
                 dob: true,
+                contact: true,
                 gender: true
             }
         }),

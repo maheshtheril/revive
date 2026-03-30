@@ -102,7 +102,12 @@ export function BatchSelectorDialog({
                           <div className="flex flex-col">
                             <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Expiry</span>
                             <span className={`text-[10px] font-black tracking-tight ${isExpired ? 'text-rose-500 underline' : 'text-slate-600 dark:text-slate-300'}`}>
-                              {batch.expiry_date ? format(new Date(batch.expiry_date), 'MMM yyyy').toUpperCase() : 'N/A'}
+                              {(() => {
+                                if (!batch.expiry_date) return 'N/A';
+                                const d = new Date(batch.expiry_date);
+                                if (isNaN(d.getTime())) return 'N/A';
+                                try { return format(d, 'MMM yyyy').toUpperCase(); } catch(e) { return 'N/A'; }
+                              })()}
                             </span>
                           </div>
                         </div>

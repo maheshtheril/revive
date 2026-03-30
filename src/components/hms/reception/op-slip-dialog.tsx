@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { getHMSSettings } from "@/app/actions/settings"
 import {
     Dialog, DialogContent, DialogHeader,
     DialogTitle, DialogTrigger, DialogFooter,
@@ -19,6 +20,19 @@ interface OpSlipDialogProps {
 export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standard', hospitalInfo }: OpSlipDialogProps) {
     const [isOpen, setIsOpen] = useState(false)
     const [printMode, setPrintMode] = useState<'standard' | 'letterhead' | 'thermal' | 'label'>(defaultPrintMode)
+    const [hmsSettings, setHmsSettings] = useState<any>(null)
+
+    useEffect(() => {
+        if (!isOpen) return;
+        getHMSSettings().then(res => {
+            if (res.success) {
+                setHmsSettings(res.settings)
+                if (res.settings?.opSlipPreprintedLetterhead && defaultPrintMode === 'standard') {
+                    setPrintMode('letterhead')
+                }
+            }
+        }).catch(() => {})
+    }, [isOpen, defaultPrintMode])
 
     const handlePrint = () => {
         const printWindow = window.open('', '_blank')
@@ -134,194 +148,334 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                 </html>
             `
         } else {
+            // A4 Professional OP Slip (Standard or Letterhead)
+            const showHeader = printMode !== 'letterhead';
+            const headerHeight = hmsSettings?.opSlipHeaderHeight || '4.5';
+            
             html = `
                 <!DOCTYPE html>
                 <html>
                     <head>
                         <title>OP Slip - ${patientName}</title>
                         <style>
-                            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-                            body { 
-                                font-family: 'Inter', sans-serif; 
-                                line-height: 1.4; 
-                                padding: ${printMode === 'letterhead' ? '4.5cm 1.5cm 1.5cm 1.5cm' : '1.5cm'};
-                                color: #1a202c;
-                                background: white;
-                            }
-                            @media print {
-                                @page { margin: 0; size: A4; }
-                                body { margin: 0; }
-                            }
-                            .header { 
-                                text-align: center; 
-                                margin-bottom: 1cm; 
-                                display: ${printMode === 'letterhead' ? 'none' : 'block'};
-                                border-bottom: 3px solid #000;
-                                padding-bottom: 10px;
-                            }
-                            .header h1 { margin: 0; font-size: 28px; font-weight: 900; text-transform: uppercase; letter-spacing: -1px; }
-                            .header p { margin: 0; font-weight: 700; font-size: 12px; color: #4a5568; text-transform: uppercase; tracking: 2px; }
+                            @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
                             
-                            .ticket-info {
-                                display: flex;
-                                justify-content: space-between;
-                                align-items: center;
-                                margin-top: 20px;
-                                margin-bottom: 25px;
-                                background: #f7fafc;
-                                padding: 15px;
-                                border-radius: 8px;
+                            * { box-sizing: border-box; }
+                            
+                            @page { 
+                                size: A4; 
+                                margin: 0; 
                             }
-                            .token-box {
-                                background: #000;
-                                color: white;
-                                padding: 10px 20px;
-                                border-radius: 6px;
-                                text-align: center;
+                            
+                            body { 
+                                font-family: 'Outfit', sans-serif; 
+                                margin: 0;
+                                padding: 0;
+                                color: #1e293b;
+                                background: white;
+                                -webkit-print-color-adjust: exact;
+                                print-color-adjust: exact;
                             }
-                            .token-label { font-size: 10px; font-weight: 900; color: #cbd5e0; text-transform: uppercase; }
-                            .token-value { font-size: 24px; font-weight: 900; color: white; }
 
-                            .info-grid {
-                                display: grid;
-                                grid-template-cols: 1.5fr 1fr;
-                                gap: 30px;
-                                margin-bottom: 30px;
-                            }
-                            .section-title { 
-                                font-size: 11px; 
-                                font-weight: 900; 
-                                text-transform: uppercase; 
-                                color: white; 
-                                background: #2d3748;
-                                padding: 4px 10px;
-                                display: inline-block;
-                                margin-bottom: 10px;
-                                border-radius: 4px;
-                            }
-                            .label { font-weight: bold; text-transform: uppercase; font-size: 10px; color: #718096; display: block; }
-                            .value { font-weight: 900; font-size: 16px; margin-bottom: 4px; line-height: 1.1; }
-
-                            /* CLINICAL SECTIONS */
-                            .vitals-grid {
-                                display: grid;
-                                grid-template-cols: repeat(5, 1fr);
-                                gap: 10px;
-                                border: 2px solid #edf2f7;
-                                padding: 15px;
-                                border-radius: 12px;
-                                margin-bottom: 30px;
-                            }
-                            .vital-box {
-                                border-right: 1px solid #edf2f7;
-                                padding-right: 10px;
-                            }
-                            .vital-box:last-child { border: none; }
-                            .vital-input { border-bottom: 1px dashed #cbd5e0; height: 25px; margin-top: 5px; }
-
-                            .clinical-container {
-                                border: 2px solid #2d3748;
-                                border-radius: 12px;
-                                min-height: 16cm;
-                                padding: 20px;
+                            .page {
+                                width: 210mm;
+                                height: 297mm;
+                                padding: ${showHeader ? '15mm' : `${headerHeight}cm 15mm 15mm 15mm`};
                                 position: relative;
                             }
-                            .rx-symbol {
-                                font-size: 60px;
-                                font-weight: 900;
-                                color: #edf2f7;
-                                position: absolute;
-                                top: 10px;
-                                left: 20px;
-                                font-style: italic;
-                                z-index: -1;
+
+                            /* --- HEADER SECTION --- */
+                            .hospital-header {
+                                display: ${showHeader ? 'flex' : 'none'};
+                                align-items: center;
+                                justify-content: center;
+                                margin-bottom: 20px;
+                                position: relative;
+                                border-bottom: 2px solid #334155;
+                                padding-bottom: 20px;
                             }
                             
-                            .footer {
-                                margin-top: 30px;
+                            .logo-container {
+                                position: absolute;
+                                left: 0;
+                                height: 100px;
+                                width: 100px;
+                            }
+                            
+                            .logo-container img {
+                                height: 100%;
+                                width: 100%;
+                                object-fit: contain;
+                            }
+
+                            .header-content {
+                                text-align: center;
+                                max-width: 65%;
+                            }
+
+                            .hospital-name {
+                                font-size: 28pt;
+                                font-weight: 900;
+                                color: #1e3a8a;
+                                text-transform: uppercase;
+                                margin: 0;
+                                letter-spacing: -1px;
+                            }
+
+                            .dept-name {
+                                font-size: 14pt;
+                                font-weight: 700;
+                                color: #475569;
+                                margin: 5px 0;
+                                text-transform: uppercase;
+                            }
+
+                            .hospital-meta {
+                                font-size: 9pt;
+                                color: #64748b;
+                                font-weight: 500;
+                                margin-top: 5px;
+                            }
+
+                            /* --- PATIENT SECTION --- */
+                            .info-strip {
+                                display: grid;
+                                grid-template-cols: 1.5fr 1fr;
+                                gap: 40px;
+                                margin-top: 10px;
+                                border-bottom: 1.5px solid #e2e8f0;
+                                padding-bottom: 15px;
+                                margin-bottom: 20px;
+                            }
+
+                            .patient-details h2 {
+                                font-size: 10pt;
+                                color: #64748b;
+                                margin: 0 0 8px 0;
+                                text-transform: uppercase;
+                                font-weight: 800;
+                                letter-spacing: 1px;
+                            }
+
+                            .p-name { font-size: 16pt; font-weight: 900; color: #0f172a; text-transform: uppercase; line-height: 1.1; }
+                            .p-addr { font-size: 10pt; color: #475569; margin: 3px 0; font-weight: 600; }
+                            .p-meta { font-size: 11pt; font-weight: 700; color: #1e293b; margin-top: 8px; }
+
+                            .visit-details {
+                                text-align: right;
+                                display: grid;
+                                grid-template-cols: 1fr 1fr;
+                                font-size: 10.5pt;
+                                gap: 2px 15px;
+                            }
+                            
+                            .v-label { font-weight: 800; color: #64748b; text-transform: uppercase; font-size: 9pt; text-align: right; }
+                            .v-value { font-weight: 700; color: #0f172a; text-align: left; }
+
+                            /* --- MAIN BODY & SIDEBAR --- */
+                            .main-layout {
+                                display: grid;
+                                grid-template-cols: 1fr 65mm;
+                                gap: 30px;
+                                height: 16.5cm;
+                            }
+
+                            .doctor-notes {
+                                border-right: 1.5px dashed #e2e8f0;
+                                position: relative;
+                            }
+                            
+                            .rx-watermark {
+                                font-size: 60pt;
+                                color: #f8fafc;
+                                font-weight: 900;
+                                position: absolute;
+                                top: 40px;
+                                left: 0;
+                                z-index: -1;
+                            }
+
+                            .clinical-sidebar {
+                                padding-left: 0px;
+                            }
+
+                            .vitals-sec {
+                                margin-bottom: 30px;
+                            }
+
+                            .vital-row {
                                 display: flex;
                                 justify-content: space-between;
-                                font-size: 10px;
-                                color: #a0aec0;
-                                border-top: 1px solid #edf2f7;
-                                padding-top: 10px;
+                                align-items: flex-end;
+                                margin-bottom: 12px;
                             }
+
+                            .vital-label { font-size: 10pt; font-weight: 900; color: #475569; width: 60px; text-transform: uppercase; }
+                            .vital-box { 
+                                flex: 1; 
+                                border-bottom: 1px dotted #cbd5e1; 
+                                height: 18px; 
+                                margin-bottom: 2px;
+                            }
+
+                            /* --- TEST CHECKLIST --- */
+                            .labs-sec {
+                                border-top: 1px solid #f1f5f9;
+                                pt: 15px;
+                            }
+                            
+                            .lab-item {
+                                display: flex;
+                                align-items: center;
+                                justify-content: space-between;
+                                margin-bottom: 8px;
+                            }
+                            
+                            .lab-name { font-size: 9pt; font-weight: 800; color: #1e293b; text-transform: uppercase; }
+                            .lab-check { 
+                                width: 14pt; 
+                                height: 14pt; 
+                                border: 1.5pt solid #334155; 
+                                border-radius: 2pt;
+                            }
+
+                            /* --- FOOTER --- */
+                            .footer {
+                                position: absolute;
+                                bottom: 20mm;
+                                left: 15mm;
+                                right: 15mm;
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: flex-end;
+                                border-top: 1.5px solid #e2e8f0;
+                                padding-top: 15px;
+                            }
+                            
+                            .f-legal { font-size: 8pt; font-weight: 600; color: #94a3b8; }
+                            .f-sig { text-align: center; }
+                            .sig-line { width: 180px; border-top: 1.5px solid #0f172a; margin-bottom: 5px; }
+                            .sig-text { font-size: 9pt; font-weight: 900; color: #0f172a; text-transform: uppercase; }
+
                         </style>
                     </head>
                     <body>
-                        <div class="header">
-                            ${hospitalInfo?.logo_url ? `<img src="${hospitalInfo.logo_url}" style="height: 60px; margin-bottom: 10px;" />` : ''}
-                            <h1>${hospitalInfo?.name || 'Clinical OP Visit Slip'}</h1>
-                            <p>${hospitalInfo?.metadata?.address || 'Medical Center - Outpatient Department'}</p>
-                        </div>
-                        
-                        <div class="ticket-info">
-                            <div>
-                                <span class="label">Patient Name & ID</span>
-                                <div class="value">${patientName}</div>
-                                <div style="font-size: 12px; font-weight: 700;">ID: ${appointment.patient?.patient_number} | ${appointment.patient?.gender || 'N/A'}</div>
-                            </div>
-                            <div class="token-box">
-                                <span class="token-label">OP TOKEN</span>
-                                <div class="token-value">#${tokenNumber}</div>
-                            </div>
-                        </div>
-
-                        <div class="info-grid">
-                            <div>
-                                <span class="section-title">Encounter Details</span>
-                                <div style="display: grid; grid-template-cols: 1fr 1fr; gap: 15px;">
-                                    <div>
-                                        <span class="label">Consulting With</span>
-                                        <div class="value">${doctorName}</div>
-                                        <div style="font-size: 10px; font-weight: bold;">${appointment.clinician?.role || 'Clinician'}</div>
-                                    </div>
-                                    <div>
-                                        <span class="label">Date & Time</span>
-                                        <div class="value">${date}</div>
-                                        <div style="font-size: 10px; font-weight: bold;">${time}</div>
+                        <div class="page">
+                            <!-- HOSPITAL HEADER -->
+                            <div class="hospital-header">
+                                <div class="logo-container">
+                                    ${hospitalInfo?.logo_url ? `<img src="${hospitalInfo.logo_url}" />` : '<div style="background: #f1f5f9; width: 100%; height: 100%; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #cbd5e1;">LOGO</div>'}
+                                </div>
+                                <div class="header-content">
+                                    <h1 class="hospital-name">${hospitalInfo?.name || 'GLOBAL MEDICARE HOSPITAL'}</h1>
+                                    <div class="dept-name">${appointment.clinician?.metadata?.department || hospitalInfo?.metadata?.department || 'SMART EMERGENCY DEPARTMENT'}</div>
+                                    <div class="hospital-meta">
+                                        📍 ${hospitalInfo?.metadata?.address || 'MEDICAL PLAZA, SECTOR 4'} &nbsp;
+                                        ☎️ ${hospitalInfo?.metadata?.phone || '0495-2520588'} <br/>
+                                        📧 ${hospitalInfo?.metadata?.email || 'hospital@gmail.com'} &nbsp;
+                                        🌐 ${hospitalInfo?.metadata?.website || 'www.globalmedicare.com'}
                                     </div>
                                 </div>
                             </div>
-                            <div>
-                                <span class="section-title">Visit Protocol</span>
-                                <div class="value" style="text-transform: uppercase; font-size: 12px;">${appointment.type || 'Standard Consultation'}</div>
-                                <div style="font-size: 10px; font-weight: bold;">Priority: ${appointment.priority?.toUpperCase() || 'NORMAL'}</div>
-                            </div>
-                        </div>
 
-                        <span class="section-title">Nurse Vitals Audit</span>
-                        <div class="vitals-grid">
-                            <div class="vital-box">
-                                <span class="label">BP (mmHg)</span>
-                                <div class="vital-input"></div>
+                            <!-- PATIENT & VISIT STRIP -->
+                            <div class="info-strip">
+                                <div class="patient-details">
+                                    <h2>Patient Details :</h2>
+                                    <div class="p-name">${patientName}</div>
+                                    <div class="p-addr">${appointment.patient?.address || 'LOCAL ADDRESS NOT SPECIFIED'}</div>
+                                    <div class="p-meta">
+                                        ${appointment.patient?.contact_no || 'NO CONTACT'} &nbsp;|&nbsp;
+                                        Sex : ${appointment.patient?.gender || 'N/A'} &nbsp;|&nbsp;
+                                        Age : ${appointment.patient?.age || (appointment.patient?.dob ? (new Date().getFullYear() - new Date(appointment.patient.dob).getFullYear()) : 'N/A')}
+                                    </div>
+                                </div>
+                                <div class="visit-details">
+                                    <span class="v-label">No</span><span class="v-value">: ${appointment.patient?.patient_number || '38822'}</span>
+                                    <span class="v-label">Date</span><span class="v-value">: ${date}</span>
+                                    <span class="v-label">Renew Date</span><span class="v-value">: ${new Date(new Date(appointment.start_time).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()}</span>
+                                    <span class="v-label">Token No</span><span class="v-value">: ${tokenNumber}</span>
+                                </div>
                             </div>
-                            <div class="vital-box">
-                                <span class="label">Pulse (bpm)</span>
-                                <div class="vital-input"></div>
-                            </div>
-                            <div class="vital-box">
-                                <span class="label">Temp (°F)</span>
-                                <div class="vital-input"></div>
-                            </div>
-                            <div class="vital-box">
-                                <span class="label">SPO2 (%)</span>
-                                <div class="vital-input"></div>
-                            </div>
-                            <div class="vital-box">
-                                <span class="label">Weight (kg)</span>
-                                <div class="vital-input"></div>
-                            </div>
-                        </div>
 
-                        <span class="section-title">Clinical Consultation & Rx</span>
-                        <div class="clinical-container">
-                            <div class="rx-symbol">℞</div>
-                        </div>
+                            <!-- CLINICAL LAYOUT -->
+                            <div class="main-layout">
+                                <div class="doctor-notes">
+                                    <div class="rx-watermark">℞</div>
+                                    <!-- This area is left blank for handwriting as shown in image -->
+                                </div>
+                                
+                                <div class="clinical-sidebar">
+                                    <!-- VITALS -->
+                                    <div class="vitals-sec">
+                                        <div class="vital-row">
+                                            <span class="vital-label">BP</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.systolic ? `${Math.round(appointment.vitals.systolic)} / ${Math.round(appointment.vitals.diastolic)}` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">SPO2</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.spo2 ? `${Math.round(appointment.vitals.spo2)}%` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">PR</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.pulse ? `${Math.round(appointment.vitals.pulse)} bpm` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">RR</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.respiration ? `${Math.round(appointment.vitals.respiration)} /min` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">WT</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.weight ? `${appointment.vitals.weight} kg` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">TEMP</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 700;">
+                                                ${appointment.vitals?.temperature ? `${appointment.vitals.temperature}°F` : ''}
+                                            </div>
+                                        </div>
+                                        <div class="vital-row">
+                                            <span class="vital-label">B_GRP</span>
+                                            <div class="vital-box" style="display: flex; align-items: center; padding-left: 5px; font-weight: 900; color: #dc2626;">
+                                                ${appointment.patient?.blood_group || ''}
+                                            </div>
+                                        </div>
+                                    </div>
 
-                        <div class="footer">
-                            <div>V10-OPP-PROTOCOL | SYSTEM GENERATED</div>
-                            <div>SIGNATURE: __________________________</div>
+                                    <!-- LAB TEST CHECKBOXES -->
+                                    <div class="labs-sec">
+                                        <div style="font-size: 8pt; font-weight: 900; color: #94a3b8; margin-bottom: 12px; border-bottom: 1px solid #f1f5f9;">ORDER INVESTIGATION</div>
+                                        ${['CBC', 'ESR', 'CRP', 'LFT', 'RFT', 'TROPI', 'TSH / TFT', 'HBA1C', 'D-DIAMER', 'DENGUECARD TEST', 'URE', 'URINE C/S', 'X-RAY', 'MRI', 'CT'].map(test => `
+                                            <div class="lab-item">
+                                                <span class="lab-name">${test}</span>
+                                                <div class="lab-check"></div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- FOOTER -->
+                            <div class="footer">
+                                <div class="f-legal">
+                                    ZIONA HMS - OP SLIP PROTOCOL V4.2 <br/>
+                                    GEN: ${new Date().toLocaleString()} | ID: ${appointment.id.slice(0, 8)}
+                                </div>
+                                <div class="f-sig">
+                                    <div class="sig-line"></div>
+                                    <div class="sig-text">${appointment.clinician?.first_name ? 'Dr. ' + appointment.clinician.first_name.toUpperCase() : 'CONSULTING DOCTOR'}</div>
+                                </div>
+                            </div>
                         </div>
 
                         <script>

@@ -183,12 +183,20 @@ export function ReceptionActionCenter({
     }
 
     // Filter Logic for Appointments
+    // Filter Logic for Appointments
     const filteredAppointments = todayAppointments.filter(apt => {
         const matchesDoctor = selectedDoctor === 'all' || apt.clinician?.id === selectedDoctor
         const matchesStatus = selectedStatus === 'all' || apt.status === selectedStatus
-        const matchesSearch = searchQuery === '' ||
-            `${apt.patient?.first_name} ${apt.patient?.last_name}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            apt.patient?.patient_number?.toLowerCase().includes(searchQuery.toLowerCase())
+        
+        const q = searchQuery.toLowerCase();
+        const contact = apt.patient?.contact || {};
+        const phone = contact.phone || contact.mobile || "";
+        
+        const matchesSearch = q === '' ||
+            `${apt.patient?.first_name} ${apt.patient?.last_name}`.toLowerCase().includes(q) ||
+            apt.patient?.patient_number?.toLowerCase().includes(q) ||
+            phone.includes(q)
+            
         return matchesDoctor && matchesStatus && matchesSearch
     })
 
@@ -513,6 +521,7 @@ export function ReceptionActionCenter({
                                                 router={router}
                                                 handleStatusUpdate={handleStatusUpdate}
                                                 statusLoading={statusLoading}
+                                                hospitalInfo={hospitalInfo}
                                                 onAction={() => handleStatusUpdate(apt.id, apt.status === 'scheduled' ? 'arrived' : 'confirmed')}
                                                 onEdit={() => handleEditClick(apt)}
                                             />
@@ -545,6 +554,7 @@ export function ReceptionActionCenter({
                                                 router={router}
                                                 handleStatusUpdate={handleStatusUpdate}
                                                 statusLoading={statusLoading}
+                                                hospitalInfo={hospitalInfo}
                                                 onAction={() => { }}
                                                 onEdit={() => handleEditClick(apt)}
                                                 onBill={() => setSelectedAptForBilling(apt)}
@@ -578,6 +588,7 @@ export function ReceptionActionCenter({
                                                 router={router}
                                                 handleStatusUpdate={handleStatusUpdate}
                                                 statusLoading={statusLoading}
+                                                hospitalInfo={hospitalInfo}
                                                 onAction={() => setSelectedAptForBilling(apt)}
                                                 onEdit={() => handleEditClick(apt)}
                                                 onBill={() => setSelectedAptForBilling(apt)}
@@ -608,6 +619,7 @@ export function ReceptionActionCenter({
                                             router={router}
                                             handleStatusUpdate={handleStatusUpdate}
                                             statusLoading={statusLoading}
+                                            hospitalInfo={hospitalInfo}
                                             onAction={() => { }}
                                             onEdit={() => handleEditClick(apt)}
                                             onBill={() => setSelectedAptForBilling(apt)}
@@ -1154,7 +1166,8 @@ function PatientCard({
     currentTime,
     router,
     handleStatusUpdate,
-    statusLoading
+    statusLoading,
+    hospitalInfo
 }: {
     apt: any,
     type: 'waiting' | 'running' | 'billing' | 'completed',
@@ -1165,7 +1178,8 @@ function PatientCard({
     currentTime: Date,
     router: any,
     handleStatusUpdate: (id: string, status: string) => void,
-    statusLoading: string | null
+    statusLoading: string | null,
+    hospitalInfo?: any
 }) {
     const isEmergency = apt.type === 'emergency' || apt.tags?.includes('EMERGENCY');
     const isUrgent = apt.priority === 'urgent';

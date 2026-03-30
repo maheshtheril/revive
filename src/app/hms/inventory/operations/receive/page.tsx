@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table" // Assuming these exist, otherwise standard table
-import { Plus, Trash2, Calendar, Save, CheckCircle2, ChevronRight, Package, Search } from "lucide-react"
+import { Plus, Trash2, Calendar, Save, CheckCircle2, ChevronRight, Package, Search, Sparkles, Image as ImageIcon, Loader2 } from "lucide-react"
+import { scanPurchaseReceiptAction } from "@/app/actions/product-scan"
 import { useToast } from "@/components/ui/use-toast"
-import { getProductsPremium } from "@/app/actions/inventory"
+import { getProductsPremium, searchProducts } from "@/app/actions/inventory"
 import { receiveStock, ReceiveStockData, ReceiveStockItem } from "@/app/actions/inventory-operations"
 
 export default function ReceiveStockPage() {
@@ -31,6 +32,7 @@ export default function ReceiveStockPage() {
     const [searchTerm, setSearchTerm] = useState('')
     const [searchResults, setSearchResults] = useState<any[]>([])
     const [isSearching, setIsSearching] = useState(false)
+    const [isScanningAI, setIsScanningAI] = useState(false)
 
     // New Item State
     const [currentItem, setCurrentItem] = useState<{
@@ -115,6 +117,57 @@ export default function ReceiveStockPage() {
         }))
     }
 
+    const handleAIScan = async (file: File) => {
+        setIsScanningAI(true)
+        const toastId = toast({ title: "AI Scanning...", description: "Identifying products and batch info..." })
+
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            const result = await scanPurchaseReceiptAction(formData)
+
+            if (result.success && result.data) {
+                toast({ title: "Scan Complete", description: `Found ${result.data.length} items. Matching with inventory...` })
+                
+                const newItems: any[] = []
+                for (const scanned of result.data) {
+                    // Try to find matching product in DB
+                    const searchRes = await searchProducts(scanned.name)
+                    const matchedProduct = searchRes?.success && searchRes.data?.length > 0 ? searchRes.data[0] : null
+
+                    if (matchedProduct) {
+                        newItems.push({
+                            productId: matchedProduct.id,
+                            quantity: scanned.quantity || 1,
+                            unitCost: scanned.unitCost || matchedProduct.default_cost || 0,
+                            mrp: scanned.mrp || matchedProduct.mrp || 0,
+                            batchNumber: scanned.batchNumber || '',
+                            expiryDate: scanned.expiryDate || '',
+                            _productName: matchedProduct.name,
+                            _uom: matchedProduct.uom
+                        })
+                    } else {
+                        toast({ title: "Product Not Found", description: `Could not find "${scanned.name}" in catalogue.`, variant: "destructive" })
+                    }
+                }
+
+                if (newItems.length > 0) {
+                    setFormData(prev => ({
+                        ...prev,
+                        items: [...(prev.items || []), ...newItems]
+                    }))
+                    toast({ title: "Success", description: `Added ${newItems.length} items from scan.` })
+                }
+            } else {
+                toast({ title: "Scan Failed", description: result.error || "Unknown error", variant: "destructive" })
+            }
+        } catch (e) {
+            toast({ title: "Error", description: "AI Scanning failed.", variant: "destructive" })
+        } finally {
+            setIsScanningAI(false)
+        }
+    }
+
     const handleSubmit = async () => {
         if (!formData.items || formData.items.length === 0) {
             toast({ title: "No Items", description: "Please add at least one item", variant: "destructive" })
@@ -143,6 +196,27 @@ export default function ReceiveStockPage() {
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-gray-900">Receive Stock</h1>
                     <p className="text-gray-500 mt-1">Create a Purchase Receipt (GRN) to add stock.</p>
+                </div>
+                <div className="flex gap-3">
+                    <div className="relative">
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                                if (e.target.files?.[0]) handleAIScan(e.target.files[0]);
+                            }}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                            disabled={isScanningAI}
+                        />
+                        <Button 
+                            variant="outline" 
+                            className="bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold gap-2"
+                            disabled={isScanningAI}
+                        >
+                            {isScanningAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-indigo-500" />}
+                            {isScanningAI ? "Scanning Receipt..." : "AI Scan Receipt"}
+                        </Button>
+                    </div>
                 </div>
             </div>
 

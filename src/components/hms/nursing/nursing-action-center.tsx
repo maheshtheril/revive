@@ -403,7 +403,7 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
 
             {/* Modal for Usage */}
             <Dialog open={!!selectedUsageTask} onOpenChange={(open) => !open && setSelectedUsageTask(null)}>
-                <DialogContent className="max-w-md p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                <DialogContent className="max-w-4xl p-0 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 overflow-hidden">
                     <div className="mb-4">
                         <h2 className="text-lg font-bold">Record Consumption</h2>
                         <p className="text-sm text-slate-500">For {selectedUsageTask?.patient_name}</p>

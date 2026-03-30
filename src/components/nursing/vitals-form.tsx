@@ -44,10 +44,11 @@ export default function NursingVitalsForm({ patientId, encounterId, tenantId, in
 
     // Fetch if needed
     useEffect(() => {
+        let isMounted = true;
         if (!initialData) {
             const fetchExisting = async () => {
                 const data = await getVitals(encounterId)
-                if (data) {
+                if (isMounted && data) {
                     setHeight(data.height?.toString() || '')
                     setWeight(data.weight?.toString() || '')
                     setTemp(data.temperature?.toString() || '')
@@ -58,10 +59,11 @@ export default function NursingVitalsForm({ patientId, encounterId, tenantId, in
                     setResp(data.respiration?.toString() || '')
                     setNotes(data.notes || '')
                 }
-                setFetching(false)
+                if (isMounted) setFetching(false)
             }
             fetchExisting()
         }
+        return () => { isMounted = false; };
     }, [encounterId, initialData])
 
     // BMI Calc

@@ -9,9 +9,12 @@ interface PremiumPrintHeaderProps {
     title: string;
     subtitle?: string;
     documentNumber: string;
+    hide?: boolean;
 }
 
-export function PremiumPrintHeader({ company, title, subtitle, documentNumber }: PremiumPrintHeaderProps) {
+export function PremiumPrintHeader({ company, title, subtitle, documentNumber, hide = false }: PremiumPrintHeaderProps) {
+    if (hide) return null;
+    
     const metadata = company.metadata || {};
     const address = metadata.address || '';
     const email = metadata.email || '';

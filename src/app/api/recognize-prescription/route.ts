@@ -1,15 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from "@google/generative-ai"
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "")
+import { NextRequest, NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { auth } from "@/auth";
+import { getAIConfig } from "@/app/actions/settings";
 
 export async function POST(request: NextRequest) {
     try {
-        if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+        const session = await auth();
+        const config = await getAIConfig(session?.user?.companyId || "", session?.user?.tenantId || "");
+        const key = config?.apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+
+        if (!key) {
             return NextResponse.json({
-                error: 'AI service not configured'
+                error: 'AI service not configured. Please add Gemini API Key in Global Settings.'
             }, { status: 503 })
         }
+
+        const genAI = new GoogleGenerativeAI(key);
 
         const formData = await request.formData()
         const imageFile = formData.get('image') as File

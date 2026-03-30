@@ -225,9 +225,10 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
                             <div className="flex gap-1">
                                 <select
                                     name="uomId"
-                                    defaultValue={initialData?.uom_id}
+                                    defaultValue={initialData?.uom_id || uoms.find(u => u.name === initialData?.uom)?.id}
                                     className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-black outline-none transition-all text-sm"
                                 >
+                                    <option value="">Select UOM...</option>
                                     {uoms.map(u => (
                                         <option key={u.id} value={u.id}>{u.name}</option>
                                     ))}

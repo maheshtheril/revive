@@ -22,6 +22,8 @@ import {
     getFinancialTrends,
     getExecutiveInsights
 } from "@/app/actions/accounting/reports"
+import { ClassicProfitLoss } from "./classic-profit-loss"
+import { ClassicBalanceSheet } from "./classic-balance-sheet"
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
@@ -62,6 +64,8 @@ export function FinancialDashboard({
     const [trends, setTrends] = useState<any[]>([])
     const [insights, setInsights] = useState<string[]>([])
     const [date, setDate] = useState(new Date())
+    const [viewMode, setViewMode] = useState<'modern' | 'classic'>('modern')
+    const [classicTab, setClassicTab] = useState<'pl' | 'bs'>('pl')
 
     useEffect(() => {
         loadData()
@@ -149,6 +153,14 @@ export function FinancialDashboard({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 relative z-10">
+                    <Button
+                        variant={viewMode === 'classic' ? 'default' : 'outline'}
+                        onClick={() => setViewMode(viewMode === 'modern' ? 'classic' : 'modern')}
+                        className={`h-12 px-6 rounded-xl border-slate-200 dark:border-slate-800 gap-2 transition-all font-bold ${viewMode === 'classic' ? 'bg-[#002b2b] text-[#ffffcc] hover:bg-[#004d4d]' : 'hover:bg-slate-50'}`}
+                    >
+                        <Landmark className="h-5 w-5" />
+                        {viewMode === 'modern' ? 'Switch to Tally View' : 'Back to Dashboard'}
+                    </Button>
                     <Button variant="outline" className="h-12 px-6 rounded-xl border-slate-200 dark:border-slate-800 gap-2 hover:bg-slate-50 transition-all font-semibold">
                         <Calendar className="h-5 w-5 text-indigo-500" />
                         {formatDate(date, 'MMMM yyyy')}
@@ -364,7 +376,7 @@ export function FinancialDashboard({
                     </CardHeader>
                     <CardContent className="p-8 pt-0 space-y-4 flex-1">
                         <Button
-                            onClick={() => router.push('/hms/accounting/journals')}
+                            onClick={() => router.push('/hms/accounting/journals/new')}
                             className="w-full h-16 bg-white/5 hover:bg-white/10 text-white rounded-2xl justify-between px-6 border border-white/10 group transition-all"
                         >
                             <div className="flex items-center gap-4">
@@ -373,23 +385,39 @@ export function FinancialDashboard({
                                 </div>
                                 <div className="text-left">
                                     <p className="font-bold text-sm">Post Journal Entry</p>
-                                    <p className="text-[10px] text-slate-400">Manual adjusting entries</p>
+                                    <p className="text-[10px] text-slate-400">Manual adjusting entries (F7)</p>
                                 </div>
                             </div>
                             <ChevronRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
                         </Button>
 
                         <Button
-                            onClick={() => router.push('/hms/accounting/payments')}
-                            className="w-full h-16 bg-white/5 hover:bg-white/10 text-white rounded-2xl justify-between px-6 border border-white/10 group transition-all"
+                            onClick={() => router.push('/hms/accounting/payments/new')}
+                            className="w-full h-16 bg-white/5 hover:bg-white/10 text-white rounded-2xl justify-between px-6 border border-white/5 group transition-all"
                         >
                             <div className="flex items-center gap-4">
                                 <div className="p-2 bg-emerald-500/20 rounded-xl group-hover:bg-emerald-500/30 transition-colors">
                                     <CreditCard className="h-5 w-5 text-emerald-400" />
                                 </div>
                                 <div className="text-left">
-                                    <p className="font-bold text-sm">Record Payment</p>
-                                    <p className="text-[10px] text-slate-400">Accounts receivable/payable</p>
+                                    <p className="font-bold text-sm">Voucher Payment (F5)</p>
+                                    <p className="text-[10px] text-slate-400">Record cash/bank outflow</p>
+                                </div>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
+                        </Button>
+
+                        <Button
+                            onClick={() => router.push('/hms/accounting/receipts/new')}
+                            className="w-full h-16 bg-white/5 hover:bg-white/10 text-white rounded-2xl justify-between px-6 border border-white/5 group transition-all"
+                        >
+                            <div className="flex items-center gap-4">
+                                <div className="p-2 bg-blue-500/20 rounded-xl group-hover:bg-blue-500/30 transition-colors">
+                                    <History className="h-5 w-5 text-blue-400" />
+                                </div>
+                                <div className="text-left">
+                                    <p className="font-bold text-sm">Voucher Receipt (F6)</p>
+                                    <p className="text-[10px] text-slate-400">Incoming cash/bank flow</p>
                                 </div>
                             </div>
                             <ChevronRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
@@ -461,8 +489,40 @@ export function FinancialDashboard({
                 </Card>
             </div>
 
-            {/* Advanced Reports Section */}
-            <Tabs defaultValue="pl" className="w-full">
+            {viewMode === 'classic' ? (
+                <div className="animate-in fade-in zoom-in duration-500 space-y-4">
+                    <div className="flex bg-[#003333] p-1 rounded-lg border border-[#004d4d] w-fit mx-auto self-center no-print sticky top-4 z-[100] shadow-2xl">
+                        <button
+                            onClick={() => setClassicTab('pl')}
+                            className={`px-8 py-2 text-xs font-black uppercase transition-all tracking-widest ${classicTab === 'pl' ? 'bg-[#ffffcc] text-black shadow-lg shadow-black/20' : 'text-[#64ffff] hover:bg-[#004d4d]'}`}
+                        >
+                            Profit & Loss Account
+                        </button>
+                        <button
+                            onClick={() => setClassicTab('bs')}
+                            className={`px-8 py-2 text-xs font-black uppercase transition-all tracking-widest ${classicTab === 'bs' ? 'bg-[#ffffcc] text-black shadow-lg shadow-black/20' : 'text-[#64ffff] hover:bg-[#004d4d]'}`}
+                        >
+                            Balance Sheet
+                        </button>
+                    </div>
+
+                    {classicTab === 'pl' ? (
+                        <ClassicProfitLoss
+                            data={plData}
+                            startDate={new Date(date.getFullYear(), date.getMonth(), 1)}
+                            endDate={new Date(date.getFullYear(), date.getMonth() + 1, 0)}
+                            currencySymbol={currencySymbol}
+                        />
+                    ) : (
+                        <ClassicBalanceSheet
+                            data={bsData}
+                            date={date}
+                            currencySymbol={currencySymbol}
+                        />
+                    )}
+                </div>
+            ) : (
+                <Tabs defaultValue="pl" className="w-full">
                 <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-[2rem]">
                     <TabsList className="bg-transparent gap-2 h-auto p-0">
                         <TabsTrigger
@@ -781,6 +841,7 @@ export function FinancialDashboard({
                     </TabsContent>
                 </AnimatePresence>
             </Tabs>
+            )}
         </motion.div>
     )
 }

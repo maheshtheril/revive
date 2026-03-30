@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   # Database Server (Primary)
@@ -37,6 +37,7 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       # Replication config (Cloud Sync)
       CLOUD_DATABASE_URL: ${CLOUD_DATABASE_URL}
+      WHATSAPP_BASE_URL: http://evolution-api:8080
     ports:
       - "3000:3000"
 
@@ -53,6 +54,30 @@ services:
       - ./infra/certs:/etc/nginx/certs:ro
     depends_on:
       - hms
+  # WhatsApp Gateway (Free Alternative to UltraMsg)
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution-api
+    restart: always
+    environment:
+      - SERVER_URL=http://192.168.10.10:8080
+      - AUTH_KEY=${EVOLUTION_API_KEY:-4296k-7v8m4-y2x1n-5p3z1}
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://hms_admin:${DB_PASSWORD}@db:5432/hms_prod?schema=public
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/6
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+      - redis
+
+  redis:
+    image: redis:alpine
+    container_name: hms-redis
+    restart: always
+    ports:
+      - "6379:6379"
 
 volumes:
   hms-db-data:

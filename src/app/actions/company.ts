@@ -53,12 +53,38 @@ export async function getCurrentCompany() {
     }
 
     try {
-        return await prisma.company.findUnique({
+        if (!companyId) return null;
+
+        // Ensure we handle potential invalid UUID formats gracefully
+        const company = await prisma.company.findUnique({
             where: { id: companyId },
             select: { id: true, name: true, industry: true, logo_url: true, metadata: true }
         });
+
+        if (!company) {
+            console.warn(`getCurrentCompany: Company not found for ID: ${companyId}`);
+        }
+
+        return company;
     } catch (error) {
-        console.error("Failed to fetch current company:", error);
+        console.error(`getCurrentCompany ERROR [ID: ${companyId}]:`, error);
+        // Fallback: try to find any company for this user if the specific ID fails
+        try {
+            if (session?.user?.id) {
+                const user = await prisma.app_user.findUnique({
+                    where: { id: session.user.id },
+                    select: { tenant_id: true }
+                });
+                if (user?.tenant_id) {
+                    return await prisma.company.findFirst({
+                        where: { tenant_id: user.tenant_id },
+                        select: { id: true, name: true, industry: true, logo_url: true, metadata: true }
+                    });
+                }
+            }
+        } catch (innerError) {
+            console.error("Critical failure in getCurrentCompany fallback:", innerError);
+        }
         return null;
     }
 }

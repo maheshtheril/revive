@@ -70,7 +70,31 @@ export async function createPurchaseReturn(data: PurchaseReturnData) {
                     }
                 })
 
-                // STOCK LEDGER (Outward)
+                // UPDATE STOCK LEVELS
+                const receiptLine = await tx.hms_purchase_receipt_line.findUnique({
+                    where: { id: item.receiptLineId }
+                });
+
+                // STOCK LEDGER (Outward) - Unified
+                await tx.hms_stock_ledger.create({
+                    data: {
+                        tenant_id: session.user.tenantId!,
+                        company_id: companyId,
+                        product_id: item.productId,
+                        movement_type: 'purchase_return',
+                        qty: -item.qtyToReturn,
+                        uom: receiptLine?.uom || 'Unit',
+                        unit_cost: item.unitPrice,
+                        total_cost: item.qtyToReturn * item.unitPrice,
+                        from_location_id: receiptLine?.location_id,
+                        batch_id: item.batchId,
+                        reference: returnNumber,
+                        related_type: 'hms_purchase_return',
+                        related_id: pReturn.id
+                    }
+                })
+
+                // [LEGACY] Keep for old Reports until migration
                 await tx.hms_product_stock_ledger.create({
                     data: {
                         tenant_id: session.user.tenantId!,
@@ -88,11 +112,6 @@ export async function createPurchaseReturn(data: PurchaseReturnData) {
                         }
                     }
                 })
-
-                // UPDATE STOCK LEVELS
-                const receiptLine = await tx.hms_purchase_receipt_line.findUnique({
-                    where: { id: item.receiptLineId }
-                });
 
                 if (receiptLine?.location_id) {
                     const existingStock = await tx.hms_stock_levels.findFirst({
@@ -195,7 +214,25 @@ export async function createSalesReturn(data: SalesReturnData) {
                 })
 
                 if (item.productId) {
-                    // Stock Increase (Inward)
+                    // STOCK LEDGER (Inward) - Unified
+                    await tx.hms_stock_ledger.create({
+                        data: {
+                            tenant_id: session.user.tenantId!,
+                            company_id: companyId,
+                            product_id: item.productId,
+                            movement_type: 'sale_return',
+                            qty: item.qtyToReturn,
+                            uom: 'Unit', // Fallback for returns if unknown
+                            unit_cost: item.unitPrice, // Cost for return
+                            to_location_id: null, // Should resolve default if possible
+                            reference: returnNumber,
+                            related_type: 'hms_sales_return',
+                            related_id: sReturn.id,
+                            metadata: { invoice_id: data.invoiceId }
+                        }
+                    })
+
+                    // [LEGACY] Keep for old Reports
                     await tx.hms_product_stock_ledger.create({
                         data: {
                             tenant_id: session.user.tenantId!,

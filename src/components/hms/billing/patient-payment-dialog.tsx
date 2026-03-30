@@ -116,6 +116,8 @@ export function PatientPaymentDialog({
                 onEscapeKeyDown={(e) => e.preventDefault()}
                 className="max-w-[95vw] w-full h-[95vh] p-0 bg-transparent border-none shadow-none flex items-center justify-center z-[400] focus:outline-none"
             >
+                <DialogTitle className="sr-only">Collect Payment for {patientName}</DialogTitle>
+                <DialogDescription className="sr-only">Process insurance or cash payments using the hospital billing terminal.</DialogDescription>
                 {isLoading ? (
                     <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-2xl">
                         <Loader2 className="h-12 w-12 text-emerald-600 animate-spin" />

@@ -401,7 +401,8 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 url: '#',
                 other_menu_items: [
                     { key: 'acc-bills', label: 'Vendor Bills', icon: 'FileMinus', url: '/hms/purchasing/bills' }, // Linked to Purchasing
-                    { key: 'acc-expenses', label: 'Expenses', icon: 'Receipt', url: '/hms/accounting/payments' },
+                    { key: 'acc-expenses', label: 'Payment Entry (F5)', icon: 'CreditCard', url: '/hms/accounting/payments/new' },
+                    { key: 'acc-payments-list', label: 'Payment Register', icon: 'List', url: '/hms/accounting/payments' },
                 ]
             },
             {
@@ -423,6 +424,7 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
         items: [
             { key: 'inv-dashboard', label: 'Inventory Overview', icon: 'LayoutDashboard', url: '/hms/inventory', permission_code: 'inventory:view' },
             { key: 'inv-products', label: 'Product Master', icon: 'Package', url: '/hms/inventory/products' },
+            { key: 'inv-import', label: 'Bulk Import Products', icon: 'Upload', url: '/hms/inventory/products?import=true' },
             {
                 key: 'inv-procurement',
                 label: 'Procurement',
@@ -464,7 +466,10 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     return items;
 }
 
-let hasAudited = false;
+let isChecking = false;
+
+// Optimization: Use a global variable to persist 'audited' state across module reloads in Dev mode.
+const globalObj = global as any;
 
 /**
  * SELF-HEALING: Audit and Fix Menu Permissions
@@ -472,19 +477,30 @@ let hasAudited = false;
  */
 export async function auditAndFixMenuPermissions() {
     if (typeof window !== 'undefined') return { success: true };
-    if (hasAudited) return { success: true };
+    if (globalObj.__hms_menu_audited) return { success: true };
+    if (isChecking) return { success: true }; 
 
+    isChecking = true;
     try {
         console.log("Self-healing: Auditing menu consistency...");
 
         // 0. NUCLEAR DEDUPLICATION: Kill rogue duplicates that lead to UI ghosting
-        // This handles cases where the same key exists multiple times without a DB-level unique constraint.
+        // Using high-level count first to see if we even need to bother
+        const menuCount = await prisma.menu_items.count();
+        if (menuCount > 1000) { 
+            console.warn("Table menu_items too large for auto-audit. Skipping deduplication.");
+            return { success: false };
+        }
+
         const duplicateKeys = await prisma.$queryRaw<{ key: string }[]>`
             SELECT key FROM "menu_items" 
             WHERE key IS NOT NULL AND key != ''
             GROUP BY key 
             HAVING COUNT(*) > 1
-        `;
+        `.catch(e => {
+            console.error("Deduplication query failed (likely timeout):", e.message);
+            return [] as { key: string }[];
+        });
 
         for (const dup of duplicateKeys) {
             console.log(`Auto-repair: Deduplicating menu key: ${dup.key}`);
@@ -519,7 +535,7 @@ export async function auditAndFixMenuPermissions() {
         await ensureHmsMenus();
         await ensureCrmMenus();
         await ensureAdminMenus();
-        // await ensureAccountingMenu(); // Optional: Enable if needed for other roles
+        await ensureAccountingMenu(); // Restored: Fixed Tally-style accounting menus
         // await ensurePurchasingMenus();
 
         // 0. CHECK REAL MODULES (User Request)
@@ -752,15 +768,12 @@ export async function auditAndFixMenuPermissions() {
         }
 
         console.log("Self-healing: Menu permissions audited and fixed.");
-        hasAudited = true;
+        globalObj.__hms_menu_audited = true;
         return { success: true };
     } catch (error) {
         console.error("Self-healing failed:", error);
-        if ((error as any)?.code) {
-            console.error("Prisma Code:", (error as any).code);
-            console.error("Prisma Meta:", (error as any).meta);
-        }
-
         return { success: false };
+    } finally {
+        isChecking = false;
     }
 }

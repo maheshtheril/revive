@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from "react"
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
 import { AppointmentForm } from "@/components/appointments/appointment-form"
 import { Plus, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,7 @@ export function AppointmentDialog({
                 </button>
             </DialogTrigger>
             <DialogContent className="max-w-[95vw] w-full h-[95vh] p-0 overflow-hidden bg-transparent border-none shadow-none">
+                <DialogTitle className="sr-only">Book Appointment</DialogTitle>
                 <div className="h-full w-full bg-slate-50 dark:bg-slate-950 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
                     <div className="flex-1 overflow-hidden p-4">
                         <AppointmentForm
@@ -76,6 +77,7 @@ export function MobileAppointmentFab({
                 </button>
             </DialogTrigger>
             <DialogContent className="max-w-[100vw] w-full h-[100vh] sm:h-[95vh] sm:max-w-[95vw] p-0 overflow-hidden bg-transparent border-none shadow-none">
+                <DialogTitle className="sr-only">Book Appointment</DialogTitle>
                 <div className="h-full w-full bg-slate-50 dark:bg-slate-950 sm:rounded-2xl overflow-hidden shadow-2xl flex flex-col">
                     <div className="flex-1 overflow-hidden p-2 sm:p-4">
                         <AppointmentForm

@@ -1,4 +1,5 @@
 import { getCategories, getTaxRates, deleteCategory } from "@/app/actions/inventory"
+import { getAccounts } from "@/app/actions/accounting/chart-of-accounts"
 import { Trash2, Tag, X, Box, Layers, Edit2 } from "lucide-react"
 import Link from "next/link"
 import { CreateCategoryForm } from "@/components/inventory/create-category-form"
@@ -7,6 +8,8 @@ export default async function CategoryMasterPage(props: { searchParams: Promise<
     const searchParams = await props.searchParams;
     const categories = await getCategories();
     const taxRates = await getTaxRates();
+    const accountsResponse = await getAccounts();
+    const accounts = accountsResponse.success ? accountsResponse.data || [] : [];
 
     const categoryToEdit = searchParams.edit ? categories.find(c => c.id === searchParams.edit) || null : null;
 
@@ -52,7 +55,11 @@ export default async function CategoryMasterPage(props: { searchParams: Promise<
                                     </h3>
                                 </div>
                                 <div className="p-2">
-                                    <CreateCategoryForm taxRates={taxRates} categoryToEdit={categoryToEdit} />
+                                    <CreateCategoryForm 
+                                        taxRates={taxRates} 
+                                        categoryToEdit={categoryToEdit} 
+                                        accounts={accounts}
+                                    />
                                 </div>
                             </div>
 
@@ -128,17 +135,29 @@ export default async function CategoryMasterPage(props: { searchParams: Promise<
                                                 <h3 className="font-bold text-gray-900 text-lg mb-1 leading-tight">
                                                     {category.name}
                                                 </h3>
-                                                <div className="mt-3">
+                                                <div className="mt-3 flex flex-wrap gap-2">
                                                     {taxRate ? (
-                                                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-100">
-                                                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                                            {taxRate.name} ({taxRate.rate}%)
-                                                        </div>
-                                                    ) : (
-                                                        <span className="inline-flex items-center px-3 py-1 rounded-full bg-gray-50 text-gray-500 text-xs font-medium border border-gray-200">
-                                                            No Tax Configured
-                                                        </span>
-                                                    )}
+                                                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-100">
+                                                             <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                                             {taxRate.name} ({taxRate.rate}%)
+                                                         </div>
+                                                     ) : (
+                                                         <span className="inline-flex items-center px-3 py-1 rounded-full bg-gray-50 text-gray-500 text-xs font-medium border border-gray-200">
+                                                             No Tax
+                                                         </span>
+                                                     )}
+                                                     
+                                                     {category.income_account_id && (
+                                                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-100">
+                                                             Inc: {accounts.find(a => a.id === category.income_account_id)?.name || 'Account Not Found'}
+                                                         </div>
+                                                     )}
+
+                                                     {category.expense_account_id && (
+                                                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 text-orange-700 text-xs font-semibold border border-orange-100">
+                                                             Exp: {accounts.find(a => a.id === category.expense_account_id)?.name || 'Account Not Found'}
+                                                         </div>
+                                                     )}
                                                 </div>
                                             </div>
                                         </div>

@@ -90,7 +90,10 @@ export default async function AccountingSettingsPage() {
 
     return (
         <AccountingSettingsForm
-            settings={settings}
+            settings={{
+                ...settings,
+                default_tax_mode: companySettings?.hms_billing_mode || 'exclusive'
+            }}
             accounts={accounts}
             taxRates={taxRates}
             taxLabel={taxLabel}

@@ -24,7 +24,7 @@ function SubmitButton({ isEdit }: { isEdit: boolean }) {
     )
 }
 
-export function CreateUOMForm({ initialData, uoms = [] }: { initialData?: any, uoms?: any[] }) {
+export function CreateUOMForm({ initialData, uoms = [], onSuccess }: { initialData?: any, uoms?: any[], onSuccess?: () => void }) {
     const [state, formAction] = useActionState(initialData ? updateUOM : createUOM, { error: "", success: false })
     const formRef = useRef<HTMLFormElement>(null)
     const router = useRouter()
@@ -40,14 +40,24 @@ export function CreateUOMForm({ initialData, uoms = [] }: { initialData?: any, u
     const baseUnits = uoms.filter((u: any) => u.uom_type === 'reference');
 
     useEffect(() => {
-        if (state.success && !initialData) {
-            formRef.current?.reset();
-            setName("");
-            setIsAlternative(false);
-            setRatio("");
-            setBaseUnitId("");
+        if (state.success) {
+            if (!initialData) {
+                formRef.current?.reset();
+                setName("");
+                setIsAlternative(false);
+                setRatio("");
+                setBaseUnitId("");
+            } else {
+                // For edit mode, we might want to close the popup or just show success
+                if (onSuccess) {
+                    const timer = setTimeout(() => {
+                        onSuccess();
+                    }, 1000); // Give user a moment to see success
+                    return () => clearTimeout(timer);
+                }
+            }
         }
-    }, [state.success, initialData])
+    }, [state.success, initialData, onSuccess])
 
     return (
         <form ref={formRef} action={formAction} className="bg-white/80 backdrop-blur-md rounded-2xl border border-gray-200 shadow-sm p-6 hover:shadow-md transition-all duration-300">

@@ -11,12 +11,31 @@ import { auth } from '@/auth'
 import { revalidatePath } from 'next/cache'
 import { sendInvitationEmail } from '@/lib/email'
 import crypto from 'crypto'
+import { headers } from 'next/headers'
+import os from 'os'
+
+function getLocalIp() {
+    const interfaces = os.networkInterfaces();
+    for (const devName in interfaces) {
+        const iface = interfaces[devName];
+        if (!iface) continue;
+        for (let i = 0; i < iface.length; i++) {
+            const alias = iface[i];
+            if (alias.family === 'IPv4' && alias.address !== '127.0.0.1' && !alias.internal) {
+                return alias.address;
+            }
+        }
+    }
+    return '127.0.0.1';
+}
+
 
 export interface InviteUserData {
     email: string
     roleId?: string
     systemRole: 'admin' | 'user'
     fullName?: string
+    username?: string
     mobile?: string
     countryId?: string
     subdivisionId?: string
@@ -168,15 +187,23 @@ export async function inviteUser(data: InviteUserData) {
                 company_id: defaultCompany?.id, // FIX: Assign default company to prevent Unauthorized errors
                 email: data.email.toLowerCase(),
                 full_name: data.fullName || data.email.split('@')[0],
-                name: data.email.split('@')[0],
+                name: data.username || data.email.split('@')[0],
                 role: data.systemRole,
                 // TODO: Add mobile, country_id, subdivision_id when schema is updated
                 // mobile: data.mobile,
                 // country_id: data.countryId,
                 // subdivision_id: data.subdivisionId,
-                is_active: false, // Must set password to activate
                 is_tenant_admin: data.systemRole === 'admin',
                 is_admin: data.systemRole === 'admin',
+                // Persist extended fields in metadata to avoid schema dependency
+                metadata: {
+                    source: 'staff-onboarding',
+                    onboarded_at: new Date().toISOString(),
+                    mobile: data.mobile,
+                    country_id: data.countryId,
+                    subdivision_id: data.subdivisionId,
+                    holidays_assigned: data.holidayIds
+                }
             }
         })
 
@@ -214,8 +241,19 @@ export async function inviteUser(data: InviteUserData) {
                 emailError = typeof emailResult.error === 'string' ? emailResult.error : 'API Key missing or Sandbox restriction';
             }
 
-            // Generate link for manual copying
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com');
+            // Determine APP URL dynamically for Production Ready setup
+            // This is critical for LAN/Hospital deployments where process.env.NEXT_PUBLIC_APP_URL might be wrong or local
+            let host = (await headers()).get('host')
+            if (host?.includes('localhost') || host?.includes('127.0.0.1')) {
+                const localIp = getLocalIp();
+                if (localIp !== '127.0.0.1') {
+                    host = host.replace('localhost', localIp).replace('127.0.0.1', localIp);
+                }
+            }
+            
+            const isLocal = host?.includes('localhost') || host?.includes('127.0.0.1') || /^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))/.test(host || '');
+            const protocol = isLocal ? 'http' : 'https'
+            const appUrl = host ? `${protocol}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com'));
             inviteLink = `${appUrl}/auth/accept-invite?token=${token}`;
 
         } catch (e) {
@@ -346,7 +384,17 @@ export async function resendInvitation(userId: string) {
             emailError = typeof emailResult.error === 'string' ? emailResult.error : 'Mail delivery failed (Check API Key/Sandbox)';
         }
 
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com');
+        let host = (await headers()).get('host')
+        if (host?.includes('localhost') || host?.includes('127.0.0.1')) {
+            const localIp = getLocalIp();
+            if (localIp !== '127.0.0.1') {
+                host = host.replace('localhost', localIp).replace('127.0.0.1', localIp);
+            }
+        }
+        
+        const isLocal = host?.includes('localhost') || host?.includes('127.0.0.1') || /^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))/.test(host || '');
+        const protocol = isLocal ? 'http' : 'https'
+        const appUrl = host ? `${protocol}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com'));
         inviteLink = `${appUrl}/auth/accept-invite?token=${token}`;
 
     } catch (e) {
@@ -502,6 +550,13 @@ export async function acceptInvitation(token: string, password: string) {
         }
 
         const userId = tokenRecord.user_id
+
+        // SELF-HEALING: Ensure pgcrypto exists for crypt()/gen_salt()
+        try {
+            await prisma.$executeRawUnsafe(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+        } catch (e) {
+            console.warn("Security Extension Check:", (e as any).message);
+        }
 
         await prisma.$executeRaw`
             UPDATE app_user 

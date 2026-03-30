@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings } from "@/app/actions/settings"
-import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Zap, Eye, EyeOff, ToggleLeft, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Type } from "lucide-react"
+import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings, updateAISettings, resetWhatsAppSession } from "@/app/actions/settings"
+import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
+import { Label } from "@/components/ui/label"
 
-export function HMSSettingsForm({ settings, products, doctors = [], gatewaySettings, whatsappSettings, pdfSettings }: { settings: any, products: any[], doctors?: any[], gatewaySettings?: any, whatsappSettings?: any, pdfSettings?: any }) {
+export function HMSSettingsForm({ settings, products, doctors = [], gatewaySettings, whatsappSettings, pdfSettings, aiSettings }: { settings: any, products: any[], doctors?: any[], gatewaySettings?: any, whatsappSettings?: any, pdfSettings?: any, aiSettings?: any }) {
     const router = useRouter()
     const { toast } = useToast()
     const [loading, setLoading] = useState(false)
@@ -18,6 +19,15 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [selectedProductId, setSelectedProductId] = useState(settings.registrationProductId)
     const [consultationBillingMode, setConsultationBillingMode] = useState(settings.consultationBillingMode || 'post_visit')
     const [defaultDoctorId, setDefaultDoctorId] = useState(settings.defaultDoctorId || '')
+    const [opSlipPreprintedLetterhead, setOpSlipPreprintedLetterhead] = useState(settings.opSlipPreprintedLetterhead ?? false)
+    const [opSlipHeaderHeight, setOpSlipHeaderHeight] = useState<string>(settings.opSlipHeaderHeight || '4.5')
+    const [billPreprintedLetterhead, setBillPreprintedLetterhead] = useState(settings.billPreprintedLetterhead ?? false)
+    const [billHeaderHeight, setBillHeaderHeight] = useState<string>(settings.billHeaderHeight || '4.5')
+    const [allowRateEdit, setAllowRateEdit] = useState(settings.allowRateEdit ?? true)
+
+    // Bridge Status
+    const [bridgeStatus, setBridgeStatus] = useState<{ connected: boolean, hasQr: boolean } | null>(null)
+    const [qrTime, setQrTime] = useState(Date.now())
 
     // Payment Gateway Settings
     const [gatewayEnabled, setGatewayEnabled] = useState(gatewaySettings?.enabled ?? false)
@@ -29,10 +39,11 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [hasExistingSecret, setHasExistingSecret] = useState(gatewaySettings?.hasKeySecret ?? false)
 
     // WhatsApp Settings
-    const [whatsappEnabled, setWhatsappEnabled] = useState(whatsappSettings?.enabled ?? false)
-    const [whatsappInstanceId, setWhatsappInstanceId] = useState(whatsappSettings?.instanceId ?? '')
+    const [whatsappEnabled, setWhatsappEnabled] = useState(whatsappSettings?.enabled ?? true)
+    const [whatsappProvider, setWhatsappProvider] = useState<'ultramsg' | 'evolution'>(whatsappSettings?.provider || 'evolution')
+    const [whatsappInstanceId, setWhatsappInstanceId] = useState(whatsappSettings?.instanceId ?? 'ZIONA-HMS')
     const [whatsappToken, setWhatsappToken] = useState('') // Masked
-    const [whatsappAutoSendBill, setWhatsappAutoSendBill] = useState(whatsappSettings?.autoSendBill ?? false)
+    const [whatsappAutoSendBill, setWhatsappAutoSendBill] = useState(whatsappSettings?.autoSendBill ?? true)
     const [showWhatsappToken, setShowWhatsappToken] = useState(false)
     const [hasExistingWhatsappToken, setHasExistingWhatsappToken] = useState(whatsappSettings?.hasToken ?? false)
 
@@ -43,6 +54,14 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [pdfAddressSize, setPdfAddressSize] = useState(pdfSettings?.addressSize || 10)
     const [pdfShowContactInfo, setPdfShowContactInfo] = useState(pdfSettings?.showContactInfo ?? true)
     const [pdfAutoPrint, setPdfAutoPrint] = useState(pdfSettings?.autoPrint ?? false)
+    const [pdfShowTaxInvoiceTitle, setPdfShowTaxInvoiceTitle] = useState(pdfSettings?.showTaxInvoiceTitle ?? true)
+
+    // AI Settings Mirror
+    const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
+    const [aiApiKey, setAiApiKey] = useState('')
+    const [aiModel, setAiModel] = useState(aiSettings?.model || 'gemini-1.5-flash')
+    const [showAiApiKey, setShowAiApiKey] = useState(false)
+    const [hasExistingAiKey, setHasExistingAiKey] = useState(aiSettings?.hasKey ?? false)
 
     // Sync local state when settings props change
     useEffect(() => {
@@ -52,6 +71,11 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         setSelectedProductId(settings.registrationProductId);
         setConsultationBillingMode(settings.consultationBillingMode || 'post_visit');
         setDefaultDoctorId(settings.defaultDoctorId || '');
+        setOpSlipPreprintedLetterhead(settings.opSlipPreprintedLetterhead ?? false);
+        setOpSlipHeaderHeight(settings.opSlipHeaderHeight || '4.5');
+        setBillPreprintedLetterhead(settings.billPreprintedLetterhead ?? false);
+        setBillHeaderHeight(settings.billHeaderHeight || '4.5');
+        setAllowRateEdit(settings.allowRateEdit ?? true);
     }, [settings]);
 
     useEffect(() => {
@@ -67,6 +91,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     useEffect(() => {
         if (whatsappSettings) {
             setWhatsappEnabled(whatsappSettings.enabled ?? false);
+            setWhatsappProvider(whatsappSettings.provider || 'ultramsg');
             setWhatsappInstanceId(whatsappSettings.instanceId ?? '');
             setWhatsappAutoSendBill(whatsappSettings.autoSendBill ?? false);
             // Ensure we update the existence flag from the server source of truth
@@ -82,8 +107,107 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             setPdfAddressSize(pdfSettings.addressSize || 10);
             setPdfShowContactInfo(pdfSettings.showContactInfo ?? true);
             setPdfAutoPrint(pdfSettings.autoPrint ?? false);
+            setPdfShowTaxInvoiceTitle(pdfSettings.showTaxInvoiceTitle ?? true);
         }
     }, [pdfSettings]);
+
+    useEffect(() => {
+        if (aiSettings) {
+            setAiEnabled(aiSettings.enabled ?? true);
+            setHasExistingAiKey(aiSettings.hasKey ?? false);
+        }
+    }, [aiSettings]);
+
+    // Poll WhatsApp Bridge Status
+    useEffect(() => {
+        if (!whatsappEnabled || whatsappProvider !== 'evolution') return;
+
+        const checkStatus = async () => {
+            try {
+                const res = await fetch(`http://${window.location.hostname}:8081/status`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setBridgeStatus(data);
+                    if (data.hasQr) setQrTime(Date.now()); // Force image refresh
+                } else {
+                    setBridgeStatus(null);
+                }
+            } catch (err) {
+                setBridgeStatus(null);
+            }
+        };
+
+        checkStatus();
+        const interval = setInterval(checkStatus, 5000);
+        return () => clearInterval(interval);
+    }, [whatsappEnabled, whatsappProvider]);
+
+    const handleWhatsappLogout = async () => {
+        if (!confirm("Are you sure you want to disconnect WhatsApp and change to another mobile?")) return;
+        setLoading(true);
+        try {
+            const res = await fetch(`http://${window.location.hostname}:8081/logout`, { method: 'POST' });
+            if (res.ok) {
+                toast({ title: "Disconnected", description: "Old session wiped. Restarting bridge..." });
+                setBridgeStatus(null);
+            } else {
+                // If local bridge is unreachable, try direct file reset
+                const coldRes = await resetWhatsAppSession();
+                if (coldRes.success) {
+                    toast({ title: "Session Reset", description: "Login files deleted via server. Restart Bridge." });
+                    setBridgeStatus(null);
+                } else {
+                    throw new Error("Local Bridge Bridge unreachable.");
+                }
+            }
+        } catch (err: any) {
+            // Fallback to cold reset on connection error
+            const coldRes = await resetWhatsAppSession();
+            if (coldRes.success) {
+                toast({ title: "Emergency Reset", description: "Login files deleted. Restart BRIDGE manually." });
+                setBridgeStatus(null);
+            } else {
+                toast({ title: "Error", description: "Could not reach bridge or reset files.", variant: "destructive" });
+            }
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    const handleTestAi = async () => {
+        setLoading(true);
+        toast({ title: "Testing AI...", description: "Connecting to Google Gemini..." });
+
+        try {
+            const res = await fetch('/api/ai-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ testKey: aiApiKey })
+            });
+
+            const result = await res.json();
+            
+            if (result.success) {
+                toast({ 
+                    title: "AI Connection OK! ✓", 
+                    description: "Your key is working perfectly. Don't forget to SAVE all settings.",
+                    variant: "default",
+                    className: "bg-emerald-600 text-white"
+                });
+                setHasExistingAiKey(true);
+            } else {
+                toast({ 
+                    title: "AI Test FAILED ✗", 
+                    description: result.error || "Connection error. Please check your key.", 
+                    variant: "destructive" 
+                });
+            }
+        } catch (err: any) {
+            toast({ title: "Error", description: err.message, variant: "destructive" });
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -96,14 +220,19 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         });
 
         try {
-            const [res, gatewayRes, whatsappRes, pdfRes] = await Promise.all([
+            const [res, gatewayRes, whatsappRes, pdfRes, aiRes] = await Promise.all([
                 updateHMSSettings({
                     registrationFee: parseFloat(String(registrationFee)),
                     registrationValidity: parseInt(String(registrationValidity)),
                     enableCardIssuance: !!enableCardIssuance,
                     consultationBillingMode: consultationBillingMode,
+                    opSlipPreprintedLetterhead: !!opSlipPreprintedLetterhead,
+                    opSlipHeaderHeight: opSlipHeaderHeight || '4.5',
+                    billPreprintedLetterhead: !!billPreprintedLetterhead,
+                    billHeaderHeight: billHeaderHeight || '4.5',
                     productId: selectedProductId,
-                    defaultDoctorId: defaultDoctorId || null
+                    defaultDoctorId: defaultDoctorId || null,
+                    allowRateEdit: allowRateEdit
                 }),
                 updatePaymentGatewaySettings({
                     enabled: gatewayEnabled,
@@ -114,6 +243,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                 }),
                 updateWhatsAppSettings({
                     enabled: whatsappEnabled,
+                    provider: whatsappProvider,
                     instanceId: whatsappInstanceId,
                     token: whatsappToken || undefined,
                     autoSendBill: whatsappAutoSendBill
@@ -124,7 +254,12 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     hospitalNameSize: pdfHospitalNameSize,
                     addressSize: pdfAddressSize,
                     showContactInfo: pdfShowContactInfo,
-                    autoPrint: pdfAutoPrint
+                    autoPrint: pdfAutoPrint,
+                    showTaxInvoiceTitle: pdfShowTaxInvoiceTitle
+                }),
+                updateAISettings({
+                    enabled: aiEnabled,
+                    apiKey: aiApiKey || undefined
                 })
             ]);
 
@@ -132,6 +267,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             if (!gatewayRes.success) throw new Error(gatewayRes.error || "Failed to save Gateway settings");
             if (!whatsappRes.success) throw new Error(whatsappRes.error || "Failed to save WhatsApp settings");
             if (!pdfRes.success) throw new Error(pdfRes.error || "Failed to save PDF settings");
+            if (!aiRes.success) throw new Error(aiRes.error || "Failed to save AI configuration");
 
             if (loadingToast) loadingToast.dismiss();
 
@@ -140,6 +276,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
 
             if (gatewayKeySecret) { setGatewayKeySecret(''); setHasExistingSecret(true); }
             if (whatsappToken) { setWhatsappToken(''); setHasExistingWhatsappToken(true); }
+            if (aiApiKey) { setAiApiKey(''); setHasExistingAiKey(true); }
 
             router.refresh();
         } catch (err: any) {
@@ -153,6 +290,13 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-24">
+            {/* Version Badge for Confidence */}
+            <div className="flex justify-end -mb-4">
+                <div className="px-3 py-1 bg-slate-900/80 backdrop-blur-md text-white rounded-full text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-2 border border-slate-700 shadow-lg">
+                    <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                    ZIONA v3.5 - Enterprise Gold
+                </div>
+            </div>
             {/* Status Message */}
             {msg && (
                 <div className={`p-5 rounded-2xl flex flex-col gap-2 border shadow-sm ${msg.type === 'success'
@@ -260,11 +404,272 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     </div>
                 </div>
 
+                {/* Patient ID Card Issuance */}
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center">
+                                <Shield className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-slate-800 dark:text-slate-100">Patient ID Cards</h3>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">Allow generating digital ID cards</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" checked={enableCardIssuance} onChange={(e) => setEnableCardIssuance(e.target.checked)} className="sr-only peer" />
+                            <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                        </label>
+                    </div>
+                </div>
+
+                {/* WhatsApp Notification Service - MOVED TO TOP FOR VISIBILITY */}
+                <div className="md:col-span-2 bg-white dark:bg-slate-900 border-2 border-emerald-500/20 dark:border-emerald-500/10 rounded-3xl p-6 shadow-xl shadow-emerald-500/5 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-3">
+                        <div className={`h-2 w-2 rounded-full ${bridgeStatus?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                    </div>
+                    <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-4">
+                            <div className="h-12 w-12 bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl flex items-center justify-center">
+                                <MessageSquare className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-2xl text-slate-800 dark:text-slate-100 italic">WhatsApp Notification Service</h3>
+                                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-0.5">Automated Patient Communication</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" checked={whatsappEnabled} onChange={(e) => setWhatsappEnabled(e.target.checked)} className="sr-only peer" />
+                            <div className="w-14 h-7 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:after:translate-x-full"></div>
+                        </label>
+                    </div>
+
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 ${!whatsappEnabled ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                        <div className="space-y-4">
+                            <div className="flex flex-col gap-1.5">
+                                <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">Service Provider</Label>
+                                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                                    <button
+                                        type="button"
+                                        onClick={() => setWhatsappProvider('ultramsg')}
+                                        className={`px-3 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${whatsappProvider === 'ultramsg' ? 'bg-white dark:bg-slate-800 text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        UltraMsg (Paid)
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setWhatsappProvider('evolution')}
+                                        className={`px-3 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${whatsappProvider === 'evolution' ? 'bg-white dark:bg-slate-800 text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        Evolution (Free)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">Instance / Bridge Name</Label>
+                                <input 
+                                    type="text" 
+                                    value={whatsappInstanceId} 
+                                    onChange={(e) => setWhatsappInstanceId(e.target.value)} 
+                                    placeholder={whatsappProvider === 'evolution' ? "Bridge Name (Default: ZIONA)" : "Instance ID (digits only)"} 
+                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold" 
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">API Authentication Token</Label>
+                                <div className="relative">
+                                    <input 
+                                        type={showWhatsappToken ? 'text' : 'password'} 
+                                        value={whatsappToken} 
+                                        onChange={(e) => setWhatsappToken(e.target.value)} 
+                                        placeholder={
+                                            whatsappToken 
+                                                ? 'Entering new key...' 
+                                                : hasExistingWhatsappToken 
+                                                    ? (showWhatsappToken ? '[SECURE KEY SAVED]' : '✓ KEY SAVED')
+                                                    : whatsappProvider === 'evolution' 
+                                                        ? 'Evolution Apikey (Optional)'
+                                                        : 'UltraMsg API Token'
+                                        } 
+                                        className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono ${hasExistingWhatsappToken && !whatsappToken ? 'border-emerald-500/30' : ''}`} 
+                                    />
+                                    <button type="button" onClick={() => setShowWhatsappToken(!showWhatsappToken)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-500 transition-colors">
+                                        {showWhatsappToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <label className="flex items-center gap-3 p-4 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-2xl cursor-pointer border border-emerald-100/50 dark:border-emerald-900/20">
+                                <input type="checkbox" checked={whatsappAutoSendBill} onChange={(e) => setWhatsappAutoSendBill(e.target.checked)} className="h-5 w-5 accent-emerald-500" />
+                                <div>
+                                    <span className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-tight">Auto-send Bill PDFs</span>
+                                    <p className="text-[10px] text-slate-500 font-medium">Sends invoice to patient immediately after save.</p>
+                                </div>
+                            </label>
+                        </div>
+
+                        {/* Pairing / QR Code Area */}
+                        <div className="bg-slate-50/50 dark:bg-slate-950/50 rounded-3xl p-6 border-2 border-dashed border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center relative min-h-[300px]">
+                            {whatsappProvider === 'evolution' ? (
+                                <>
+                                    {bridgeStatus?.connected ? (
+                                        <div className="text-center space-y-4">
+                                            <div className="h-20 w-20 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-2">
+                                                <CheckCircle className="h-10 w-10 text-emerald-600" />
+                                            </div>
+                                            <div>
+                                                <h4 className="text-lg font-black text-emerald-600 uppercase tracking-tight">System Connected</h4>
+                                                <p className="text-xs text-slate-500 font-bold">Your phone is linked to the hospital bridge.</p>
+                                            </div>
+                                            <button 
+                                                type="button"
+                                                onClick={handleWhatsappLogout}
+                                                className="mt-4 px-6 py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-red-700 transition-all active:scale-95 flex items-center gap-2 mx-auto"
+                                            >
+                                                <X className="h-4 w-4" /> Disconnect Device
+                                            </button>
+                                        </div>
+                                    ) : bridgeStatus?.hasQr ? (
+                                        <div className="text-center space-y-4">
+                                            <div className="bg-white p-3 rounded-2xl shadow-2xl ring-1 ring-slate-100 inline-block">
+                                                <img 
+                                                    src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8081/qr?t=${qrTime}`} 
+                                                    alt="WhatsApp QR Code" 
+                                                    className="w-48 h-48"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <h4 className="text-[11px] font-black text-indigo-600 uppercase tracking-widest">Scan with WhatsApp</h4>
+                                                <p className="text-[9px] text-slate-400 font-bold">Linked Devices &gt; Link a Device</p>
+                                            </div>
+                                            <button 
+                                                type="button"
+                                                onClick={handleWhatsappLogout}
+                                                className="text-[9px] font-black text-red-500 uppercase tracking-widest hover:underline"
+                                            >
+                                                Wipe Session & Retry
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="text-center space-y-3">
+                                            <Loader2 className="h-10 w-10 text-slate-300 animate-spin mx-auto" />
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                                                {whatsappEnabled ? "Connecting to local bridge..." : "Enable WhatsApp to pair device."}
+                                            </p>
+                                            {whatsappEnabled && (
+                                                <p className="text-[9px] text-slate-400 max-w-[200px] mx-auto leading-relaxed">Ensure RUN_WHATSAPP.bat is active on the server PC.</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="text-center space-y-4 p-4">
+                                    <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center mx-auto">
+                                        <Shield className="h-8 w-8 text-blue-500" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-widest">UltraMsg Active</h4>
+                                        <p className="text-[10px] text-slate-500 font-bold mt-1">Status managed via UltraMsg Dashboard</p>
+                                    </div>
+                                    <a href="https://ultramsg.com" target="_blank" className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">Check UltraMsg Status &rarr;</a>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* AI & Automation (Gemini) - Premium Automation Node */}
+                <div className="md:col-span-2 bg-gradient-to-br from-indigo-950 to-slate-900 border border-indigo-500/20 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20">
+                        <Sparkles className="h-24 w-24 text-indigo-400" />
+                    </div>
+                    <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-4">
+                            <div className="h-12 w-12 bg-indigo-500/20 rounded-2xl flex items-center justify-center">
+                                <Sparkles className="h-6 w-6 text-indigo-400 animate-pulse" />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-2xl text-white italic">AI Powered Automation</h3>
+                                <p className="text-xs text-indigo-300 font-bold uppercase mt-0.5 tracking-widest">Google Gemini Vision AI Integration</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" checked={aiEnabled} onChange={(e) => setAiEnabled(e.target.checked)} className="sr-only peer" />
+                            <div className="w-14 h-7 bg-slate-700/50 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:after:translate-x-full"></div>
+                        </label>
+                    </div>
+
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 ${!aiEnabled ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                        <div className="space-y-4">
+                            <div className="flex flex-col gap-1.5">
+                                <Label className="text-[10px] font-black uppercase text-indigo-300 ml-1 flex justify-between">
+                                    Gemini Vision API Key
+                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 hover:text-indigo-300 underline font-bold tracking-tight">Generate Key →</a>
+                                </Label>
+                                <div className="relative">
+                                    <input 
+                                        type={showAiApiKey ? 'text' : 'password'} 
+                                        value={aiApiKey} 
+                                        onChange={(e) => setAiApiKey(e.target.value)} 
+                                        placeholder={aiApiKey ? 'Entering new key...' : hasExistingAiKey ? '[SECURE AI KEY ACTIVE]' : 'Paste Gemini-1.5 API Key'} 
+                                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-white outline-none focus:border-indigo-500 font-mono"
+                                    />
+                                    <button type="button" onClick={() => setShowAiApiKey(!showAiApiKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30">
+                                        {showAiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={handleTestAi} disabled={loading || (!aiApiKey && !hasExistingAiKey)} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-500 transition-all flex items-center justify-center gap-2">
+                                    <Zap className="h-4 w-4" /> Test AI
+                                </button>
+                                {hasExistingAiKey && (
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            if(confirm("Restore to original .env key?")) {
+                                                const res = await updateAISettings({ enabled: aiEnabled, apiKey: "", reset: true });
+                                                if(res.success) { setHasExistingAiKey(false); setAiApiKey(""); toast({ title: "AI Reset", description: "Using default .env key." }); }
+                                            }
+                                        }}
+                                        className="px-4 bg-slate-800 text-slate-400 border border-white/5 rounded-xl hover:text-red-400"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex flex-col gap-1 opacity-60">
+                                <Label className="text-[10px] font-black uppercase text-indigo-300">AI Model Engine</Label>
+                                <select value={aiModel || "gemini-2.0-flash"} onChange={(e) => setAiModel(e.target.value)} className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white outline-none" disabled>
+                                    <option value="gemini-1.5-flash">google/gemini-1.5-flash (Stable)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
+                            <div className="flex items-start gap-3">
+                                <div className="h-8 w-8 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0">
+                                    <FileText className="h-4 w-4 text-blue-400" />
+                                </div>
+                                <p className="text-[10px] text-blue-100/70 font-bold leading-relaxed">Auto-extract items, tax, and totals from PDF/Image invoices for high-speed entries.</p>
+                            </div>
+                            <div className="flex items-start gap-3">
+                                <div className="h-8 w-8 bg-emerald-500/20 rounded-lg flex items-center justify-center shrink-0">
+                                    <CheckCircle className="h-4 w-4 text-emerald-400" />
+                                </div>
+                                <p className="text-[10px] text-emerald-100/70 font-bold leading-relaxed">Multimodal AI ensures 99.8% precision for complex pharmaceutical receipts.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Consultation Billing Mode */}
                 <div className="md:col-span-2 bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/20 dark:to-slate-900 border border-indigo-100 dark:border-indigo-900/30 rounded-3xl p-6 shadow-sm group">
                     <div className="flex items-center gap-4 mb-6">
                         <div className="h-10 w-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-                            <Zap className="h-5 w-5 text-white" />
+                            <Sparkles className="h-5 w-5 text-white" />
                         </div>
                         <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">Consultation Billing Mode</h3>
                     </div>
@@ -287,47 +692,109 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     </div>
                 </div>
 
-                {/* WhatsApp Cloud API */}
+                {/* Print Settings (OP Slip) */}
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm group">
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-10 w-10 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl flex items-center justify-center">
-                                <MessageSquare className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                    <div className="flex items-center gap-4 mb-4">
+                        <div className="h-10 w-10 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <Stethoscope className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 rounded-md">Print Settings</span>
                             </div>
-                            <h3 className="font-black text-lg text-slate-800 dark:text-slate-100 italic">WhatsApp Cloud API</h3>
+                            <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">OP Slip Layout</h3>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" checked={whatsappEnabled} onChange={(e) => setWhatsappEnabled(e.target.checked)} className="sr-only peer" />
-                            <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                        </label>
                     </div>
-                    <div className={`space-y-4 ${!whatsappEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
-                        <input type="text" value={whatsappInstanceId} onChange={(e) => setWhatsappInstanceId(e.target.value)} placeholder="Instance ID" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl" />
-                        <div className="relative">
-                            <input 
-                                type={showWhatsappToken ? 'text' : 'password'} 
-                                value={whatsappToken} 
-                                onChange={(e) => setWhatsappToken(e.target.value)} 
-                                placeholder={
-                                    whatsappToken 
-                                        ? 'Entering new token...' 
-                                        : hasExistingWhatsappToken 
-                                            ? (showWhatsappToken ? '[TOKEN SAVED & HIDDEN]' : '✓ SAVED & PROTECTED')
-                                            : 'Enter UltraMsg API Token'
-                                } 
-                                className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono ${hasExistingWhatsappToken && !whatsappToken ? 'border-emerald-500/30' : ''}`} 
+                    <div className="flex flex-col gap-4 mt-2">
+                        <label className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors">
+                            <div className="flex-1">
+                                <div className="font-bold text-slate-800 dark:text-slate-100 uppercase text-xs">A4 OP Slip: Preprinted Letterhead</div>
+                                <div className="text-[10px] text-slate-500 mt-1 font-bold">Use this if your doctor's prescriptions are on physical hospital paper.</div>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={opSlipPreprintedLetterhead}
+                                onChange={(e) => setOpSlipPreprintedLetterhead(e.target.checked)}
+                                className="h-5 w-5 accent-indigo-600 rounded border-slate-300 dark:border-slate-700"
                             />
-                            <button type="button" onClick={() => setShowWhatsappToken(!showWhatsappToken)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-500 transition-colors">
-                                {showWhatsappToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                            </button>
-                        </div>
-                        {hasExistingWhatsappToken && !whatsappToken && !showWhatsappToken && (
-                            <p className="text-[9px] text-slate-400 italic">Token is securely encrypted. Type to update.</p>
-                        )}
-                        <label className="flex items-center gap-3 p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-xl cursor-pointer">
-                            <input type="checkbox" checked={whatsappAutoSendBill} onChange={(e) => setWhatsappAutoSendBill(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 italic">Auto-send Bill PDFs</span>
                         </label>
+                        {opSlipPreprintedLetterhead && (
+                            <div className="flex items-center gap-4 p-4 bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/30 rounded-xl">
+                                <span className="text-[10px] font-bold text-indigo-500 uppercase">Margin Top:</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={opSlipHeaderHeight}
+                                    onChange={(e) => setOpSlipHeaderHeight(e.target.value)}
+                                    className="w-20 px-3 py-1 bg-white dark:bg-slate-800 border-2 border-indigo-200 rounded-lg font-bold text-center"
+                                />
+                                <span className="text-[10px] font-bold text-indigo-400">cm</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Print Settings (Tax Invoice / Bills) */}
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm group">
+                    <div className="flex items-center gap-4 mb-4">
+                        <div className="h-10 w-10 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <Printer className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] bg-emerald-50 dark:bg-emerald-900/40 px-2 py-0.5 rounded-md">Print Settings</span>
+                            </div>
+                            <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">Bill / Invoice Layout</h3>
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-4 mt-2">
+                        <label className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors">
+                            <div className="flex-1">
+                                <div className="font-bold text-slate-800 dark:text-slate-100 uppercase text-xs">A4 Bill: Preprinted Letterhead</div>
+                                <div className="text-[10px] text-slate-500 mt-1 font-bold">Use this if your invoices are on physical hospital paper.</div>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={billPreprintedLetterhead}
+                                onChange={(e) => setBillPreprintedLetterhead(e.target.checked)}
+                                className="h-5 w-5 accent-emerald-600 rounded border-slate-300 dark:border-slate-700"
+                            />
+                        </label>
+                        {billPreprintedLetterhead && (
+                            <div className="flex items-center gap-4 p-4 bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl">
+                                <span className="text-[10px] font-bold text-emerald-500 uppercase">Margin Top:</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={billHeaderHeight}
+                                    onChange={(e) => setBillHeaderHeight(e.target.value)}
+                                    className="w-20 px-3 py-1 bg-white dark:bg-slate-800 border-2 border-emerald-200 rounded-lg font-bold text-center"
+                                />
+                                <span className="text-[10px] font-bold text-emerald-400">cm</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                
+                {/* World Class High-Speed Billing settings */}
+                <div className="bg-gradient-to-r from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl p-6 shadow-sm group">
+                    <div className="flex items-center gap-4 mb-4">
+                        <div className="h-10 w-10 bg-emerald-600 rounded-xl flex items-center justify-center">
+                            <Sparkles className="h-5 w-5 text-white" />
+                        </div>
+                        <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic lowercase tracking-tight">High-Speed Billing</h3>
+                    </div>
+                    <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl hover:shadow-md transition-all">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs font-black uppercase tracking-widest text-slate-800 dark:text-slate-200">Allow Rate Manipulation</span>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase italic">Permit Editing Prices in Billing</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" checked={allowRateEdit} onChange={(e) => setAllowRateEdit(e.target.checked)} className="sr-only peer" />
+                                <div className="w-11 h-6 bg-slate-100 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -372,6 +839,10 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                             <label className="flex items-center gap-3 text-xs font-bold italic text-slate-700 dark:text-slate-300 cursor-pointer">
                                 <input type="checkbox" checked={pdfAutoPrint} onChange={(e) => setPdfAutoPrint(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
                                 Auto-print Bill after Save
+                            </label>
+                            <label className="flex items-center gap-3 text-xs font-bold italic text-indigo-500 cursor-pointer bg-indigo-50/50 dark:bg-indigo-900/20 p-2 rounded-lg">
+                                <input type="checkbox" checked={pdfShowTaxInvoiceTitle} onChange={(e) => setPdfShowTaxInvoiceTitle(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+                                Show "TAX INVOICE" Title
                             </label>
                         </div>
                     </div>

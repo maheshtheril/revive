@@ -6,12 +6,54 @@ import {
   MessageSquare, Plus, Trash2, Search, Save, User, DollarSign, Receipt, X,
   Loader2, CreditCard, Banknote, Smartphone, Maximize2,
   Minimize2, Check, QrCode, Clock, ArrowRight, Activity, Package, Landmark,
-  Copy, AlertTriangle, Zap, Info
+  Copy, AlertTriangle, Info
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { posService } from '@/lib/services/pos-device'
+
+// ------------------------------------------------------------------------------------------------
+// POS DEVICE SERVICE (INLINED TO RESOLVE CIRCULAR/EVALUATION ERRORS)
+// ------------------------------------------------------------------------------------------------
+type POSStatus = 'connected' | 'offline' | 'searching' | 'unsupported';
+let posServiceInstance: any = null;
+class POSDeviceService {
+    private activeUrl: string | null = null;
+    private status: POSStatus = 'searching';
+    constructor() {}
+    public async autoDiscover() {
+        if (typeof window === 'undefined') return false;
+        const ports = [8080, 8082, 12345];
+        for (const port of ports) {
+            try {
+                const url = `http://localhost:${port}`;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 800);
+                const res = await fetch(`${url}/web/status`, { method: 'GET', signal: controller.signal }).catch(() => null);
+                clearTimeout(timeoutId);
+                if (res && res.ok) { this.activeUrl = url; this.status = 'connected'; return true; }
+            } catch (e) {}
+        }
+        this.status = 'offline'; return false;
+    }
+    public getStatus(): POSStatus { return this.status; }
+    public async initiatePayment(req: any): Promise<any> {
+        if (!this.activeUrl) { await this.autoDiscover(); if (!this.activeUrl) return { success: false, error: 'POS Controller not found' }; }
+        try {
+            const payload = { transaction_type: 4001, amount: Math.round(req.amount * 100), billing_ref_no: req.invoiceId, payment_mode: req.method === 'CARD' ? 1 : 14 };
+            const response = await fetch(`${this.activeUrl}/web/doTransaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await response.json();
+            if (data.status === 'success' || data.response_code === '00') return { success: true, reference: data.approval_code || data.retrieval_ref_no, amount: req.amount };
+            return { success: false, error: data.message || 'Transaction Failed' };
+        } catch (err: any) { return { success: false, error: 'Communication error' }; }
+    }
+}
+function getPOSService(): any {
+    if (typeof window === 'undefined') return { getStatus: () => 'offline', autoDiscover: () => Promise.resolve(false) };
+    if (!posServiceInstance) posServiceInstance = new POSDeviceService();
+    return posServiceInstance;
+}
+
 import { createInvoice, updateInvoice, cancelInvoice, createQuickPatient, getPatientOutstandingBalance, getPatientLedger, getNextVoucherNumber, shareInvoiceWhatsapp } from '@/app/actions/billing'
-import { getPDFConfig } from '@/app/actions/settings';
+import { getPDFConfig, getHMSSettings } from '@/app/actions/settings';
 import { getBestBatch, getProductBatches, getProductsPremium, getProduct } from '@/app/actions/inventory'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useToast } from '@/components/ui/use-toast'
@@ -23,14 +65,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { format } from "date-fns"
 import { BatchSelectorDialog } from "./batch-selector-dialog"
 
-export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxConfig, initialPatientId, initialMedicines, appointmentId, initialInvoice, onClose, onPaymentSuccess, currency = '₹',
+export function CompactInvoiceEditor({ 
+  patients = [], 
+  billableItems = [], 
+  uoms = [], 
+  taxConfig = { defaultTax: null, taxRates: [] }, 
+  initialPatientId = '', 
+  initialMedicines = [], 
+  appointmentId = '', 
+  initialInvoice = null, 
+  onClose, 
+  onPaymentSuccess, 
+  currency = '₹',
   isRegistrationFee = false,
-  gatewayConfig = null
+  gatewayConfig = null,
+  defaultTaxMode
 }: {
-  patients: any[],
-  billableItems: any[],
+  patients?: any[],
+  billableItems?: any[],
   uoms?: any[],
-  taxConfig: { defaultTax: any, taxRates: any[] },
+  taxConfig?: { defaultTax: any, taxRates: any[] },
   initialPatientId?: string,
   initialMedicines?: any[],
   appointmentId?: string,
@@ -39,23 +93,117 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
   onPaymentSuccess?: (invoiceData: any) => void,
   currency?: string,
   isRegistrationFee?: boolean,
-  gatewayConfig?: { enabled: boolean, keyId: string, upiVpa: string, businessName: string } | null
+  gatewayConfig?: { enabled: boolean, keyId: string, upiVpa: string, businessName: string } | null,
+  defaultTaxMode?: 'exclusive' | 'inclusive' | 'exempt'
 }) {
+  // INTERNAL SAFETY NORMALIZATION: Handle nulls passed via JSX props
+  const safePatients = Array.isArray(patients) ? patients : [];
+  const safeBillableItems = Array.isArray(billableItems) ? billableItems : [];
+  const safeUoms = Array.isArray(uoms) ? uoms : [];
+  const safeTaxConfig = taxConfig || { defaultTax: null, taxRates: [] };
+  const safeTaxRates = Array.isArray(safeTaxConfig.taxRates) ? safeTaxConfig.taxRates : [];
+  const defaultTaxId = (safeTaxConfig.defaultTax as any)?.id || '';
 
-  const getUomOptions = (itemType: string, currentUom: string) => {
-    // Enforce world standard: only use UOMs from the database master table
-    const dbUnitNames = uoms.map(u => u.name.toUpperCase());
-    
-    // Always include the current UOM so existing/legacy lines don't break visually
-    const allUnits = Array.from(new Set([...dbUnitNames, (currentUom || '').toUpperCase()])).filter(Boolean);
+    // Robust Line Item State (PRE-INITIALIZED FOR DEPENDENCY REASONS)
+    const [lines, setLines] = useState<any[]>(() => {
+        try {
+            let combinedLines: any[] = []
 
-    if (itemType === 'service') {
-      // For services, only show service-type UOMs or the currently selected one
-      return allUnits.filter(u => (u === currentUom?.toUpperCase()) || (uoms.find(du => du.name.toUpperCase() === u && du.uom_type === 'service')));
+            // 1. If we are editing an existing invoice (or draft), load those lines first
+            if (initialInvoice?.hms_invoice_lines) {
+                combinedLines = initialInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
+                    id: l.id || `line-${idx}-${Date.now()}`,
+                    product_id: l.product_id || '',
+                    description: l.description || 'Untitled Item',
+                    quantity: Number(l.quantity || 1),
+                    uom: l.uom || 'PCS',
+                    unit_price: Number(l.unit_price || 0),
+                    tax_rate_id: l.tax_rate_id,
+                    tax_amount: Number(l.tax_amount || 0),
+                    discount_amount: Number(l.discount_amount || 0),
+                    base_price: Number(l.unit_price || 0),
+                    item_type: l.product_id ? (safeBillableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
+                    isFromInvoice: true
+                }))
+            }
+
+            // 2. If we have initial items passed (doctor prescriptions, nurse items, cons. fees)
+            const safeInitialMedicines = Array.isArray(initialMedicines) ? initialMedicines : [];
+            if (safeInitialMedicines.length > 0) {
+                const initialMapped = safeInitialMedicines.map((m: any, idx: number) => {
+                    if (!m) return null;
+                    const billable = safeBillableItems.find(bi => bi && (bi.id === (m.id || m.product_id) || bi.label === m.name));
+                    const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
+                    const finalPrice = billable?.price !== undefined ? Number(billable.price) : Number(m.price || 0);
+
+                    // Calculate initial tax
+                    const taxRateObj = safeTaxRates.find((t: any) => t && t.id === taxId);
+                    const rate = taxRateObj ? Number(taxRateObj.rate || 0) : 0;
+                    const lineNet = (Number(m.quantity || 1) * finalPrice);
+                    const taxAmt = (Math.max(0, lineNet) * rate) / 100;
+
+                    return {
+                        id: `init-${idx}-${Date.now()}`,
+                        product_id: billable?.id || m.id || '',
+                        description: m.name || m.description || 'Prescribed Item',
+                        quantity: Number(m.quantity || 1),
+                        uom: m.uom || billable?.uom || 'PCS',
+                        unit_price: finalPrice,
+                        tax_rate_id: taxId,
+                        tax_amount: taxAmt,
+                        discount_amount: 0,
+                        base_price: finalPrice,
+                        item_type: m.type || billable?.type || 'item',
+                        metadata: billable?.metadata || {}
+                    }
+                }).filter(Boolean);
+
+                // Merge: Add if not already in the draft invoice
+                initialMapped.forEach((m: any) => {
+                    const exists = combinedLines.some(cl => {
+                        const productMatch = cl.product_id && m.product_id && cl.product_id === m.product_id;
+                        const descMatch = (cl.description?.toLowerCase() || '').trim() === (m.description?.toLowerCase() || '').trim();
+                        return productMatch || descMatch;
+                    });
+                    if (!exists) {
+                        combinedLines.push(m);
+                    }
+                });
+            }
+
+            if (combinedLines.length > 0) return combinedLines;
+
+            // 3. Absolute Default: Single empty line
+            return [
+                { id: `default-line-${Date.now()}`, product_id: '', description: '', quantity: 1, uom: 'PCS', unit_price: 0, tax_rate_id: defaultTaxId, tax_amount: 0, discount_amount: 0, item_type: 'item' }
+            ]
+        } catch (e) {
+            console.log("[BILLING-EDITOR] Critical Failure in lines initializer:", e);
+            return [{ id: 'emergency-line', product_id: '', description: 'Error Loading Items', quantity: 1, uom: 'PCS', unit_price: 0, tax_rate_id: '', tax_amount: 0, discount_amount: 0, item_type: 'item' }];
+        }
+    })
+
+
+    const getUomOptions = (itemType: string, currentUom: string) => {
+        try {
+            // Enforce world standard: only use UOMs from the database master table
+            const safeUomsList = Array.isArray(uoms) ? uoms : [];
+            const dbUnitNames = safeUomsList.map(u => (u?.name || '').toUpperCase()).filter(Boolean);
+
+            // Always include the current UOM so existing/legacy lines don't break visually
+            const allUnits = Array.from(new Set([...dbUnitNames, (currentUom || '').toUpperCase()])).filter(Boolean);
+
+            if (itemType === 'service') {
+                // For services, only show service-type UOMs or the currently selected one
+                return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || (safeUomsList.find(du => (du?.name || '').toUpperCase() === u && du?.uom_type === 'service')));
+            }
+            // For items/products, show all UOMs or the currently selected one
+            return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || dbUnitNames.includes(u));
+        } catch (e) {
+            return ['PCS', 'UNIT'];
+        }
     }
-    // For items/products, show all UOMs or the currently selected one
-    return allUnits.filter(u => (u === currentUom?.toUpperCase()) || dbUnitNames.includes(u));
-  }
+
 
   interface Payment {
     method: 'cash' | 'card' | 'upi' | 'bank_transfer' | 'advance';
@@ -78,6 +226,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
   // UI State
   const [loading, setLoading] = useState(false)
   const [pricingMode, setPricingMode] = useState<'standard' | 'mrp'>('standard')
+  const [taxMode, setTaxMode] = useState<'exclusive' | 'inclusive' | 'exempt'>(defaultTaxMode || 'exempt')
   const [isMaximized, setIsMaximized] = useState(false)
   const [isQuickPatientOpen, setIsQuickPatientOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
@@ -94,6 +243,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
   const finalizeButtonRef = useRef<HTMLButtonElement>(null)
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false)
   const [errorDetails, setErrorDetails] = useState({ title: '', message: '' })
+  const [hmsConfig, setHmsConfig] = useState<any>(null)
 
   const [pdfConfig, setPdfConfig] = useState<any>(null);
   const [posStatus, setPosStatus] = useState<'connected' | 'offline' | 'searching'>('searching')
@@ -108,12 +258,17 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
   const [razorpayQRUrl, setRazorpayQRUrl] = useState<string | null>(null)
   const [isSendingLink, setIsSendingLink] = useState(false)
   const [isCustomerDisplayOpen, setIsCustomerDisplayOpen] = useState(false)
-  const razorpayPollRef = useRef<NodeJS.Timeout | null>(null)
+  const razorpayPollRef = useRef<any>(null)
 
   useEffect(() => {
     if (isPaymentModalOpen) {
       setTimeout(() => amountInputRef.current?.focus(), 150);
-      setPosStatus(posService.getStatus() as any);
+      const pos = getPOSService();
+      if (pos && typeof pos.autoDiscover === 'function') {
+        pos.autoDiscover().then(() => {
+            setPosStatus(pos.getStatus());
+        });
+      }
     }
   }, [isPaymentModalOpen]);
 
@@ -125,21 +280,21 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
   const [walkInPhone, setWalkInPhone] = useState('')
   const [selectedPatientId, setSelectedPatientId] = useState(activeInvoice?.patient_id || initialPatientId || '')
 
-  const patientOptions = useMemo(() => patients.map(p => ({
+  const patientOptions = useMemo(() => safePatients.filter(Boolean).map(p => ({
     id: p.id,
     label: p.label || p.name || `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unnamed Patient',
     subLabel: `${p.phone || p.contact || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`
-  })), [patients]);
+  })), [safePatients]);
 
-  const itemOptions = useMemo(() => billableItems.map(i => ({
+  const itemOptions = useMemo(() => safeBillableItems.filter(Boolean).map(i => ({
     id: i.id,
     label: i.label || i.name,
-    subLabel: `[${(i.type || 'item').toUpperCase()}] ${i.sku ? `SKU: ${i.sku} | ` : ''}${currency}${i.price}`
-  })), [billableItems, currency]);
+    subLabel: `${i.sku ? `SKU: ${i.sku}` : ''} • ${currency}${i.price || 0}`
+  })), [safeBillableItems, currency]);
 
   // Auto-select patient from URL if coming back from registration
   useEffect(() => {
-    const pId = searchParams.get('patientId');
+    const pId = searchParams?.get?.('patientId');
     if (pId) {
       setSelectedPatientId(pId);
       setIsWalkIn(false);
@@ -150,6 +305,9 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
     }
   }, [searchParams, initialPatientId, selectedPatientId]);
 
+  const displayedPatientOptions = useMemo(() => patientOptions.slice(0, 20), [patientOptions]);
+  const displayedBillableOptions = useMemo(() => itemOptions.slice(0, 20), [itemOptions]);
+
   const selectedPatientLabel = useMemo(() => {
     if (!selectedPatientId) return ''
     const p = patientOptions.find(p => p.id === selectedPatientId)
@@ -159,107 +317,157 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
     return inv?.hms_patient?.full_name || `${inv?.hms_patient?.first_name || ''} ${inv?.hms_patient?.last_name || ''}`.trim() || inv?.patient_name || ''
   }, [selectedPatientId, patientOptions, initialInvoice])
 
-  const [date, setDate] = useState(activeInvoice?.invoice_date ? new Date(activeInvoice.invoice_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0])
+  const getSafeDate = (d: any) => {
+    try {
+      if (!d) return new Date().toISOString().split('T')[0];
+      const parsed = new Date(d);
+      if (isNaN(parsed.getTime())) return new Date().toISOString().split('T')[0];
+      return parsed.toISOString().split('T')[0];
+    } catch (e) {
+      return new Date().toISOString().split('T')[0];
+    }
+  };
+
+  const [date, setDate] = useState(getSafeDate(activeInvoice?.invoice_date))
 
   // Fetch provisional number on mount and date change
   useEffect(() => {
+    let isMounted = true;
     if (!activeInvoice?.invoice_number) {
       getNextVoucherNumber(date).then(res => {
-        if (res.success && res.data) setProvisionalNo(res.data);
+        if (isMounted && res.success && res.data) setProvisionalNo(res.data);
       });
     } else {
       setProvisionalNo(activeInvoice.invoice_number);
     }
+    return () => { isMounted = false; };
   }, [date, activeInvoice]);
 
-  // AUTO-LOAD INITIAL DATA FROM APPOINTMENT (Registration Fee, etc)
-  useEffect(() => {
-    if (appointmentId && (!activeInvoice && (!initialMedicines || initialMedicines.length === 0))) {
-      import('@/app/actions/billing').then(mod => {
-        mod.getInitialInvoiceData(appointmentId).then(res => {
-          if (res?.success && res.data) {
-            const { initialItems, initialInvoice: foundInvoice, patientId } = res.data;
+    // AUTO-LOAD INITIAL DATA FROM APPOINTMENT (Registration Fee, etc)
+    useEffect(() => {
+        let isMounted = true;
+        try {
+            if (appointmentId && (!activeInvoice && (!initialMedicines || initialMedicines.length === 0))) {
+                import('@/app/actions/billing').then(mod => {
+                    mod.getInitialInvoiceData(appointmentId).then(res => {
+                        if (!isMounted) return;
+                        if (res?.success && res.data) {
+                            const { initialItems, initialInvoice: foundInvoice } = res.data;
 
-            // If we found an existing draft invoice, lock on to it
-            if (foundInvoice) {
-              setActiveInvoice(foundInvoice);
-              if (!selectedPatientId) setSelectedPatientId(foundInvoice.patient_id);
+                            // If we found an existing draft invoice, lock on to it
+                            if (foundInvoice) {
+                                setActiveInvoice(foundInvoice);
+                                if (!selectedPatientId) setSelectedPatientId(foundInvoice.patient_id);
 
-              // Load lines from existing invoice
-              if (foundInvoice.hms_invoice_lines) {
-                const invLines = foundInvoice.hms_invoice_lines.map((l: any) => ({
-                  id: l.id || Date.now() + Math.random(),
-                  product_id: l.product_id || '',
-                  description: l.description,
-                  quantity: Number(l.quantity),
-                  uom: l.uom || 'PCS',
-                  unit_price: Number(l.unit_price),
-                  tax_rate_id: l.tax_rate_id,
-                  tax_amount: Number(l.tax_amount),
-                  discount_amount: Number(l.discount_amount),
-                  base_price: l.unit_price,
-                  item_type: l.product_id ? (billableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
-                  isFromInvoice: true
-                }));
-                setLines(invLines);
-              }
-              return;
+                                // Load lines from existing invoice
+                                if (foundInvoice.hms_invoice_lines) {
+                                    const invLines = foundInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
+                                        id: l.id || `line-${idx}-${Date.now()}`,
+                                        product_id: l.product_id || '',
+                                        description: l.description || 'Untitled',
+                                        quantity: Number(l.quantity || 1),
+                                        uom: l.uom || 'PCS',
+                                        unit_price: Number(l.unit_price || 0),
+                                        tax_rate_id: l.tax_rate_id,
+                                        tax_amount: Number(l.tax_amount || 0),
+                                        discount_amount: Number(l.discount_amount || 0),
+                                        base_price: Number(l.unit_price || 0),
+                                        item_type: l.product_id ? (safeBillableItems.find(bi => bi && bi.id === l.product_id)?.type || 'item') : 'item',
+                                        isFromInvoice: true
+                                    }));
+                                    setLines(invLines);
+                                }
+                                return;
+                            }
+
+                            // Fallback to initialItems if no invoice exists
+                            if (Array.isArray(initialItems) && initialItems.length > 0) {
+                                const newLines = initialItems.map((m: any, idx: number) => {
+                                    if (!m) return null;
+                                    const billable = safeBillableItems.find(bi => bi && (bi.id === (m.id || m.product_id) || bi.label === m.name));
+                                    const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
+                                    const finalPrice = billable?.price !== undefined ? Number(billable.price) : Number(m.price || 0);
+
+                                    const taxRateObj = safeTaxRates.find((t: any) => t && t.id === taxId);
+                                    const rate = taxRateObj ? Number(taxRateObj.rate || 0) : 0;
+                                    const lineNet = (Number(m.quantity || 1) * finalPrice);
+                                    const taxAmt = (Math.max(0, lineNet) * rate) / 100;
+
+                                    return {
+                                        id: `init-eff-${idx}-${Date.now()}`,
+                                        product_id: billable?.id || m.id || '',
+                                        description: m.name || m.description || 'Appt Item',
+                                        quantity: Number(m.quantity || 1),
+                                        uom: m.uom || billable?.uom || 'PCS',
+                                        unit_price: finalPrice,
+                                        tax_rate_id: taxId,
+                                        tax_amount: taxAmt,
+                                        discount_amount: 0,
+                                        base_price: finalPrice,
+                                        item_type: m.type || billable?.type || 'item',
+                                        metadata: billable?.metadata || {}
+                                    }
+                                }).filter(Boolean);
+                                setLines(newLines as any[]);
+                            }
+                        }
+                    }).catch(err => console.log("[BILLING-EDITOR] Fetch Appt Data Failed:", err));
+                });
             }
+        } catch (e) {
+            console.log("[BILLING-EDITOR] Appointment Effect Failed:", e);
+        }
+        return () => { isMounted = false; };
+    }, [appointmentId, activeInvoice, initialMedicines, safeBillableItems, defaultTaxId, safeTaxRates, selectedPatientId]);
 
-            // Fallback to initialItems if no invoice exists
-            if (Array.isArray(initialItems) && initialItems.length > 0) {
-              const newLines = initialItems.map((m: any) => {
-                const billable = billableItems.find(bi => bi.id === (m.id || m.product_id) || bi.label === m.name);
-                const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
-                const finalPrice = billable?.price || Number(m.price || 0);
-
-                const taxRateObj = taxConfig.taxRates.find((t: any) => t.id === taxId);
-                const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
-                const lineNet = (Number(m.quantity || 1) * finalPrice);
-                const taxAmt = (Math.max(0, lineNet) * rate) / 100;
-
-                return {
-                  id: Math.random() + Date.now(),
-                  product_id: billable?.id || m.id || '',
-                  description: m.name || m.description || '',
-                  quantity: Number(m.quantity || 1),
-                  uom: m.uom || billable?.uom || 'PCS',
-                  unit_price: finalPrice,
-                  tax_rate_id: taxId,
-                  tax_amount: taxAmt,
-                  discount_amount: 0,
-                  base_price: finalPrice,
-                  item_type: m.type || billable?.type || 'item',
-                  metadata: billable?.metadata || {}
-                }
-              });
-              setLines(newLines);
-            }
-          }
-        });
-      });
-    }
-  }, [appointmentId, activeInvoice, initialMedicines, billableItems]);
 
   // Fetch PDF config on mount
   useEffect(() => {
+    let isMounted = true;
     const loadConfig = async () => {
       try {
         if (tenantId && companyId) {
           const pdf = await getPDFConfig(companyId, tenantId);
-          if (pdf) setPdfConfig(pdf);
+          if (isMounted && pdf) setPdfConfig(pdf);
+          const hms = await getHMSSettings();
+          if (isMounted && hms.success) setHmsConfig(hms.settings);
         }
       } catch (e) {
-        console.error('Failed to load PDF config', e);
+        console.log('Failed to load configs', e);
       }
     };
     loadConfig();
+    return () => { isMounted = false; };
   }, [tenantId, companyId]);
 
+  // High-Speed Keyboard Shortcuts
+  useEffect(() => {
+    const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      // F2: Focus Rate on current/last line
+      if (e.key === 'F2') {
+        e.preventDefault();
+        const activeIdx = lines.length - 1;
+        const rateInput = document.getElementById(`rate-input-${activeIdx}`);
+        if (rateInput) (rateInput as HTMLInputElement).focus();
+      }
+      
+      // Alt+S: Settle
+      if (e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        const settleBtn = document.getElementById('settle-button');
+        if (settleBtn) settleBtn.click();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalShortcuts);
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts);
+  }, [lines.length]);
+
   const extendedTaxRates = useMemo(() => {
-    const rates = [...(taxConfig.taxRates || [])];
+    const rates = [...(taxConfig?.taxRates || [])];
+    const safeBillableItems = Array.isArray(billableItems) ? billableItems : [];
     // Scan all billable items for missing rates
-    billableItems.forEach(item => {
+    safeBillableItems.forEach(item => {
       const rate = Number(item.categoryTaxRate || 0);
       if (rate > 0) {
         const exists = rates.find(r => Math.abs(Number(r.rate) - rate) < 0.1);
@@ -278,82 +486,8 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
       }
     });
     return rates.sort((a, b) => Number(a.rate) - Number(b.rate));
-  }, [taxConfig.taxRates, billableItems]);
+  }, [safeTaxRates, safeBillableItems]);
 
-  const defaultTaxId = taxConfig.defaultTax?.id || ''
-
-  // Robust Line Item State
-  const [lines, setLines] = useState<any[]>(() => {
-    let combinedLines: any[] = []
-
-    // 1. If we are editing an existing invoice (or draft), load those lines first
-    if (initialInvoice?.hms_invoice_lines) {
-      combinedLines = initialInvoice.hms_invoice_lines.map((l: any) => ({
-        id: l.id || Date.now() + Math.random(),
-        product_id: l.product_id || '',
-        description: l.description,
-        quantity: Number(l.quantity),
-        uom: l.uom || 'PCS',
-        unit_price: Number(l.unit_price),
-        tax_rate_id: l.tax_rate_id,
-        tax_amount: Number(l.tax_amount),
-        discount_amount: Number(l.discount_amount),
-        base_price: l.unit_price,
-        item_type: l.product_id ? (billableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
-        isFromInvoice: true
-      }))
-    }
-
-    // 2. If we have initial items passed (doctor prescriptions, nurse items, cons. fees)
-    if (initialMedicines && initialMedicines.length > 0) {
-      const initialMapped = initialMedicines.map((m: any) => {
-        const billable = billableItems.find(bi => bi.id === (m.id || m.product_id) || bi.label === m.name);
-        // FIX: Do not auto-exempt services. Trust the Billable Item's tax ID, or fall back to Default Tax.
-        const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
-        const finalPrice = billable?.price || Number(m.price || 0);
-
-        // Calculate initial tax
-        const taxRateObj = taxConfig.taxRates.find((t: any) => t.id === taxId);
-        const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
-        const lineNet = (Number(m.quantity || 1) * finalPrice) - 0; // No discount initially
-        const taxAmt = (Math.max(0, lineNet) * rate) / 100;
-
-        return {
-          id: Math.random() + Date.now(),
-          product_id: billable?.id || m.id || '',
-          description: m.name || m.description || '',
-          quantity: Number(m.quantity || 1),
-          uom: m.uom || billable?.uom || 'PCS',
-          unit_price: finalPrice,
-          tax_rate_id: taxId,
-          tax_amount: taxAmt,
-          discount_amount: 0,
-          base_price: finalPrice,
-          item_type: m.type || billable?.type || 'item',
-          metadata: billable?.metadata || {}
-        }
-      });
-
-      // Merge: Add if not already in the draft invoice
-      initialMapped.forEach(m => {
-        const exists = combinedLines.some(cl => {
-          const productMatch = cl.product_id && m.product_id && cl.product_id === m.product_id;
-          const descMatch = (cl.description?.toLowerCase() || '').trim() === (m.description?.toLowerCase() || '').trim();
-          return productMatch || descMatch;
-        });
-        if (!exists) {
-          combinedLines.push(m);
-        }
-      });
-    }
-
-    if (combinedLines.length > 0) return combinedLines;
-
-    // 3. Absolute Default: Single empty line
-    return [
-      { id: 1, product_id: '', description: '', quantity: 1, uom: 'PCS', unit_price: 0, tax_rate_id: defaultTaxId, tax_amount: 0, discount_amount: 0, item_type: 'item' }
-    ]
-  })
 
   // Sync lines when initial props change (e.g. after async fetch in parent)
   useEffect(() => {
@@ -366,8 +500,8 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
       let combined: any[] = [];
       if (initialInvoice?.hms_invoice_lines) {
-        combined = initialInvoice.hms_invoice_lines.map((l: any) => ({
-          id: l.id || Date.now() + Math.random(),
+        combined = initialInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
+          id: l.id || `line-async-${idx}-${Date.now()}`,
           product_id: l.product_id || '',
           description: l.description,
           quantity: Number(l.quantity),
@@ -377,16 +511,16 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
           tax_amount: Number(l.tax_amount),
           discount_amount: Number(l.discount_amount),
           base_price: l.unit_price,
-          item_type: l.product_id ? (billableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
+          item_type: l.product_id ? (safeBillableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
           isFromInvoice: true
         }));
       }
 
       if (initialMedicines && initialMedicines.length > 0) {
-        initialMedicines.forEach((m: any) => {
+        initialMedicines.forEach((m: any, idx: number) => {
           // [WORLD CLASS AUTO-POPULATE]
           // Find the real catalog item by ID or exact Name match
-          const billable = billableItems.find((bi: any) =>
+          const billable = safeBillableItems.find((bi: any) =>
             bi.id === (m.id || m.product_id) ||
             bi.label === m.name ||
             bi.name === m.name ||
@@ -395,7 +529,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
           const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
           const finalPrice = billable?.price || Number(m.price || 0);
-          const taxRateObj = taxConfig.taxRates.find((t: any) => t.id === taxId);
+          const taxRateObj = safeTaxRates.find((t: any) => t.id === taxId);
           const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
           const lineNet = (Number(m.quantity || 1) * finalPrice);
           const taxAmt = (Math.max(0, lineNet) * rate) / 100;
@@ -408,7 +542,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
           if (!exists) {
             combined.push({
-              id: Math.random() + Date.now(),
+              id: `init-async-${idx}-${Date.now()}`,
               product_id: billable?.id || m.id || '',
               description: billable?.label || billable?.name || m.name || m.description || '',
               quantity: Number(m.quantity || 1),
@@ -426,13 +560,13 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
       }
       if (combined.length > 0) setLines(combined);
     }
-  }, [initialInvoice, initialMedicines, billableItems, defaultTaxId, taxConfig.taxRates, isRegistrationFee]);
+  }, [initialInvoice, initialMedicines, safeBillableItems, defaultTaxId, safeTaxRates, isRegistrationFee]);
 
   // Sync Tax Amounts on Mount for initial items
   useEffect(() => {
     if (lines.length > 0) {
       const updatedLines = lines.map(line => {
-        const taxRateObj = taxConfig.taxRates.find((t: any) => t.id === line.tax_rate_id)
+        const taxRateObj = safeTaxRates.find((t: any) => t.id === line.tax_rate_id)
         const rate = taxRateObj ? Number(taxRateObj.rate) : 0
         const lineNet = (line.quantity * line.unit_price) - (line.discount_amount || 0)
         return {
@@ -482,8 +616,21 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
   // Totals
   const subtotal = Number(lines.reduce((sum, line) => sum + ((line.quantity * line.unit_price) - (line.discount_amount || 0)), 0).toFixed(2))
-  const totalTax = Number(lines.reduce((sum, line) => sum + (line.tax_amount || 0), 0).toFixed(2))
-  const grandTotal = Number(Math.max(0, subtotal + totalTax - globalDiscount).toFixed(2))
+  
+  // World Standard Tax Logic
+  const totalTax = taxMode === 'exempt' ? 0 : Number(lines.reduce((sum, line) => {
+      if (taxMode === 'inclusive') {
+          // Calculate tax from inclusive price
+          const taxRateObj = extendedTaxRates.find((t: any) => t.id === line.tax_rate_id);
+          const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
+          const lineTotal = (line.quantity * line.unit_price) - (line.discount_amount || 0);
+          const taxAmt = lineTotal - (lineTotal / (1 + rate / 100));
+          return sum + taxAmt;
+      }
+      return sum + (line.tax_amount || 0);
+  }, 0).toFixed(2));
+
+  const grandTotal = Number(Math.max(0, taxMode === 'inclusive' ? subtotal : subtotal + totalTax - globalDiscount).toFixed(2))
   const totalPaid = Number(payments.reduce((sum, p) => sum + (p.amount || 0), 0).toFixed(2))
   const balanceDue = Number(Math.max(0, grandTotal - totalPaid).toFixed(2))
 
@@ -551,7 +698,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
         // Logic for Product/Service Selection
         if (field === 'product_id') {
-          const item = billableItems.find(bi => bi.id === value)
+          const item = safeBillableItems.find(bi => bi && bi.id === value)
           if (item) {
             // Description Polish: Override generic auto-created labels
             const rawDescription = item.description || item.label || item.name;
@@ -599,6 +746,12 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
               const qtyInput = document.getElementById(`qty-input-${lineIndex}`);
               if (qtyInput) (qtyInput as HTMLInputElement).focus();
             }, 100);
+          } else {
+            // If item not found (e.g. cleared), reset basics
+            updated.description = '';
+            updated.product_id = '';
+            updated.unit_price = 0;
+            updated.tax_amount = 0;
           }
         }
 
@@ -646,11 +799,31 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
       patient_id: isWalkIn ? null : selectedPatientId,
       appointment_id: appointmentId || searchParams.get('appointmentId') || undefined,
       date,
-      line_items: lines.filter(l => l.description || l.product_id),
+      line_items: lines.filter(l => l.description || l.product_id).map(l => {
+          if (taxMode === 'exempt') return { ...l, tax_amount: 0, tax_rate_id: null };
+          if (taxMode === 'inclusive') {
+              const taxRateObj = extendedTaxRates.find((t: any) => t.id === l.tax_rate_id);
+              const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
+              const lineNet = (l.quantity * l.unit_price) - (l.discount_amount || 0);
+              const baseValue = lineNet / (1 + rate / 100);
+              const taxValue = lineNet - baseValue;
+              // For inclusive, the unit_price is already the "net" (gross - tax) or we store original price?
+              // Standard practice: unit_price should be the base (pre-tax) price.
+              return { 
+                  ...l, 
+                  unit_price: l.unit_price / (1 + rate / 100), 
+                  tax_amount: taxValue 
+              };
+          }
+          return l;
+      }),
       status: effectiveStatus,
       total_discount: globalDiscount,
       payments: finalPayments,
-      billing_metadata: isWalkIn ? { is_walk_in: true, patient_name: walkInName, patient_phone: walkInPhone } : {}
+      billing_metadata: {
+          ...(isWalkIn ? { is_walk_in: true, patient_name: walkInName, patient_phone: walkInPhone } : {}),
+          tax_mode: taxMode
+      }
     }
 
     try {
@@ -669,17 +842,26 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
           }
         }
 
-        toast({ title: "Sync Successful", description: tallyMsg })
+        toast({ title: "Sync Successful", description: tallyMsg });
 
-        setIsSuccess(true)
-        setLoading(false)
-        setIsPaymentModalOpen(false) // [FIX] Ensure payment modal is closed upon success
+        // WhatsApp Failure Notification (if auto-send was triggered)
+        if ((res as any)?.whatsapp_sent) {
+          toast({ title: "Invoice Created & Shared", description: `Billed to ${(res as any).data.patient_id}. WhatsApp receipt delivered.` });
+        } else if ((res as any).whatsapp_sent === false) {
+          toast({
+            title: "WhatsApp Delivery Failed",
+            description: (res as any).whatsapp_error || "Could not send automated bill to patient. Please check bridge status.",
+            variant: "destructive"
+          });
+        } else {
+          toast({ title: "Invoice Created", description: `Unique Serial: ${(res as any).data.invoice_number} generated.` });
+        }
+
         const invoiceId = (res as any).data?.id;
-        setLastSavedId(invoiceId || null)
+        setLastSavedId(invoiceId || null);
 
         // WORLD CLASS: Auto-Print Trigger (Trigger on Paid or Posted settlement)
         if ((effectiveStatus === 'paid' || effectiveStatus === 'posted') && pdfConfig?.autoPrint && invoiceId) {
-          // Trigger IMMEDIATELY to bypass popup blockers (most browsers allow window.open if it's "close enough" to the click)
           const iframe = document.createElement('iframe');
           iframe.style.display = 'none';
           iframe.src = `/api/billing/${invoiceId}/pdf?autoPrint=true`;
@@ -687,22 +869,28 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
           setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 10000);
         }
 
-        // [WORLD CLASS STABILITY] Delay the parent callback to allow success screen to mount first
-        // and ensure the terminal doesn't unmount due to parent state updates immediately.
+        setLoading(false);
+        setIsPaymentModalOpen(false);
+
+        // [WORLD CLASS STABILITY] Bypass success screen for Registration Fees
+        // so the user is instantly dropped back into the OP Clinical Terminal
+        if (isRegistrationFee) {
+          if (onPaymentSuccess) onPaymentSuccess((res as any).data);
+          if (onClose) onClose();
+          return;
+        }
+
+        setIsSuccess(true);
+
         if (onPaymentSuccess) {
           setTimeout(() => {
             onPaymentSuccess((res as any).data);
           }, 500);
         }
-        // Do NOT close modal automatically if success screen is desired.
-        // But if onPaymentSuccess is provided (like in popup mode), we might want to auto-close or show success within the popup?
-        // The current design shows a "Transaction Finalized" screen within the editor.
-        // So we keep it open to show that screen.
-        // setIsPaymentModalOpen(false) // This closes the payment sub-modal, not the EDITOR.
       } else {
         setLoading(false)
         const errorMsg = (res as any).error || "The server rejected the transaction. Please check your data and retry.";
-        console.error("Sync Interrupted:", errorMsg);
+        console.log("Sync Interrupted:", errorMsg);
 
         setErrorDetails({ title: 'Critical Save Failure', message: errorMsg });
         setIsPaymentModalOpen(false); // nuking this modal first to be sure
@@ -717,7 +905,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
     } catch (error: any) {
       setLoading(false)
       const errorMsg = error.message || "A network or engine failure occurred.";
-      console.error("Terminal Sync Error:", error);
+      console.log("Terminal Sync Error:", error);
 
       setErrorDetails({ title: 'Network / Engine Failure', message: errorMsg });
       setIsPaymentModalOpen(false); // nuking this modal first to be sure
@@ -890,7 +1078,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
     setPricingMode(mode)
     const newLines = lines.map(line => {
       if (!line.product_id) return line;
-      const billable = billableItems.find(bi => bi.id === line.product_id);
+      const billable = safeBillableItems.find(bi => bi.id === line.product_id);
       if (!billable) return line;
 
       let newPrice = line.unit_price;
@@ -920,8 +1108,8 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
       const res = await fetch(`/api/prescriptions/by-patient/${selectedPatientId}`)
       const data = await res.json()
       if (data.success && data.latest?.medicines?.length > 0) {
-        const newLines = await Promise.all(data.latest.medicines.map(async (m: any) => {
-          const billable = billableItems.find(bi => bi.id === m.id);
+        const newLines = await Promise.all(data.latest.medicines.map(async (m: any, idx: number) => {
+          const billable = safeBillableItems.find(bi => bi.id === m.id);
           const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
           const finalPrice = billable?.price || Number(m.price || 0);
 
@@ -935,7 +1123,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
           const taxAmt = (Math.max(0, lineNet) * rate) / 100;
 
           return {
-            id: Math.random() + Date.now(),
+            id: `presc-${idx}-${Date.now()}`,
             product_id: m.id,
             description: m.name || m.description,
             quantity: m.quantity || 1,
@@ -955,7 +1143,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
         toast({ title: "No Records", description: "No unbilled prescriptions found for this patient." })
       }
     } catch (e) {
-      console.error(e)
+      console.log(e)
       toast({ title: "Load Failed", description: "A system error occurred while fetching prescriptions.", variant: "destructive" })
     }
     setLoading(false)
@@ -1064,10 +1252,17 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
               {/* FINISH & EXIT (World Standard Hub Redirect) */}
               <button
                 type="button"
-                onClick={async () => {
-                  router.push('/hms/billing');
-                  router.refresh();
-                  if (onClose) onClose();
+                onClick={() => {
+                  if (onClose) {
+                    onClose();
+                  } else {
+                    router.push('/hms/billing');
+                    router.refresh();
+                    // Fallback to ensure modal dismissal in parallel routes
+                    setTimeout(() => {
+                      if (typeof window !== 'undefined') window.history.back();
+                    }, 100);
+                  }
                 }}
                 className="group p-8 bg-slate-900 dark:bg-white rounded-[2.5rem] border-4 border-white/10 hover:border-indigo-500 transition-all text-center shadow-2xl shadow-slate-900/50"
               >
@@ -1125,15 +1320,6 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
       <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 animate-in fade-in duration-300 no-print" onClick={() => onClose ? onClose() : router.back()}>
         <div className={`relative flex flex-col bg-white dark:bg-slate-900 shadow-[2xl] overflow-hidden border border-slate-200 dark:border-slate-800 transition-all duration-500 ease-out ${isMaximized ? 'w-full h-full' : 'w-full max-w-[98vw] h-[95vh] rounded-[2.5rem]'}`} onClick={e => e.stopPropagation()}>
 
-        {/* ✕ ALWAYS-VISIBLE CLOSE BUTTON */}
-        <button
-          onClick={() => onClose ? onClose() : router.back()}
-          className="absolute top-3 right-3 z-[500] flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-red-600/40 transition-all active:scale-95 no-print"
-          title="Close Billing Terminal"
-        >
-          <X className="h-4 w-4" />
-          CLOSE
-        </button>
 
         {/* ... Rest of header content ... */}
         <div className="flex items-center justify-between px-6 py-2 border-b border-[#006666] bg-[#004d4d] z-20 no-print">
@@ -1157,26 +1343,25 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
               <div className="h-4 w-[1px] bg-slate-200 mx-1" />
 
-              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center h-10 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
                 <button
                   onClick={() => applyPricingMode('standard')}
-                  className={`px-3 py-1.5 text-[8px] font-black rounded-md transition-all ${pricingMode === 'standard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'standard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   INTELLIGENT
                 </button>
                 <button
                   onClick={() => applyPricingMode('mrp')}
-                  className={`px-3 py-1.5 text-[8px] font-black rounded-md transition-all ${pricingMode === 'mrp' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'mrp' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   MRP MODE
                 </button>
               </div>
             </div>
 
-            {/* Customer Mode Switcher */}
-            <div className="flex items-center bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-xl border border-slate-200/50 dark:border-slate-700">
-              <button onClick={() => setIsWalkIn(false)} className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${!isWalkIn ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-slate-500'}`}>REGISTERED</button>
-              <button onClick={() => { setIsWalkIn(true); setSelectedPatientId(''); }} className={`px-4 py-1.5 text-[9px] font-black rounded-lg transition-all ${isWalkIn ? 'bg-white dark:bg-slate-700 text-pink-600 shadow-sm' : 'text-slate-500'}`}>WALK-IN GUEST</button>
+            <div className="flex items-center h-10 bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-xl border border-slate-200/50 dark:border-slate-700">
+              <button onClick={() => setIsWalkIn(false)} className={`h-full px-4 text-[9px] font-black rounded-lg transition-all ${!isWalkIn ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-slate-500'}`}>REGISTERED</button>
+              <button onClick={() => { setIsWalkIn(true); setSelectedPatientId(''); }} className={`h-full px-4 text-[9px] font-black rounded-lg transition-all ${isWalkIn ? 'bg-white dark:bg-slate-700 text-pink-600 shadow-sm' : 'text-slate-500'}`}>WALK-IN GUEST</button>
             </div>
 
             <div className="flex items-center gap-2">
@@ -1190,14 +1375,14 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                   <SearchableSelect
                     value={selectedPatientId}
                     valueLabel={selectedPatientLabel}
-                    options={patientOptions.slice(0, 20)}
+                    options={displayedPatientOptions}
                     onChange={id => setSelectedPatientId(id || '')}
                     onCreate={q => { setQuickPatientName(q); setIsQuickPatientOpen(true); return Promise.resolve(null); }}
                     onSearch={async q => {
-                      const search = q.toLowerCase();
+                      const query = (q || "").toLowerCase();
                       return patientOptions.filter(p =>
-                        p.label.toLowerCase().includes(search) ||
-                        p.subLabel.toLowerCase().includes(search)
+                        (p.label || "").toLowerCase().includes(query) ||
+                        (p.subLabel || "").toLowerCase().includes(query)
                       );
                     }}
                     placeholder="IDENTIFY PATIENT..."
@@ -1246,11 +1431,33 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
             <div className="h-3 w-[1px] bg-[#006666]" />
             <div className="flex items-center gap-2">
               <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">PARTICULARS:</span>
-              <span className="text-[10px] font-black text-[#ffffcc]">{patients.find(p => p.id === selectedPatientId)?.label?.toUpperCase() || 'WALK-IN PATIENT'}</span>
+              <span className="text-[10px] font-black text-[#ffffcc]">
+                {(isWalkIn ? (walkInName || 'WALK-IN PATIENT') : (selectedPatientLabel || 'WALK-IN PATIENT')).toUpperCase()}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6 animate-in slide-in-from-right-4">
+            <div className="bg-[#002b2b] p-1 rounded-xl flex items-center gap-2 border border-[#006666]">
+                <span className="text-[8px] font-black uppercase tracking-widest text-[#64ffff] px-2 italic">GST Mode:</span>
+                <div className="flex gap-1">
+                    {[
+                        { m: 'exempt', l: 'Unregistered' },
+                        { m: 'inclusive', l: 'B2C (Incl)' },
+                        { m: 'exclusive', l: 'B2B (Excl)' }
+                    ].map((opt: any) => (
+                        <button
+                            key={opt.m}
+                            type="button"
+                            onClick={() => setTaxMode(opt.m)}
+                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${taxMode === opt.m ? 'bg-[#64ffff] text-[#003333] shadow-lg scale-105' : 'text-[#64ffff]/50 hover:text-[#64ffff] hover:bg-[#004d4d]'}`}
+                        >
+                            {opt.l}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {/* World Class Debt Awareness Node */}
             {patientBalance > 0 && !isWalkIn && (
               <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/20 px-4 py-1 rounded-full animate-in slide-in-from-right-4 duration-500">
@@ -1261,7 +1468,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                   </span>
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-amber-600">Previous Balance Detected:</span>
                 </div>
-                <span className="text-[10px] font-black text-amber-700 bg-amber-500/20 px-2 rounded-md">{currency}{patientBalance.toFixed(2)}</span>
+                <span className="text-[10px] font-black text-amber-700 bg-amber-500/20 px-2 rounded-md">{currency}{(patientBalance || 0).toFixed(2)}</span>
                 <button
                   onClick={() => {
                     setIsFetchingLedger(true);
@@ -1296,7 +1503,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                     <th className="px-4 py-2 w-24">Type</th>
                     <th className="px-4 py-2 w-28 text-center">Qty</th>
                     <th className="px-4 py-2 w-32">UOM</th>
-                    <th className="px-4 py-2 w-32">Rate</th>
+                    <th className="px-4 py-2 w-32 border-x border-[#008080] bg-[#008080] animate-pulse">Rate (F2)</th>
                     <th className="px-4 py-2 w-36">Tax %</th>
                     <th className="px-8 py-2 w-36 text-right">Total</th>
                     <th className="px-4 py-2 w-12"></th>
@@ -1312,24 +1519,24 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                         key={line.id}
                         className={`group transition-all relative ${isZeroLine ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.05]' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/50'}`}
                       >
-                        {isZeroLine && (
-                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500 animate-pulse z-10" />
-                        )}
-                        <td className="px-8 py-3">
+                        <td className="px-8 py-3 relative">
+                          {isZeroLine && (
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500 animate-pulse z-10" />
+                          )}
                           <SearchableSelect
                             inputId={index === 0 ? 'item-search-0' : `item-search-${index}`}
                             value={line.product_id}
                             valueLabel={line.description}
-                            options={itemOptions.slice(0, 20)}
+                            options={displayedBillableOptions}
                             onChange={v => updateLine(line.id, 'product_id', v)}
                             disabled={isPaymentModalOpen || loading}
                             variant="ghost"
                             isDark={true}
                             onSearch={async q => {
-                              const search = q.toLowerCase();
-                              return itemOptions.filter(i =>
-                                i.label.toLowerCase().includes(search) ||
-                                i.subLabel.toLowerCase().includes(search)
+                              const query = (q || "").toLowerCase();
+                              return itemOptions.filter(i => 
+                                (i.label || "").toLowerCase().includes(query) || 
+                                (i.subLabel || "").toLowerCase().includes(query)
                               );
                             }}
                             placeholder="SEARCH..."
@@ -1415,10 +1622,35 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                             ))}
                           </select>
                         </td>
-                        <td className="px-4 py-3"><Input type="number" value={line.unit_price} onChange={e => updateLine(line.id, 'unit_price', parseFloat(e.target.value) || 0)} disabled={isPaymentModalOpen || loading} className="h-10 bg-transparent border-none font-mono font-black text-[#ffffcc] text-sm focus:ring-0" /></td>
+                        <td className="px-4 py-3">
+                          <Input 
+                            id={`rate-input-${index}`}
+                            type="number" 
+                            value={line.unit_price} 
+                            onFocus={(e) => e.target.select()}
+                            onChange={e => updateLine(line.id, 'unit_price', parseFloat(e.target.value) || 0)} 
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddItem();
+                                setTimeout(() => {
+                                  const nextSearch = document.getElementById(`item-search-${index + 1}`);
+                                  if (nextSearch) nextSearch.focus();
+                                }, 150);
+                              }
+                            }}
+                            disabled={isPaymentModalOpen || loading || (hmsConfig && !hmsConfig.allowRateEdit)} 
+                            className={`h-10 bg-transparent border-none font-mono font-black text-sm focus:ring-0 ${hmsConfig && !hmsConfig.allowRateEdit ? 'text-slate-400 cursor-not-allowed' : 'text-[#ffffcc]'}`} 
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
-                            <select className="w-full h-8 bg-[#003333] text-[#ffffcc] border border-[#006666] rounded-lg px-2 text-[8px] font-black outline-none focus:ring-1 focus:ring-[#64ffff]" value={line.tax_rate_id || ''} onChange={e => updateLine(line.id, 'tax_rate_id', e.target.value)} disabled={isPaymentModalOpen || loading}>
+                            <select 
+                              className="w-full h-8 bg-[#003333] text-[#ffffcc] border border-[#006666] rounded-lg px-2 text-[8px] font-black outline-none focus:ring-1 focus:ring-[#64ffff] disabled:opacity-50" 
+                              value={taxMode === 'exempt' ? '' : (line.tax_rate_id || '')} 
+                              onChange={e => updateLine(line.id, 'tax_rate_id', e.target.value)} 
+                              disabled={isPaymentModalOpen || loading || taxMode === 'exempt'}
+                            >
                               <option value="">0% (No Tax)</option>
                               {extendedTaxRates.map((t: any) => (
                                 <option key={t.id} value={t.id}>
@@ -1426,16 +1658,16 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                                 </option>
                               ))}
                             </select>
-                            {line.tax_amount > 0 && (
-                              <span className="text-[9px] font-bold text-emerald-600 text-right pr-1">
-                                + {currency}{line.tax_amount.toFixed(2)} Tax
+                            {line.tax_amount > 0 && taxMode !== 'exempt' && (
+                              <span className="text-[9px] font-bold text-emerald-600 text-right pr-1 italic">
+                                {taxMode === 'inclusive' ? '(Incl)' : `+ ${currency}${line.tax_amount.toFixed(2)} Tax`}
                               </span>
                             )}
                           </div>
                         </td>
                         <td className="px-8 py-3 text-right font-black text-lg italic tracking-tighter text-[#ffffcc]">
                           <span className={isZeroLine ? 'text-rose-500 animate-pulse' : ''}>
-                            {currency}{(lineTotal + (line.tax_amount || 0)).toFixed(2)}
+                            {currency}{(taxMode === 'inclusive' || taxMode === 'exempt' ? lineTotal : lineTotal + (line.tax_amount || 0)).toFixed(2)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -1460,23 +1692,22 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
         <div className="bg-white dark:bg-[#0c1222] border-t border-slate-100 dark:border-slate-800 px-10 py-6 z-20">
           <div className="max-w-[1400px] mx-auto flex flex-col xl:flex-row justify-between items-center gap-8">
 
-            {/* Summary Metrics */}
-            <div className="flex gap-10">
-              <div className="flex gap-4 items-center">
-                <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20"><Receipt className="h-6 w-6 text-indigo-600" /></div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Queue Load</p>
-                  <p className="text-xl font-black text-slate-900 dark:text-white italic tracking-tighter">{lines.filter(l => l.description || l.product_id).length} Active</p>
+              <div className="flex gap-10">
+                <div className="flex gap-4 items-center">
+                  <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20"><Receipt className="h-6 w-6 text-indigo-600" /></div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Queue Load</p>
+                    <p className="text-xl font-black text-slate-900 dark:text-white italic tracking-tighter">{lines.filter(l => l.description || l.product_id).length} Active</p>
+                  </div>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20"><DollarSign className="h-6 w-6 text-emerald-600" /></div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Settlement Total</p>
+                    <p className="text-4xl font-black text-emerald-600 tracking-tighter italic drop-shadow-[0_0_20px_rgba(5,150,105,0.1)]">{currency}{grandTotal.toFixed(2)}</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex gap-4 items-center">
-                <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20"><DollarSign className="h-6 w-6 text-emerald-600" /></div>
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Settlement Total</p>
-                  <p className="text-4xl font-black text-emerald-600 tracking-tighter italic drop-shadow-[0_0_20px_rgba(5,150,105,0.1)]">{currency}{grandTotal.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
 
             {/* Action Nodes */}
             <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto">
@@ -1524,7 +1755,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                     className="group relative px-10 py-4 bg-indigo-600 hover:bg-indigo-700 focus:ring-4 focus:ring-white/20 outline-none text-white rounded-2xl shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-95 text-lg font-black italic uppercase tracking-tighter overflow-hidden focus:translate-y-[-2px] border-2 border-transparent focus:border-white/50"
                   >
                     <div className="absolute inset-x-0 bottom-0 h-0.5 bg-white/20 animate-pulse" />
-                    COLLECT SETTLEMENT <ArrowRight className="h-6 w-6 group-hover:translate-x-1 transition-transform" />
+                    COLLECT SETTLEMENT <span className="bg-white/20 px-2 py-0.5 rounded text-[8px] font-bold">ALT+S</span> <ArrowRight className="h-6 w-6 group-hover:translate-x-1 transition-transform" />
                   </button>
                   {!isRegistrationFee && (
                     <div className="flex gap-3">
@@ -1754,7 +1985,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
                     className="w-full h-16 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-2xl flex items-center justify-center gap-4 transition-all active:scale-[0.98] shadow-lg shadow-indigo-500/20 group"
                   >
                     <div className="h-8 w-8 bg-white/20 rounded-xl flex items-center justify-center group-hover:bg-white/30 transition-colors">
-                      <Zap className="h-4 w-4 text-yellow-300" />
+                      <Activity className="h-4 w-4 text-white" />
                     </div>
                     <div className="text-left">
                       <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 leading-none mb-1">Active Gateway</p>
@@ -1823,14 +2054,9 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
 
                       const floatingAmt = parseFloat(activePaymentAmount) || 0;
 
-                      // World Class Auto-Apply: If only one payment node is expected and amount is typed but not applied
-                      if (floatingAmt > 0 && payments.length === 0) {
-                        const autoPayments: Payment[] = [{ method: 'cash', amount: floatingAmt }];
-                        setPayments(autoPayments);
-                        handleSave('paid', autoPayments);
-                        return;
-                      }
-
+                      // [FIX] Removed Auto-Apply to cash here.
+                      // This ensures that when the button says "POST AS CREDIT" (deficit state), it actually posts as credit.
+                      // Keyboard users can still utilize the "Enter" key on the amount input to quickly apply cash.
                       handleSave('paid');
                     }}
                     disabled={loading || (payments.length === 0 && (parseFloat(activePaymentAmount) || 0) === 0)}
@@ -1863,7 +2089,7 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
           <DialogContent className="z-[500] max-w-md p-8 bg-white dark:bg-slate-900 rounded-[3rem] border-none shadow-2xl overflow-hidden">
             <div className="text-center">
               <div className="inline-flex items-center gap-2 mb-6 bg-indigo-50 dark:bg-indigo-900/30 px-4 py-1.5 rounded-full border border-indigo-100 dark:border-indigo-800/50">
-                <Zap className="h-3 w-3 text-indigo-500" />
+                <Activity className="h-3 w-3 text-indigo-500" />
                 <span className="text-[9px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">Dynamic Payment Gateway</span>
               </div>
 
@@ -2121,3 +2347,5 @@ export function CompactInvoiceEditor({ patients, billableItems, uoms = [], taxCo
     </>
   );
 }
+
+export default CompactInvoiceEditor;

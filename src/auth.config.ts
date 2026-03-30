@@ -1,16 +1,19 @@
 import type { NextAuthConfig } from "next-auth"
 
 
+const isProd = process.env.NODE_ENV === 'production';
+const isVercel = !!process.env.VERCEL;
+
 export const authConfig = {
     trustHost: true,
     cookies: {
         sessionToken: {
-            name: process.env.NODE_ENV === 'production' ? '__Secure-auth.session-token' : 'auth.session-token',
+            name: 'auth.session-token',
             options: {
                 httpOnly: true,
                 sameSite: 'lax',
                 path: '/',
-                secure: process.env.NODE_ENV === 'production',
+                secure: false, 
             }
         }
     },

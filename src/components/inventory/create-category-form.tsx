@@ -11,10 +11,17 @@ const initialState = {
 
 interface CreateCategoryFormProps {
     taxRates: { id: string; name: string; rate: number }[]
-    categoryToEdit?: { id: string; name: string; default_tax_rate_id: string | null } | null
+    accounts: { id: string; name: string; code: string; type: string }[]
+    categoryToEdit?: { 
+        id: string; 
+        name: string; 
+        default_tax_rate_id: string | null;
+        income_account_id: string | null;
+        expense_account_id: string | null;
+    } | null
 }
 
-export function CreateCategoryForm({ taxRates, categoryToEdit }: CreateCategoryFormProps) {
+export function CreateCategoryForm({ taxRates, accounts, categoryToEdit }: CreateCategoryFormProps) {
     const actionToUse = categoryToEdit ? updateCategory : createCategory
     const [state, action, isPending] = useActionState(actionToUse, initialState)
 
@@ -65,6 +72,38 @@ export function CreateCategoryForm({ taxRates, categoryToEdit }: CreateCategoryF
                         ))}
                     </select>
                     <p className="text-xs text-gray-500 mt-1">Products in this category will default to this tax rate.</p>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Income Account</label>
+                    <select
+                        name="incomeAccountId"
+                        defaultValue={categoryToEdit?.income_account_id || ""}
+                        className="w-full px-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                    >
+                        <option value="">Default Income</option>
+                        {accounts.filter(a => a.type === 'Revenue' || a.type === 'Other Income').map(a => (
+                            <option key={a.id} value={a.id}>
+                                {a.code} - {a.name}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Classification for sales (e.g. OP Income).</p>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Expense Account</label>
+                    <select
+                        name="expenseAccountId"
+                        defaultValue={categoryToEdit?.expense_account_id || ""}
+                        className="w-full px-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                    >
+                        <option value="">Default Expense</option>
+                        {accounts.filter(a => a.type === 'Expense' || a.type === 'Cost of Revenue').map(a => (
+                            <option key={a.id} value={a.id}>
+                                {a.code} - {a.name}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Classification for purchases (e.g. Med Expenses).</p>
                 </div>
                 <button
                     type="submit"
