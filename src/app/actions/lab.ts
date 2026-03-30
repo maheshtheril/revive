@@ -317,3 +317,25 @@ export async function saveLabResults(data: {
         return { success: false, error: err.message }
     }
 }
+
+export async function deleteLabReport(orderId: string) {
+    const session = await auth();
+    if (!session?.user?.id) {
+        return { success: false, message: "Unauthorized" };
+    }
+
+    try {
+        await prisma.hms_lab_order.update({
+            where: { id: orderId },
+            data: {
+                report_url: null,
+                status: 'in_progress'
+            }
+        });
+
+        revalidatePath('/hms/lab/dashboard');
+        return { success: true, message: "Report deleted successfully" };
+    } catch (error: any) {
+        return { success: false, message: "Delete failed: " + error.message };
+    }
+}
