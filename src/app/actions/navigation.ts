@@ -83,6 +83,7 @@ export async function getMenuItems() {
                     allowedModuleKeys.add('hms');
                     allowedModuleKeys.add('finance');
                     allowedModuleKeys.add('inventory');
+                    allowedModuleKeys.add('lab');
                 } else {
                     // FORCE CRM for non-healthcare
                     allowedModuleKeys.add('crm');
@@ -263,9 +264,22 @@ export async function getMenuItems() {
             });
         };
 
-        // Filter groups
+
+        // 5.5 REPAIR CRITICAL URLS (Emergency Fix for DB Desync)
+        const repairUrls = (items: any[]) => {
+            items.forEach(item => {
+                if (item.key === 'hms-lab') item.url = '/hms/lab';
+                if (item.key === 'lab-dashboard') item.url = '/hms/lab';
+                if (item.key === 'lab-pending') item.url = '/hms/lab/pending';
+                if (item.key === 'lab-orders') item.url = '/hms/lab/orders';
+                if (item.other_menu_items) repairUrls(item.other_menu_items);
+            });
+        };
+
+        // Filter and Repair groups
         Object.keys(grouped).forEach(key => {
             grouped[key].items = filterRestricted(grouped[key].items);
+            repairUrls(grouped[key].items);
         });
 
         // 6. SORT BY PRIORITY (World Standard Ordering)
@@ -296,7 +310,7 @@ export async function getMenuItems() {
         // This ensures that if RBAC filtered out everything (or DB is empty), we still show the structure
         // for modules the user is legally allowed to see.
         const fallback = getFallbackMenuItems(isAdmin);
-        const coreKeys = ['accounting', 'inventory', 'crm', 'hms'];
+        const coreKeys = ['accounting', 'inventory', 'crm', 'hms', 'lab'];
 
         coreKeys.forEach(key => {
             // KEY FIX: Only consider injection if the module is in allowedModuleKeys
