@@ -233,6 +233,7 @@ model app_user {
   hms_user_roles            hms_user_roles[]
   user_branches             user_branch[]
   user_permission           user_permission[]
+  audit_logs                audit_log[]
 }
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
@@ -255,18 +256,17 @@ model attachment {
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model audit_log {
-  id         String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id  String?   @db.Uuid
   actor_id   String?   @db.Uuid
-  table_name String
+  table_name String?
   record_id  String?   @db.Uuid
-  operation  String
+  operation  String?
   diff       Json?     @default("{}")
   created_at DateTime? @default(now()) @db.Timestamptz(6)
   row_id     String?   @db.Uuid
   event      String?
-
-  @@ignore
+  app_user   app_user? @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model business_partners {

@@ -119,6 +119,7 @@ export async function ensureAdminMenus() {
             { key: 'holiday-settings', label: 'Holiday Masters', url: '/settings/holidays', icon: 'CalendarDays', sort: 97, permission: 'settings:view' },
             { key: 'hms-settings', label: 'HMS Settings', url: '/settings/hms', icon: 'Activity', sort: 95, permission: 'hms:admin' },
             { key: 'accounting-settings', label: 'Accounting Config', url: '/settings/accounting', icon: 'Calculator', sort: 94, permission: 'billing:view' },
+            { key: 'audit-logs', label: 'System Audit Log', url: '/settings/audit-logs', icon: 'History', sort: 93, permission: 'settings:view' },
         ];
 
         for (const item of adminItems) {

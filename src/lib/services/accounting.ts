@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ensureDefaultAccounts } from "@/lib/account-seeder";
 import crypto from 'crypto'
+import { recordAuditEntry } from "@/app/actions/audit-global";
 
 export class AccountingService {
 
@@ -17,7 +18,9 @@ export class AccountingService {
             const invoice = await prisma.hms_invoice.findUnique({
                 where: { id: invoiceId },
                 include: {
-                    hms_invoice_lines: true,
+                    hms_invoice_lines: {
+                        include: { hms_product: true }
+                    },
                     hms_patient: true,
                     hms_invoice_payments: true
                 }
@@ -25,36 +28,34 @@ export class AccountingService {
 
             if (!invoice) throw new Error("Invoice not found");
 
-            // [TALLY-STYLE] Resolve Patient Name for narration fallback
             const patientName = invoice.hms_patient
                 ? (invoice.hms_patient.full_name || `${invoice.hms_patient.first_name || ''} ${invoice.hms_patient.last_name || ''}`.trim())
                 : (invoice.billing_metadata as any)?.patient_name || 'Guest Patient';
 
-            // 2. Fetch/Configure Settings (Required for both Accrual and Payments)
+            // 2. Fetch Settings
             let settings = await prisma.company_accounting_settings.findUnique({
                 where: { company_id: invoice.company_id }
             });
 
             if (!settings) {
                 await ensureDefaultAccounts(invoice.company_id, invoice.tenant_id);
-                // Fetch again
                 settings = await prisma.company_accounting_settings.findUnique({
                     where: { company_id: invoice.company_id }
                 });
             }
             if (!settings) throw new Error("Accounting settings could not be loaded.");
 
-            // 3. Post Accrual (If not already posted)
+            const cogsAccountId = settings.cogs_account_id || settings.purchase_account_id;
+            const inventoryAccountId = settings.inventory_asset_account_id;
+
+            // 3. Post Accrual
             const existingJournal = await prisma.journal_entries.findFirst({
                 where: { invoice_id: invoiceId }
             });
 
             if (!existingJournal) {
-                // --- ACCRUAL LOGIC START ---
-                // Identify Accounts
-                // --- WORLD-STANDARD DYNAMIC AR RESOLUTION ---
                 let debitAccountId = await AccountingService.resolvePatientARAccount(invoice.company_id, settings.ar_account_id, invoice.hms_patient);
-                if (!debitAccountId) throw new Error("AR Account (1200) missing.");
+                if (!debitAccountId) throw new Error("AR Account missing.");
 
                 let defaultSalesAccountId = settings.sales_account_id;
                 if (!defaultSalesAccountId) {
@@ -64,52 +65,53 @@ export class AccountingService {
                 if (!defaultSalesAccountId) throw new Error("Sales Account (4000) missing.");
 
                 const taxAccountId = settings.output_tax_account_id;
-
-                // Prepare Lines
                 const journalDate = invoice.invoice_date || invoice.created_at || new Date();
                 const journalLines: any[] = [];
 
-                // Credit: Sales
                 for (const line of invoice.hms_invoice_lines) {
                     const netAmount = Number(line.net_amount || 0);
+
                     if (netAmount > 0) {
                         journalLines.push({
                             account_id: defaultSalesAccountId,
                             debit: 0,
                             credit: netAmount,
                             description: `${patientName} | Sales - ${line.description || invoice.invoice_number}`,
-                            metadata: { source: 'auto' }
                         });
+                    }
+
+                    if (line.hms_product?.is_stockable && cogsAccountId && inventoryAccountId) {
+                        const cost = Number(line.hms_product.default_cost || 0);
+                        const qty = Number(line.quantity || 0);
+                        const lineCOGS = cost * qty;
+
+                        if (lineCOGS > 0) {
+                            journalLines.push({
+                                account_id: cogsAccountId,
+                                debit: lineCOGS,
+                                credit: 0,
+                                description: `COGS: ${line.hms_product.name} (${qty} ${line.hms_product.uom})`
+                            });
+                            journalLines.push({
+                                account_id: inventoryAccountId,
+                                debit: 0,
+                                credit: lineCOGS,
+                                description: `Inv Diminish: ${line.hms_product.name}`
+                            });
+                        }
                     }
                 }
 
-                // Credit: Tax
                 const totalTax = Number(invoice.total_tax || 0);
                 if (totalTax > 0 && taxAccountId) {
-                    journalLines.push({
-                        account_id: taxAccountId,
-                        debit: 0,
-                        credit: totalTax,
-                        description: `${patientName} | Tax Output - ${invoice.invoice_number}`,
-                        metadata: { source: 'auto' }
-                    });
+                    journalLines.push({ account_id: taxAccountId, debit: 0, credit: totalTax, description: `${patientName} | Tax Output - ${invoice.invoice_number}` });
                 }
 
-                // Debit: AR
                 const totalReceivable = Number(invoice.total || 0);
                 if (totalReceivable > 0) {
-                    journalLines.push({
-                        account_id: debitAccountId,
-                        debit: totalReceivable,
-                        credit: 0,
-                        description: `${patientName} | AR - ${invoice.invoice_number}`,
-                        party_type: 'patient',
-                        party_id: invoice.patient_id,
-                        metadata: { source: 'auto' }
-                    });
+                    journalLines.push({ account_id: debitAccountId, debit: totalReceivable, credit: 0, description: `${patientName} | AR - ${invoice.invoice_number}`, partner_id: invoice.patient_id });
                 }
 
-                // Post Accrual
                 if (journalLines.length > 0) {
                     await prisma.journal_entries.create({
                         data: {
@@ -133,67 +135,36 @@ export class AccountingService {
                                     debit: l.debit,
                                     credit: l.credit,
                                     description: l.description,
-                                    partner_id: (l.party_id || invoice.patient_id || undefined) as string | undefined // ENFORCE LINK TO ALL LINES
+                                    partner_id: (l.partner_id || invoice.patient_id || undefined) as string | undefined
                                 }))
                             }
                         }
                     });
+
+                    await recordAuditEntry(`Sales Invoice Posted: ${invoice.invoice_number}`, 'hms_invoice', invoice.id, 'CREATE', { total: invoice.total });
                 }
-                // --- ACCRUAL LOGIC END ---
             }
 
-            // 4. Post Payments (Check individually)
+            // 4. Post Payments
             const payments = invoice.hms_invoice_payments || [];
             let paymentsPosted = 0;
 
             for (const payment of payments) {
-                // Check if this specific payment is posted
-                // We use a specific Ref convention: "PMT-{PaymentID}"
                 const paymentRef = `PMT-${payment.id}`;
                 const existingPaymentJournal = await prisma.journal_entries.findFirst({
-                    where: {
-                        company_id: invoice.company_id,
-                        ref: paymentRef // Strict check
-                    }
+                    where: { company_id: invoice.company_id, ref: paymentRef }
                 });
 
                 if (!existingPaymentJournal) {
-                    // Post This Payment
                     const amount = Number(payment.amount);
                     if (amount <= 0) continue;
 
                     const paymentMethod = (payment.method || 'cash').toLowerCase();
-                    
-                    // --- DYNAMIC PAYMENT METHOD MAPPING ---
-                    const mappingRecord = await prisma.hms_settings.findFirst({
-                        where: {
-                            company_id: invoice.company_id,
-                            tenant_id: invoice.tenant_id,
-                            key: 'payment_method_mapping'
-                        }
-                    });
-                    const mapping = (mappingRecord?.value as any) || {};
-                    const mappedAccountId = mapping[paymentMethod];
+                    const cashAccount = await prisma.accounts.findFirst({ where: { company_id: invoice.company_id, code: { in: ['1610', '1600'] } } });
+                    const bankAccount = await prisma.accounts.findFirst({ where: { company_id: invoice.company_id, code: { in: ['1710', '1700'] } } });
+                    let debitAccount = (paymentMethod === 'cash') ? cashAccount : bankAccount;
 
-                    let debitAccount = null;
-                    if (mappedAccountId) {
-                        debitAccount = await prisma.accounts.findUnique({ where: { id: mappedAccountId } });
-                    }
-
-                    if (!debitAccount) {
-                        // Fallback to defaults using the Tally-Standardized COA codes (including legacy fallbacks)
-                        // Cash: 1001 (New), 1110 (Group), 1000 (Legacy)
-                        // Bank: 1050 (New), 1120 (Group), 1100 (Legacy)
-                        const cashAccount = await prisma.accounts.findFirst({ 
-                            where: { company_id: invoice.company_id, code: { in: ['1610', '1600'] } } 
-                        });
-                        const bankAccount = await prisma.accounts.findFirst({ 
-                            where: { company_id: invoice.company_id, code: { in: ['1710', '1700'] } } 
-                        });
-                        debitAccount = (paymentMethod === 'cash') ? cashAccount : bankAccount;
-                    }
-
-                    const creditAccount = settings.ar_account_id; // Credit AR to reduce debt
+                    const creditAccount = settings.ar_account_id;
 
                     if (debitAccount && creditAccount) {
                         await prisma.journal_entries.create({
@@ -202,35 +173,17 @@ export class AccountingService {
                                 tenant_id: invoice.tenant_id,
                                 company_id: invoice.company_id,
                                 invoice_id: invoice.id,
-                                date: new Date(), // Payment Date
+                                date: new Date(),
                                 posted: true,
                                 posted_at: new Date(),
                                 created_by: userId,
                                 currency_id: settings.currency_id,
                                 amount_in_company_currency: amount,
-                                ref: paymentRef, // CRITICAL: Links this JE to this Payment
+                                ref: paymentRef,
                                 journal_entry_lines: {
                                     create: [
-                                        {
-                                            id: crypto.randomUUID(),
-                                            tenant_id: invoice.tenant_id,
-                                            company_id: invoice.company_id,
-                                            account_id: debitAccount.id,
-                                            debit: amount,
-                                            credit: 0,
-                                            description: `${patientName} | Payment Recvd (${payment.method}) - ${invoice.invoice_number}`,
-                                            partner_id: invoice.patient_id
-                                        },
-                                        {
-                                            id: crypto.randomUUID(),
-                                            tenant_id: invoice.tenant_id,
-                                            company_id: invoice.company_id,
-                                            account_id: (await AccountingService.resolvePatientARAccount(invoice.company_id, settings.ar_account_id, invoice.hms_patient)) as string, // Dynamic AR resolution
-                                            debit: 0,
-                                            credit: amount,
-                                            description: `${patientName} | Payment Applied - ${invoice.invoice_number}`,
-                                            partner_id: invoice.patient_id
-                                        }
+                                        { id: crypto.randomUUID(), tenant_id: invoice.tenant_id, company_id: invoice.company_id, account_id: debitAccount.id, debit: amount, credit: 0, description: `${patientName} | Pmt Recvd - ${invoice.invoice_number}`, partner_id: invoice.patient_id },
+                                        { id: crypto.randomUUID(), tenant_id: invoice.tenant_id, company_id: invoice.company_id, account_id: (await AccountingService.resolvePatientARAccount(invoice.company_id, settings.ar_account_id, invoice.hms_patient)) as string, debit: 0, credit: amount, description: `${patientName} | Pmt Applied - ${invoice.invoice_number}`, partner_id: invoice.patient_id }
                                     ]
                                 }
                             }
@@ -537,9 +490,9 @@ export class AccountingService {
             if (!settings) throw new Error("Accounting settings not configured.");
 
             // 3. Determine Accounts
-            // DEBIT: Purchase/Expense Account
-            const debitAccountId = settings.purchase_account_id;
-            if (!debitAccountId) throw new Error("Purchase Account not configured.");
+            // DEBIT: Inventory Asset (Modern Standard)
+            const debitAccountId = settings.inventory_asset_account_id || settings.purchase_account_id;
+            if (!debitAccountId) throw new Error("Inventory Asset Account not configured.");
 
             // CREDIT: Accounts Payable
             const creditAccountId = settings.ap_account_id;
@@ -554,12 +507,12 @@ export class AccountingService {
             const subtotal = Number(invoice.subtotal || 0);
             const taxTotal = Number(invoice.tax_total || 0);
 
-            // A. DEBIT: Purchase Expense
+            // A. DEBIT: Inventory Asset (Perpetual Stock Increase)
             journalLines.push({
                 account_id: debitAccountId,
                 debit: subtotal,
                 credit: 0,
-                description: `Purchase Expense - Ref ${invoice.name}`
+                description: `Stock Asset Increase - Ref ${invoice.name}`
             });
 
             // B. DEBIT: Input VAT (if any)
@@ -611,6 +564,15 @@ export class AccountingService {
                         }
                     }
                 });
+
+                // --- AUDIT LOGGING ---
+                await recordAuditEntry(
+                    `Purchase Invoice Posted: ${invoice.name}`,
+                    'hms_purchase_invoice',
+                    invoice.id,
+                    'CREATE',
+                    { total: totalAmount, supplier: invoice.hms_supplier?.name }
+                );
 
                 // Update invoice status if needed
                 await tx.hms_purchase_invoice.update({
@@ -695,11 +657,11 @@ export class AccountingService {
             if (!settings) throw new Error("Accounting settings not configured.");
 
             // 3. Determine Accounts
-            // DEBIT: Inventory/Purchase Account
-            const debitAccountId = settings.purchase_account_id;
-            if (!debitAccountId) throw new Error("Purchase/Inventory Account not configured.");
+            // DEBIT: Inventory Asset (Modern Standard)
+            const debitAccountId = settings.inventory_asset_account_id || settings.purchase_account_id;
+            if (!debitAccountId) throw new Error("Inventory Asset Account not configured.");
 
-            // CREDIT: Accounts Payable (or Stock Received Not Invoiced - for simplicity we use AP)
+            // CREDIT: Accounts Payable
             const creditAccountId = settings.ap_account_id;
             if (!creditAccountId) throw new Error("Accounts Payable Account not configured.");
 
@@ -714,21 +676,12 @@ export class AccountingService {
                 const price = Number(line.unit_price || 0);
                 const meta = line.metadata as any;
 
-                console.log(`[AccountPost] Processing Line: ${line.id} | Item: ${meta.productName || '?'}`);
-                console.log(`[AccountPost] Raw Meta:`, JSON.stringify(meta));
-
                 // Robust extraction (supports snake_case and camelCase)
                 const lineTax = Number(meta?.tax_amount ?? meta?.taxAmount ?? 0);
                 const discountAmt = Number(meta?.discount_amt ?? meta?.discountAmt ?? 0);
                 const schemeDiscount = Number(meta?.scheme_discount ?? meta?.schemeDiscount ?? 0);
 
-                console.log(`[AccountPost] Values -> Price: ${price}, Qty: ${qty}, Tax: ${lineTax}, Disc: ${discountAmt}, Scheme: ${schemeDiscount}`);
-
-                // Taxable Value logic: (Price * Qty) - Discounts
                 const lineSubtotal = Math.max(0, (qty * price) - (discountAmt + schemeDiscount));
-
-                console.log(`[AccountPost] Calculated Line Subtotal (Taxable): ${lineSubtotal}`);
-
                 subtotal += lineSubtotal;
                 taxTotal += lineTax;
             }
@@ -739,17 +692,16 @@ export class AccountingService {
             // 5. Prepare Lines
             const journalLines: any[] = [];
 
-            // A. DEBIT: Inventory/Purchase
+            // A. DEBIT: Inventory Asset (Perpetual Stock Increase)
             journalLines.push({
                 account_id: debitAccountId,
                 debit: subtotal,
                 credit: 0,
-                description: `Purchase Stock - ${receipt.name}`
+                description: `Purchase Stock (Asset) - ${receipt.name}`
             });
 
             // B. DEBIT: Input Tax
-            if (taxTotal > 0) {
-                if (!inputTaxAccountId) throw new Error("Input Tax Account not configured.");
+            if (taxTotal > 0 && inputTaxAccountId) {
                 journalLines.push({
                     account_id: inputTaxAccountId,
                     debit: taxTotal,
@@ -777,7 +729,6 @@ export class AccountingService {
                 if (defaultCurrency) currencyId = defaultCurrency.id;
             }
             if (!currencyId) {
-                // Fallback to any active currency if INR missing
                 const anyCurrency = await prisma.currencies.findFirst({ where: { is_active: true } });
                 currencyId = anyCurrency?.id || null;
             }
@@ -818,6 +769,15 @@ export class AccountingService {
                     where: { id: receipt.id },
                     data: { status: 'received' as any, updated_at: new Date() }
                 });
+
+                // --- AUDIT LOGGING ---
+                await recordAuditEntry(
+                    `Purchase Receipt Posted: ${receipt.name}`,
+                    'hms_purchase_receipt',
+                    receipt.id,
+                    'CREATE',
+                    { total: totalAmount, supplier: receipt.hms_supplier?.name }
+                );
             });
 
             return { success: true };

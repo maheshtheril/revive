@@ -12,6 +12,8 @@ const IconMap: any = {
     LayoutDashboard, Users, Calendar, Stethoscope, Receipt, Settings, Shield
 };
 
+import { ensureAccountingMenu, ensureAdminMenus } from '@/lib/menu-seeder'
+
 export default async function HMSLayout({
     children,
     modal,
@@ -19,6 +21,10 @@ export default async function HMSLayout({
     children: React.ReactNode
     modal: React.ReactNode
 }) {
+    // Auto-seed menus on login/access to ensure sync
+    await ensureAdminMenus();
+    await ensureAccountingMenu();
+
     const session = await auth();
 
     // Parallelize independent data fetches
