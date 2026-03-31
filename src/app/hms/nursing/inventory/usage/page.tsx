@@ -10,7 +10,7 @@ export default async function NursingUsagePage({
 }) {
     const session = await auth()
     if (!session?.user?.id) {
-        redirect("/auth/signin")
+        redirect("/login")
     }
 
     const { patientId, encounterId } = searchParams
@@ -50,3 +50,4 @@ export default async function NursingUsagePage({
         </div>
     )
 }
+

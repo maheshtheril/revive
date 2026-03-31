@@ -68,7 +68,7 @@ async function ensureTransactionMenus() {
     const creditNoteMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-credit-note' } });
     if (!creditNoteMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Credit Note', url: '/hms/accounting/credit-notes', key: 'acc-credit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 40, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Credit Note', url: '/hms/billing/returns', key: 'acc-credit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 40, is_global: true, permission_code: 'billing:view' }
         });
     }
 
@@ -89,8 +89,8 @@ async function ensureLedgerReports() {
     }
 
     const reports = [
-        { key: 'acc-bs', label: 'Balance Sheet', url: '/hms/accounting/page?view=classic&tab=bs', icon: 'Scale', sort: 10 },
-        { key: 'acc-pl', label: 'Profit & Loss A/c', url: '/hms/accounting/page?view=classic&tab=pl', icon: 'TrendingUp', sort: 20 },
+        { key: 'acc-bs', label: 'Balance Sheet', url: '/hms/accounting?view=classic&tab=bs', icon: 'Scale', sort: 10 },
+        { key: 'acc-pl', label: 'Profit & Loss A/c', url: '/hms/accounting?view=classic&tab=pl', icon: 'TrendingUp', sort: 20 },
         { key: 'acc-tb', label: 'Trial Balance', url: '/hms/accounting/trial-balance', icon: 'Activity', sort: 30 },
         { key: 'acc-db', label: 'Day Book', url: '/hms/accounting/daybook', icon: 'BookOpen', sort: 40 },
         { key: 'acc-cb', label: 'Cash / Bank Book', url: '/hms/accounting/cashbook', icon: 'Banknote', sort: 50 },

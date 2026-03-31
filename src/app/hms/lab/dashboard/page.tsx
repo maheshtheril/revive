@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma"
 import { redirect } from "next/navigation"
 import { LabDashboardClient } from "@/components/hms/lab/lab-dashboard-client"
 import { ensureHmsMenus } from "@/lib/menu-seeder"
-import { FlaskConical } from "lucide-react"
 import { getBillableItems, getTaxConfiguration } from "@/app/actions/billing"
 
 export const dynamic = 'force-dynamic'
@@ -13,17 +12,14 @@ export default async function LabDashboardPage() {
     const session = await auth()
 
     if (!session?.user?.email) {
-        redirect("/auth/signin")
+        return <div className="p-10 text-slate-500 font-bold bg-white rounded-3xl m-10 shadow-2xl border-4 border-dashed border-slate-200 flex flex-col items-center gap-4">
+            <div className="text-4xl text-slate-300">🔐</div>
+            YOU ARE NOT LOGGED IN. PLEASE GO TO <a href="/login" className="text-blue-500 underline">LOGIN PAGE</a> FIRST.
+            <div className="text-xs font-mono bg-slate-50 p-2 rounded">Path: src/app/hms/lab/page.tsx</div>
+        </div>
     }
 
     const tenantId = session.user.tenantId
-    // For now assuming any user with access to this route is authorized (RBAC handles route protection usually)
-    // We can just use the user's name as "Lab Staff"
-
-    // Fetch Lab Orders
-    // We want today's orders OR pending orders regardless of date?
-    // Usually a dashboard shows active work. So all 'requested', 'pending', 'in_progress'.
-    // And 'completed' from today.
 
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
@@ -80,7 +76,6 @@ export default async function LabDashboardPage() {
     const billableItems = itemsRes.success ? itemsRes.data : [];
     const taxConfig = taxRes.success ? taxRes.data : { defaultTax: null, taxRates: [] };
 
-    // Transform Data
     const formattedOrders = orders.map(order => {
         const tests = order.hms_lab_order_line.map(line => ({
             id: line.id,
@@ -89,20 +84,16 @@ export default async function LabDashboardPage() {
             price: Number(line.price) || 0
         }))
 
-        // Calculate Total Price
         const totalPrice = tests.reduce((sum, test) => sum + test.price, 0)
 
-        // Patient Name
         const patientName = order.hms_patient
             ? `${order.hms_patient.first_name} ${order.hms_patient.last_name || ''}`.trim()
             : 'Unknown Patient'
 
-        // Doctor Name
         const doctorName = order.hms_appointment?.hms_clinician
             ? `${order.hms_appointment.hms_clinician.first_name} ${order.hms_appointment.hms_clinician.last_name}`.trim()
             : 'Unknown'
 
-        // Get invoice info from appointment
         const invoice = order.hms_appointment?.hms_invoice?.[0];
 
         return {
@@ -122,7 +113,6 @@ export default async function LabDashboardPage() {
         }
     })
 
-    // Calculate Stats
     const stats = {
         total: formattedOrders.length,
         pending: formattedOrders.filter(o => ['requested', 'pending', 'in_progress', 'collected'].includes(o.status || '')).length,

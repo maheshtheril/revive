@@ -26,12 +26,16 @@ function serialize(obj: any): any {
 }
 
 export default async function ReceptionDashboardPage() {
-    try {
-        const session = await auth()
+    const session = await auth()
+    if (!session?.user?.id) {
+        return <div className="p-10 text-slate-500 font-bold bg-white rounded-3xl m-10 shadow-2xl border-4 border-dashed border-slate-200 flex flex-col items-center gap-4">
+            <div className="text-4xl text-slate-300">🔐</div>
+            YOU ARE NOT LOGGED IN. PLEASE GO TO <a href="/login" className="text-blue-500 underline">LOGIN PAGE</a> FIRST.
+            <div className="text-xs font-mono bg-slate-50 p-2 rounded">Path: src/app/hms/reception/dashboard/page.tsx</div>
+        </div>
+    }
 
-        if (!session?.user?.id) {
-            redirect("/auth/signin")
-        }
+    try {
 
         const tenantId = session.user.tenantId as string
         const companyId = session.user.companyId as string

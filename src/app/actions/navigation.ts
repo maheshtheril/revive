@@ -268,10 +268,14 @@ export async function getMenuItems() {
         // 5.5 REPAIR CRITICAL URLS (Emergency Fix for DB Desync)
         const repairUrls = (items: any[]) => {
             items.forEach(item => {
-                if (item.key === 'hms-lab') item.url = '/hms/lab';
-                if (item.key === 'lab-dashboard') item.url = '/hms/lab';
+                if (item.key === 'hms-lab') item.url = '/hms/lab/dashboard';
+                if (item.key === 'lab-dashboard') item.url = '/hms/lab/dashboard';
                 if (item.key === 'lab-pending') item.url = '/hms/lab/pending';
                 if (item.key === 'lab-orders') item.url = '/hms/lab/orders';
+                if (item.key === 'acc-credit-note' || item.key === 'hms-sales-returns') item.url = '/hms/billing/returns';
+                if (item.key === 'acc-debit-note' || item.key === 'hms-purchase-returns') item.url = '/hms/purchasing/returns';
+                if (item.key === 'acc-bs') item.url = '/hms/accounting?view=classic&tab=bs';
+                if (item.key === 'acc-pl') item.url = '/hms/accounting?view=classic&tab=pl';
                 if (item.other_menu_items) repairUrls(item.other_menu_items);
             });
         };
@@ -465,7 +469,7 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     items.push({
         module: { name: 'Laboratory & Diagnostics', module_key: 'lab' },
         items: [
-            { key: 'lab-dashboard', label: 'Lab Analytics', icon: 'LayoutDashboard', url: '/hms/lab' },
+            { key: 'lab-dashboard', label: 'Lab Analytics', icon: 'LayoutDashboard', url: '/hms/lab/dashboard' },
             { key: 'lab-pending', label: 'Pending Results', icon: 'FlaskConical', url: '/hms/lab/pending' },
             { key: 'lab-order-all', label: 'Order Register', icon: 'List', url: '/hms/lab/orders' },
         ]
