@@ -223,7 +223,6 @@ model app_user {
   is_platform_admin         Boolean                     @default(false)
   is_tenant_admin           Boolean                     @default(false)
   current_branch_id         String?                     @db.Uuid
-  audit_log                 audit_log[] @ignore
   accounts                  crm_accounts[]
   contacts                  crm_contacts[]
   deals                     crm_deals[]
