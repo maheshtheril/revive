@@ -14,35 +14,71 @@ import { QRCodeSVG } from 'qrcode.react'
 // POS DEVICE SERVICE (INLINED TO RESOLVE CIRCULAR/EVALUATION ERRORS)
 // ------------------------------------------------------------------------------------------------
 type POSStatus = 'connected' | 'offline' | 'searching' | 'unsupported';
+type POSType = 'pinelabs' | 'paytm' | 'unknown';
 let posServiceInstance: any = null;
 class POSDeviceService {
     private activeUrl: string | null = null;
+    private activeType: POSType = 'unknown';
     private status: POSStatus = 'searching';
     constructor() {}
     public async autoDiscover() {
         if (typeof window === 'undefined') return false;
-        const ports = [8080, 8082, 12345];
-        for (const port of ports) {
+        
+        const checkEndpoint = async (url: string, endpoint: string) => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1500);
             try {
-                const url = `http://localhost:${port}`;
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 800);
-                const res = await fetch(`${url}/web/status`, { method: 'GET', signal: controller.signal }).catch(() => null);
+                const res = await fetch(`${url}${endpoint}`, { 
+                    method: 'GET', 
+                    signal: controller.signal 
+                }).catch(() => null);
                 clearTimeout(timeoutId);
-                if (res && res.ok) { this.activeUrl = url; this.status = 'connected'; return true; }
-            } catch (e) {}
+                return res && res.ok;
+            } catch (e) {
+                clearTimeout(timeoutId);
+                return false;
+            }
+        };
+
+        // 1. Check PineLabs
+        const plPorts = [8080, 8082, 12345];
+        for (const port of plPorts) {
+            const url = `http://localhost:${port}`;
+            if (await checkEndpoint(url, '/web/status')) {
+                this.activeUrl = url; this.activeType = 'pinelabs'; this.status = 'connected'; 
+                return true; 
+            }
         }
+
+        // 2. Check Paytm
+        const ptPorts = [5001, 8080];
+        for (const port of ptPorts) {
+            const url = `http://localhost:${port}`;
+            if (await checkEndpoint(url, '/paytm/status')) {
+                this.activeUrl = url; this.activeType = 'paytm'; this.status = 'connected'; 
+                return true; 
+            }
+        }
+
         this.status = 'offline'; return false;
     }
     public getStatus(): POSStatus { return this.status; }
+    public getType(): POSType { return this.activeType; }
     public async initiatePayment(req: any): Promise<any> {
         if (!this.activeUrl) { await this.autoDiscover(); if (!this.activeUrl) return { success: false, error: 'POS Controller not found' }; }
         try {
-            const payload = { transaction_type: 4001, amount: Math.round(req.amount * 100), billing_ref_no: req.invoiceId, payment_mode: req.method === 'CARD' ? 1 : 14 };
-            const response = await fetch(`${this.activeUrl}/web/doTransaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            const data = await response.json();
-            if (data.status === 'success' || data.response_code === '00') return { success: true, reference: data.approval_code || data.retrieval_ref_no, amount: req.amount };
-            return { success: false, error: data.message || 'Transaction Failed' };
+            if (this.activeType === 'pinelabs') {
+                const payload = { transaction_type: 4001, amount: Math.round(req.amount * 100), billing_ref_no: req.invoiceId, payment_mode: req.method === 'CARD' ? 1 : 14 };
+                const res = await fetch(`${this.activeUrl}/web/doTransaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const data = await res.json();
+                if (data.status === 'success' || data.response_code === '00') return { success: true, reference: data.approval_code || data.retrieval_ref_no, amount: req.amount, brand: 'pinelabs' };
+            } else if (this.activeType === 'paytm') {
+                const payload = { orderId: req.invoiceId, amount: req.amount.toFixed(2), transactionType: "SALE", paymentMode: req.method || "ANY" };
+                const res = await fetch(`${this.activeUrl}/paytm/sale`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const data = await res.json();
+                if (data.status === 'SUCCESS' || data.responseCode === '00') return { success: true, reference: data.referenceNo || data.rrn || data.txnId, amount: req.amount, brand: 'paytm' };
+            }
+            return { success: false, error: 'Transaction Failed' };
         } catch (err: any) { return { success: false, error: 'Communication error' }; }
     }
 }
@@ -184,22 +220,61 @@ export function CompactInvoiceEditor({
     })
 
 
-    const getUomOptions = (itemType: string, currentUom: string) => {
+    const getUomOptions = (itemType: string, currentUom: string, providedMetadata?: any) => {
         try {
-            // Enforce world standard: only use UOMs from the database master table
+            // [WORLD CLASS SAFETY] Handle potentially stringified JSON
+            let metadata = providedMetadata;
+            if (typeof metadata === 'string') {
+                try { metadata = JSON.parse(metadata); } catch(e) {}
+            }
+            
+            const uomData = metadata?.uom_data || {};
+            
+            // Collect all possible UOM field variants (including from flattened backend response)
+            const packUom = (
+                metadata?.purchase_uom || uomData.purchase_uom || 
+                metadata?.pack_uom || uomData.pack_uom || 
+                metadata?.packUom || uomData.packUom || 
+                'BOX'
+            ).toString().toUpperCase();
+
+            const baseUom = (
+                metadata?.base_uom || uomData.base_uom || 
+                metadata?.baseUom || uomData.baseUom || 
+                'PCS'
+            ).toString().toUpperCase();
+
+            const currentUomUpper = (currentUom || '').toUpperCase();
+            const catalogUom = (metadata?.uom || '').toUpperCase();
+
+            // If it's a medicine/item, show common pharma units + metadata units
+            if (itemType === 'item' || !itemType) {
+                const relevantUnits = Array.from(new Set([
+                    packUom,
+                    baseUom,
+                    catalogUom,
+                    currentUomUpper,
+                    'PCS',
+                    'UNT'
+                ])).filter(u => u && u !== 'UNDEFINED' && u !== 'NULL' && u.length > 0);
+
+                // If we have distinct units from metadata, return them
+                if (relevantUnits.length > 1) return relevantUnits;
+            }
+
+            // Fallback: master list + metadata
             const safeUomsList = Array.isArray(uoms) ? uoms : [];
             const dbUnitNames = safeUomsList.map(u => (u?.name || '').toUpperCase()).filter(Boolean);
-
-            // Always include the current UOM so existing/legacy lines don't break visually
-            const allUnits = Array.from(new Set([...dbUnitNames, (currentUom || '').toUpperCase()])).filter(Boolean);
-
-            if (itemType === 'service') {
-                // For services, only show service-type UOMs or the currently selected one
-                return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || (safeUomsList.find(du => (du?.name || '').toUpperCase() === u && du?.uom_type === 'service')));
-            }
-            // For items/products, show all UOMs or the currently selected one
-            return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || dbUnitNames.includes(u));
+            
+            return Array.from(new Set([
+                currentUomUpper,
+                packUom,
+                baseUom,
+                ...dbUnitNames,
+                'PCS'
+            ])).filter(u => u && u !== 'UNDEFINED' && u.length > 0);
         } catch (e) {
+            console.error("UOM Error:", e);
             return ['PCS', 'UNIT'];
         }
     }
@@ -246,7 +321,8 @@ export function CompactInvoiceEditor({
   const [hmsConfig, setHmsConfig] = useState<any>(null)
 
   const [pdfConfig, setPdfConfig] = useState<any>(null);
-  const [posStatus, setPosStatus] = useState<'connected' | 'offline' | 'searching'>('searching')
+  const [posStatus, setPosStatus] = useState<POSStatus>('searching')
+  const [posType, setPosType] = useState<POSType>('unknown')
   const [isPOSLoading, setIsPOSLoading] = useState(false)
 
   // Razorpay UPI QR State
@@ -267,6 +343,7 @@ export function CompactInvoiceEditor({
       if (pos && typeof pos.autoDiscover === 'function') {
         pos.autoDiscover().then(() => {
             setPosStatus(pos.getStatus());
+            setPosType(pos.getType());
         });
       }
     }
@@ -682,8 +759,22 @@ export function CompactInvoiceEditor({
   }
 
   const handleAddItem = () => {
-    setLines([...lines, { id: Date.now(), product_id: '', description: '', quantity: 1, uom: 'PCS', unit_price: 0, tax_rate_id: defaultTaxId, tax_amount: 0, discount_amount: 0, item_type: 'item' }])
+    const isNurseOrAdmin = (session?.user as any)?.role === 'nurse' || (session?.user as any)?.role === 'doctor' || isAdmin;
+    setLines([...lines, { 
+      id: Date.now(), 
+      product_id: '', 
+      description: '', 
+      quantity: 1, 
+      uom: 'PCS', 
+      unit_price: 0, 
+      tax_rate_id: defaultTaxId, 
+      tax_amount: 0, 
+      discount_amount: 0, 
+      item_type: 'item',
+      metadata: { confirmed: isNurseOrAdmin } // Auto-confirm if entered by clinician, else require audit
+    }])
   }
+
 
   const handleRemoveItem = (id: number) => {
     if (lines.length > 1) {
@@ -691,41 +782,45 @@ export function CompactInvoiceEditor({
     }
   }
 
-  const updateLine = (id: number, field: string, value: any) => {
+  const updateLine = (id: number, field: string, value: any, providedMetadata?: any) => {
     setLines(lines.map(line => {
       if (line.id === id) {
         const updated = { ...line, [field]: value }
 
-        // Logic for Product/Service Selection
+        // [WORLD CLASS SYNC] Logic for Product/Service Selection
         if (field === 'product_id') {
+          // If billableItems is empty (dynamic search mode), use providedMetadata
           const item = safeBillableItems.find(bi => bi && bi.id === value)
-          if (item) {
-            // Description Polish: Override generic auto-created labels
-            const rawDescription = item.description || item.label || item.name;
-            updated.description = rawDescription?.includes('Auto-created from') ? (item.label || item.name) : rawDescription;
+          const meta = providedMetadata || item?.metadata || {}
+          
+          if (item || providedMetadata) {
+            // Description Polish
+            const rawDescription = item?.description || item?.label || item?.name || providedMetadata?.name || providedMetadata?.label;
+            updated.description = rawDescription?.includes('Auto-created from') ? (item?.label || item?.name || providedMetadata?.label || providedMetadata?.name) : rawDescription;
 
-            updated.item_type = item.type || 'item'
+            updated.item_type = item?.type || providedMetadata?.type || 'item'
 
             // Extract Prices (Support for packing metadata)
-            const basePrice = item.metadata?.basePrice || item.price || 0
+            const uomData = meta.uom_data || {};
+            const basePrice = meta.basePrice || uomData.base_price || meta.base_price || item?.price || 0
             updated.base_price = basePrice
             updated.unit_price = basePrice
-            updated.uom = item.metadata?.baseUom || 'PCS'
+            updated.uom = meta.baseUom || uomData.base_uom || meta.base_uom || 'PCS'
+
+            // Metadata for complex items
+            updated.metadata = meta
 
             // INTELLIGENT TAX RESOLUTION (UI side fallback)
-            let resolvedTaxId = item.categoryTaxId;
-            if (!resolvedTaxId && item.categoryTaxRate > 0) {
+            let resolvedTaxId = item?.categoryTaxId;
+            if (!resolvedTaxId && item?.categoryTaxRate > 0) {
               const match = extendedTaxRates.find((tr: any) => Math.abs(Number(tr.rate) - Number(item.categoryTaxRate)) < 0.1);
               if (match) resolvedTaxId = match.id;
             }
             updated.tax_rate_id = resolvedTaxId || defaultTaxId;
 
-            // Metadata for complex items
-            updated.metadata = item.metadata
-
             // WORLD CLASS FEFO: Auto-select best batch
-            if (item.type === 'item' || !item.type) {
-              getBestBatch(item.id).then(batch => {
+            if (updated.item_type === 'item') {
+              getBestBatch(value).then(batch => {
                 if (batch) {
                   setLines(current => current.map(l =>
                     l.id === id ? {
@@ -755,14 +850,21 @@ export function CompactInvoiceEditor({
           }
         }
 
-        // Logic for UOM Changes (strips vs pieces)
+        // Logic for UOM Changes (Robust Pack vs Piece switching)
         if (field === 'uom' && updated.metadata) {
-          const selectedUom = (value || '').toUpperCase()
-          const meta = updated.metadata
-          if (selectedUom === (meta.packUom || 'STRIP').toUpperCase() && meta.packPrice) {
-            updated.unit_price = meta.packPrice
-          } else if (selectedUom === (meta.baseUom || 'PCS').toUpperCase()) {
-            updated.unit_price = updated.base_price
+          const selectedUom = (value || '').toUpperCase();
+          const meta = updated.metadata;
+          const uomData = meta.uom_data || {};
+          
+          const packUom = (meta.purchase_uom || uomData.purchase_uom || meta.packUom || uomData.packUom || uomData.pack_uom || meta.pack_uom || 'STRIP').toUpperCase();
+          const baseUom = (meta.base_uom || uomData.base_uom || meta.baseUom || uomData.baseUom || meta.base_uom || 'PCS').toUpperCase();
+          const packPrice = Number(meta.packPrice || uomData.pack_price || meta.pack_price || 0);
+          const piecePrice = Number(updated.base_price || meta.basePrice || uomData.basePrice || uomData.base_price || meta.base_price || 0);
+
+          if (selectedUom === packUom && packPrice > 0) {
+            updated.unit_price = packPrice;
+          } else if (selectedUom === baseUom) {
+            updated.unit_price = piecePrice;
           }
         }
 
@@ -780,7 +882,23 @@ export function CompactInvoiceEditor({
 
   const handleSave = async (status: any, paymentsOverride?: Payment[]) => {
     if (loading) return
+
+    // [WORLD-STANDARD AUDIT GUARD] Block finalization if clinical items are unverified
+    // Only applies to posted, finalized, or paid statuses. Drafts can still be saved.
+    const isFinalizing = status === 'posted' || status === 'paid' || status === 'finalized';
+    const hasUnconfirmed = lines.some(l => (l.description || l.product_id) && l.metadata?.confirmed === false);
+    
+    if (isFinalizing && hasUnconfirmed) {
+      const count = lines.filter(l => l.metadata?.confirmed === false).length;
+      return toast({
+        title: "🛡️ Nursing Audit Required",
+        description: `${count} item(s) are awaiting clinical verification by the duty nurse. Verification is mandatory for billing.`,
+        variant: "destructive"
+      });
+    }
+
     const finalPayments = paymentsOverride || payments.filter(p => p.amount > 0)
+
 
     // Auto-paid if fully settled
     const effectiveStatus = (status === 'paid' && totalPaid < grandTotal) ? 'posted' : status;
@@ -945,15 +1063,17 @@ export function CompactInvoiceEditor({
 
   const handlePOSPayment = async (method: 'CARD' | 'UPI', amount: number) => {
     setIsPOSLoading(true);
+    const pos = getPOSService();
     try {
-      const res = await posService.initiatePayment({
+      const res = await pos.initiatePayment({
         amount,
         invoiceId: provisionalNo || 'BILL-TEMP',
         method
       });
 
       if (res.success) {
-        toast({ title: "Payment Successful", description: `Received ${currency}${amount} via Device` });
+        const brandLabel = res.brand === 'paytm' ? 'Paytm' : (res.brand === 'pinelabs' ? 'PineLabs' : 'Device');
+        toast({ title: "Payment Successful", description: `Received ${currency}${amount} via ${brandLabel} terminal` });
         setPayments(prev => {
           const newPayments: Payment[] = [...prev, { method: method.toLowerCase() as any, amount, reference: res.reference } as Payment];
           const currentTotalPaid = newPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -1520,6 +1640,20 @@ export function CompactInvoiceEditor({
                         className={`group transition-all relative ${isZeroLine ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.05]' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/50'}`}
                       >
                         <td className="px-8 py-3 relative">
+                          <div className="flex items-center gap-2 mb-1">
+                            {line.metadata?.confirmed === false ? (
+                              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                                <Clock className="h-3 w-3 text-amber-500" />
+                                <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest truncate">Awaiting Nurse Verification</span>
+                              </div>
+                            ) : line.metadata?.confirmed === true ? (
+                              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+                                <Check className="h-3 w-3 text-emerald-500" />
+                                <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Verified Usage</span>
+                              </div>
+                            ) : null}
+                          </div>
+
                           {isZeroLine && (
                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500 animate-pulse z-10" />
                           )}
@@ -1528,17 +1662,21 @@ export function CompactInvoiceEditor({
                             value={line.product_id}
                             valueLabel={line.description}
                             options={displayedBillableOptions}
-                            onChange={v => updateLine(line.id, 'product_id', v)}
+                            onSearch={async q => {
+                              const res = await getProductsPremium(q, 1) as any;
+                              if (!res.success) return [];
+                              return (res.data || []).map((p: any) => ({
+                                id: p.id,
+                                label: p.name,
+                                subLabel: `Stock: ${p.totalStock || 0} • MRP: ${currency}${p.mrp || 0} • Exp: ${p.metadata?.lastExpiry || 'N/A'}`,
+                                metadata: p.metadata, // PASS METADATA HERE
+                                mrp: p.mrp
+                              }));
+                            }}
+                            onChange={(v, opt) => updateLine(line.id, 'product_id', v, opt?.metadata)}
                             disabled={isPaymentModalOpen || loading}
                             variant="ghost"
                             isDark={true}
-                            onSearch={async q => {
-                              const query = (q || "").toLowerCase();
-                              return itemOptions.filter(i => 
-                                (i.label || "").toLowerCase().includes(query) || 
-                                (i.subLabel || "").toLowerCase().includes(query)
-                              );
-                            }}
                             placeholder="SEARCH..."
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && !line.product_id && lines.some(l => l.product_id)) {
@@ -1617,7 +1755,7 @@ export function CompactInvoiceEditor({
                         </td>
                         <td className="px-4 py-3">
                           <select className="w-full h-10 bg-[#003333] text-[#ffffcc] border border-[#006666] rounded-lg px-2 text-[9px] font-black tracking-widest outline-none focus:ring-1 focus:ring-[#64ffff]" value={line.uom || ''} onChange={e => updateLine(line.id, 'uom', e.target.value)} disabled={isPaymentModalOpen || loading}>
-                            {getUomOptions(line.item_type, line.uom).map(u => (
+                            {getUomOptions(line.item_type, line.uom, line.metadata).map(u => (
                               <option key={u} value={u}>{u}</option>
                             ))}
                           </select>
@@ -1679,10 +1817,30 @@ export function CompactInvoiceEditor({
                 </tbody>
               </table>
               <div className="p-6 bg-slate-50/50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-900">
-                <button onClick={handleAddItem} disabled={isPaymentModalOpen || loading} className="flex items-center gap-3 text-[9px] font-black uppercase tracking-[0.3em] text-indigo-600 hover:text-indigo-800 transition-all group disabled:opacity-50 disabled:cursor-not-allowed">
-                  <div className="bg-white dark:bg-slate-800 p-1.5 rounded-lg border border-indigo-200 dark:border-indigo-900/40 shadow-sm group-hover:rotate-90 transition-transform"><Plus className="h-4 w-4" /></div>
-                  ADD LINE
-                </button>
+                <div className="flex items-center justify-between">
+                  <button onClick={handleAddItem} disabled={isPaymentModalOpen || loading} className="flex items-center gap-3 text-[9px] font-black uppercase tracking-[0.3em] text-indigo-600 hover:text-indigo-800 transition-all group disabled:opacity-50 disabled:cursor-not-allowed">
+                    <div className="bg-white dark:bg-slate-800 p-1.5 rounded-lg border border-indigo-200 dark:border-indigo-900/40 shadow-sm group-hover:rotate-90 transition-transform"><Plus className="h-4 w-4" /></div>
+                    ADD LINE
+                  </button>
+
+                  {(session?.user as any)?.role === 'nurse' || (session?.user as any)?.role === 'doctor' || isAdmin ? (
+                    <button 
+                      onClick={() => {
+                        const newLines = lines.map(line => ({
+                          ...line,
+                          metadata: { ...line.metadata, confirmed: true, confirmed_at: new Date().toISOString(), confirmed_by: session?.user?.id }
+                        }));
+                        setLines(newLines);
+                        toast({ title: "Audit Complete", description: "All items verified for clinical usage." });
+                      }}
+                      className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20"
+                    >
+                      <Check Circle2 className="h-3 w-3" />
+                      Verify All Items (Nurse)
+                    </button>
+                  ) : null}
+                </div>
+
               </div>
             </div>
           </div>
@@ -1954,7 +2112,9 @@ export function CompactInvoiceEditor({
                     >
                       {/* POS Connected Badge */}
                       {posStatus === 'connected' && (m.id === 'card' || m.id === 'upi') && (
-                        <div className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full shadow-lg animate-pulse uppercase">Device Active</div>
+                        <div className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full shadow-lg animate-pulse uppercase">
+                          {posType === 'paytm' ? 'Paytm' : (posType === 'pinelabs' ? 'PineLabs' : 'Device')} Active
+                        </div>
                       )}
 
                       <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-white/10 group-hover:border-current transition-all">
