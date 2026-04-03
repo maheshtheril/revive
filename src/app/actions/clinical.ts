@@ -44,7 +44,7 @@ export async function getPatientTimeline(patientId: string) {
             prisma.hms_admission.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { admitted_at: 'desc' } }),
             prisma.hms_vitals.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { recorded_at: 'desc' } }),
             prisma.$queryRaw`SELECT * FROM prescription WHERE patient_id::text = ${patientId} ORDER BY created_at DESC` as Promise<any[]>,
-            prisma.hms_lab_order.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, include: { hms_lab_order_line: { include: { hms_lab_test: true } } }, orderBy: { ordered_at: 'desc' } }),
+            prisma.hms_lab_order.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, include: { hms_lab_order_lines: { include: { hms_lab_test: true } } }, orderBy: { ordered_at: 'desc' } }),
             prisma.hms_invoice.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { issued_at: 'desc' } })
         ])
 
@@ -128,8 +128,8 @@ export async function getPatientTimeline(patientId: string) {
                 type: 'LAB_ORDER',
                 date: lo.ordered_at || new Date(),
                 title: 'Lab Investigation Ordered',
-                description: `${lo.hms_lab_order_line.length} tests requested (${lo.order_number})`,
-                metadata: { status: lo.status, tests: lo.hms_lab_order_line.map(l => l.hms_lab_test?.name) }
+                description: `${lo.hms_lab_order_lines.length} tests requested (${lo.order_number})`,
+                metadata: { status: lo.status, tests: lo.hms_lab_order_lines.map(l => l.hms_lab_test?.name) }
             })
         })
 

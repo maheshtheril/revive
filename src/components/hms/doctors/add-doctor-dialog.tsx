@@ -218,10 +218,22 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
                                             </div>
                                         </div>
                                         <div>
-                                            <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Professional Email <span className="text-red-500">*</span></label>
+                                            <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Professional Email (System) <span className="text-red-500">*</span></label>
                                             <div className="relative">
                                                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                                                 <input type="email" name="email" required className="w-full pl-12 p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider italic">Hospital Domain Email (Reply-To / Printing)</label>
+                                            <div className="relative">
+                                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-indigo-400" />
+                                                <input 
+                                                    type="email" 
+                                                    name="official_hospital_email" 
+                                                    placeholder="e.g. ahmed@globalmedicarehospital.in"
+                                                    className="w-full pl-12 p-4 bg-indigo-50/50 border-2 border-indigo-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm placeholder:text-slate-300" 
+                                                />
                                             </div>
                                         </div>
                                         <div>

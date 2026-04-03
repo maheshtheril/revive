@@ -41,19 +41,17 @@ export async function getCurrentCompany() {
     const session = await auth();
     const companyId = session?.user?.companyId;
 
-    if (!companyId) {
-        // Fallback or if not in session
-        if (!session?.user?.id) return null;
-        const user = await prisma.app_user.findUnique({
-            where: { id: session.user.id },
-            select: { company_id: true }
-        });
-        if (!user?.company_id) return null;
-        return await prisma.company.findUnique({ where: { id: user.company_id } });
-    }
-
     try {
-        if (!companyId) return null;
+        if (!companyId) {
+            // Fallback or if not in session
+            if (!session?.user?.id) return null;
+            const user = await prisma.app_user.findUnique({
+                where: { id: session.user.id },
+                select: { company_id: true }
+            });
+            if (!user?.company_id) return null;
+            return await prisma.company.findUnique({ where: { id: user.company_id } });
+        }
 
         // Ensure we handle potential invalid UUID formats gracefully
         const company = await prisma.company.findUnique({

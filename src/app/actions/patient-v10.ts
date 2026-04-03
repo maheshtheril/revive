@@ -180,7 +180,7 @@ export async function getPatientById(id: string) {
         const patient = await prisma.hms_patient.findUnique({
             where: { id, tenant_id: session.user.tenantId }
         });
-        return { success: true, data: patient };
+        return { success: true, data: JSON.parse(JSON.stringify(patient)) };
     } catch (err: any) {
         return { error: err.message };
     }

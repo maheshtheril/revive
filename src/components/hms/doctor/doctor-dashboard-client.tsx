@@ -11,6 +11,7 @@ import { ScannerModal } from "./scanner-modal"
 import { useRouter } from "next/navigation"
 import { differenceInYears } from "date-fns"
 import { VisitTypeBadge } from "../visit-type-badge"
+import Link from "next/link"
 
 interface DoctorDashboardProps {
     doctorName: string
@@ -369,15 +370,13 @@ export function DoctorDashboardClient({ doctorName, doctorId, appointments, stat
                                                     )}
 
                                                     {apt.lab_status && apt.lab_status.isReady && (
-                                                        <a
-                                                            href={`/api/lab/report/${apt.lab_status.orderId}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
+                                                        <Link
+                                                            href={`/hms/lab/reports/${apt.lab_status.orderId}`}
                                                             className="h-10 w-full rounded-xl bg-violet-50 text-violet-700 font-bold text-xs border border-violet-100 hover:bg-violet-100 hover:border-violet-200 transition-all flex items-center justify-center gap-2"
                                                         >
                                                             <FileText className="h-4 w-4" />
                                                             VIEW LAB REPORT
-                                                        </a>
+                                                        </Link>
                                                     )}
                                                 </div>
                                             </div>

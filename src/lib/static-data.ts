@@ -396,10 +396,10 @@ export const countriesList = [
 ];
 
 export const modulesList = [
+    { key: 'hms', name: 'Hospital', desc: 'Complete Hospital & Clinical Operations' },
     { key: 'system', name: 'System', desc: 'System Configuration & Admin' },
-    { key: 'hms', name: 'Health Management', desc: 'Complete Hospital & Clinical Operations' },
     { key: 'crm', name: 'CRM', desc: 'Customer Relationship & Pipeline Management' },
-    { key: 'finance', name: 'Finance & Accounting', desc: 'General Ledger, Billing, & Financial Reports' },
+    { key: 'finance', name: 'Gateway of Tally', desc: 'General Ledger, Billing, & Financial Reports' },
     { key: 'inventory', name: 'Inventory & SCM', desc: 'Supply Chain, Stock, & Procurement' },
     { key: 'hr', name: 'HR & Payroll', desc: 'Human Capital Management & Payroll Processing' },
     { key: 'analytics', name: 'Analytics & BI', desc: 'Business Intelligence & Data Visualization' },

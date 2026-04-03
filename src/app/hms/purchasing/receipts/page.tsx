@@ -111,15 +111,6 @@ export default function PurchaseReceiptsPage() {
                                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Total Records</p>
                                 <p className="text-2xl font-black text-foreground">{filteredReceipts.length}</p>
                             </div>
-                            <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-6 shadow-sm">
-                                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1">Total Purchase Value</p>
-                                <div className="flex items-baseline gap-1">
-                                    <span className="text-sm font-bold text-indigo-500/70">₹</span>
-                                    <p className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
-                                        {filteredReceipts.reduce((sum, r) => sum + (r.totalAmount || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </p>
-                                </div>
-                            </div>
                             <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-6 shadow-sm">
                                 <p className="text-xs font-bold text-emerald-500 uppercase tracking-widest mb-1">Total Items</p>
                                 <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
@@ -132,10 +123,9 @@ export default function PurchaseReceiptsPage() {
                             <div className="grid grid-cols-12 gap-4 px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider border-b border-border">
                                 <div className="col-span-2">Receipt #</div>
                                 <div className="col-span-2">Date</div>
-                                <div className="col-span-3">Supplier</div>
+                                <div className="col-span-4">Supplier</div>
                                 <div className="col-span-2">Ref Invoice</div>
                                 <div className="col-span-1 text-right">Qty</div>
-                                <div className="col-span-1 text-right whitespace-nowrap">Bill Amount</div>
                                 <div className="col-span-1 text-right">Status</div>
                             </div>
 
@@ -155,7 +145,7 @@ export default function PurchaseReceiptsPage() {
                                         <Calendar className="h-3 w-3 text-muted-foreground/70" />
                                         {new Date(receipt.date).toLocaleDateString('en-GB')}
                                     </div>
-                                    <div className="col-span-3 text-sm text-foreground font-medium truncate">
+                                    <div className="col-span-4 text-sm text-foreground font-medium truncate">
                                         {receipt.supplierName}
                                     </div>
                                     <div className="col-span-2 text-sm text-muted-foreground font-mono truncate">
@@ -163,9 +153,6 @@ export default function PurchaseReceiptsPage() {
                                     </div>
                                     <div className="col-span-1 text-right text-sm text-muted-foreground font-mono">
                                         {receipt.itemCount}
-                                    </div>
-                                    <div className="col-span-1 text-right text-sm font-bold text-foreground font-mono">
-                                        ₹{receipt.totalAmount?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
                                     <div className="col-span-1 text-right">
                                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wide">

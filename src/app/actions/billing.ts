@@ -266,6 +266,21 @@ export async function getBillableItems() {
             const uomData = metadata.uom_data || {};
             const pricingStrategy = metadata.pricing_strategy || 'manual';
 
+            // Standardize conversion factor
+            const soldUom = (item.uom || '').toUpperCase();
+            const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
+            let effectiveCF = 1;
+            
+            // Only apply conversion factor if we are NOT selling the base unit
+            if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
+                effectiveCF = Number(uomData.conversion_factor || uomData.conversionFactor || (
+                    soldUom === 'BOX' ? 10 : 
+                    soldUom === 'STRIP' ? 10 : 
+                    soldUom === 'PKT' ? 10 : 1
+                ));
+            }
+            const packUomName = uomData.pack_uom || uomData.packUom || (effectiveCF > 1 ? item.uom || 'PACK' : (item.uom || 'PCS'));
+
             // PRIORITY: Strategy-based Choice > Last Sale Price > History > Base Price
             let finalPrice = priceHistory?.price?.toNumber() || Number(item.price) || 0;
 
@@ -288,13 +303,13 @@ export async function getBillableItems() {
                 type: item.is_service ? 'service' : 'item',
                 metadata: {
                     ...metadata,
-                    // UOM Pricing (Industry Standard)
-                    baseUom: uomData.base_uom || item.uom || 'PCS',
+                    // UOM Pricing (Industry Standard) - Support both snake_case and camelCase
+                    baseUom: uomData.base_uom || uomData.baseUom || 'PCS',
                     basePrice: finalPrice,
-                    conversionFactor: uomData.conversion_factor || 1,
-                    packUom: uomData.pack_uom || (uomData.conversion_factor > 1 ? `PACK-${uomData.conversion_factor}` : (item.uom || 'PCS')),
-                    packPrice: uomData.pack_price || (finalPrice * (uomData.conversion_factor || 1)),
-                    packSize: uomData.pack_size || uomData.conversion_factor || 1,
+                    conversionFactor: effectiveCF,
+                    packUom: packUomName,
+                    packPrice: uomData.pack_price || uomData.packPrice || (finalPrice * effectiveCF),
+                    packSize: uomData.pack_size || uomData.packSize || effectiveCF,
                     lastMrp: metadata.last_mrp,
                     lastSalePrice: metadata.last_sale_price,
                     pricingStrategy: pricingStrategy
@@ -531,12 +546,74 @@ export async function createInvoice(data: {
                 }
             });
 
-            // --- WORLD CLASS STOCK SYNC (SALES) ---
-            // Deduct stock for all physical items in the invoice
-            for (const item of processedLineItems) {
-                if (!item.product_id) continue;
+            // --- WORLD CLASS LAB INTEGRATION ---
+            // Automatically trigger Lab Orders for any service identified as Laboratory Test
+            const labItems = processedLineItems.filter(l => {
+                const desc = (l.description || "").toLowerCase();
+                const isLab = desc.includes('lab') || desc.includes('test') || desc.includes('blood') || desc.includes('profile') || desc.includes('diagnostic');
+                return isLab && safeNum(l.unit_price) > 0;
+            });
 
-                const qtyToDeduct = safeNum(item.quantity) || 1;
+            if (labItems.length > 0 && resolvedPatientId) {
+                const orderNo = `LAB-${Date.now().toString().slice(-6)}`;
+                await tx.hms_lab_order.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: tenantId as string,
+                        company_id: companyId as string,
+                        patient_id: resolvedPatientId as string,
+                        encounter_id: isUUID(data.appointment_id) ? data.appointment_id : null,
+                        order_number: orderNo,
+                        status: 'requested',
+                        priority: 'normal',
+                        hms_lab_order_lines: {
+                            create: labItems.map(item => ({
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantId as string,
+                                company_id: companyId as string,
+                                test_id: isUUID(item.product_id) ? item.product_id : undefined,
+                                requested_name: item.description,
+                                status: 'pending',
+                                price: safeNum(item.unit_price)
+                            }))
+                        }
+                    }
+                });
+                console.log(`${LOG_PREFIX} [LAB-AUTO-SYNC] Created Order ${orderNo} with ${labItems.length} investigations.`);
+            }
+
+                // --- WORLD CLASS STOCK SYNC (SALES) ---
+                // Deduct stock for all physical items in the invoice
+                // Batch-resolve products for conversion factors if needed
+                const physicalItemIds = data.line_items?.filter(l => l.product_id).map(l => l.product_id) || [];
+                const productsForSync = await tx.hms_product.findMany({
+                    where: { id: { in: physicalItemIds } },
+                    select: { id: true, uom: true, metadata: true }
+                });
+                const productSyncMap = new Map(productsForSync.map(p => [p.id, p]));
+
+                for (const item of processedLineItems) {
+                    if (!item.product_id) continue;
+
+                    const product = productSyncMap.get(item.product_id);
+                    const metadata = product?.metadata as any || {};
+                    const uomData = metadata.uom_data || {};
+                    
+                    // Standardize conversion factor (SALES)
+                    const soldUom = (item.uom || '').toUpperCase();
+                    const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
+                    
+                    let conversionFactor = 1;
+                    // Only apply conversion factor if we are selling a PACK (not the base unit)
+                    if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
+                        conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor || (
+                            soldUom === 'BOX' ? 10 : 
+                            soldUom === 'STRIP' ? 10 : 
+                            soldUom === 'PKT' ? 10 : 1
+                        ));
+                    }
+                    
+                    const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
                 
                 // 0. Resolve Location (Default to Main Warehouse for now)
                 let location = await tx.hms_stock_location.findFirst({
@@ -651,6 +728,8 @@ export async function createInvoice(data: {
         }
 
         revalidatePath('/hms/billing');
+        revalidatePath('/hms/inventory/reports/stock');
+        revalidatePath('/hms/inventory/products');
         
         let whatsappFeedback = {};
         if ((status === 'paid' || status === 'posted') && (invoiceId || (result as any)?.id)) {
@@ -669,7 +748,10 @@ export async function createInvoice(data: {
             }
         }
 
-        return { success: true, data: result, ...whatsappFeedback };
+        // [SERIALIZATION-MASTER-GUARD] Ensure no non-serializable Prisma types reach the client
+        const serializedResult = JSON.parse(JSON.stringify(result));
+
+        return { success: true, data: serializedResult, ...whatsappFeedback };
 
     } catch (err: any) {
         console.error(`${LOG_PREFIX} [CRITICAL-FAIL] createInvoice:`, err);
@@ -923,6 +1005,90 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                 await trackRegistrationPayment(tx, patient_id as string, session.user.tenantId, companyId);
             }
 
+            // [WORLD CLASS STOCK SYNC (SALES UPDATE)]
+            // Deduct stock for all physical items in the invoice
+            if (status === 'posted' || status === 'paid') {
+                const physicalItemIds = processedLineItems?.filter(l => l.product_id).map(l => l.product_id) || [];
+                const productsForSync = await tx.hms_product.findMany({
+                    where: { id: { in: physicalItemIds } },
+                    select: { id: true, uom: true, metadata: true }
+                });
+                const productSyncMap = new Map(productsForSync.map(p => [p.id, p]));
+
+                for (const item of processedLineItems) {
+                    if (!item.product_id) continue;
+
+                    const product = productSyncMap.get(item.product_id);
+                    const metadata = product?.metadata as any || {};
+                    const uomData = metadata.uom_data || {};
+                    
+                    const soldUom = (item.uom || '').toUpperCase();
+                    const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
+                    let conversionFactor = 1;
+                    
+                    // Standardize conversion factor (SALES)
+                    if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
+                        conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor || (
+                            soldUom === 'BOX' ? 10 : 
+                            soldUom === 'STRIP' ? 10 : 
+                            soldUom === 'PKT' ? 10 : 1
+                        ));
+                    }
+                    const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
+                
+                    // Resolve Location (Default to Main Warehouse)
+                    let location = await tx.hms_stock_location.findFirst({
+                        where: { company_id: companyId, name: 'Main Warehouse' }
+                    });
+
+                    if (!location) {
+                        location = await tx.hms_stock_location.findFirst({
+                            where: { company_id: companyId }
+                        });
+                    }
+
+                    if (location) {
+                        const level = await tx.hms_stock_levels.findFirst({
+                            where: { product_id: item.product_id, location_id: location.id }
+                        });
+
+                        if (level) {
+                            await tx.hms_stock_levels.update({
+                                where: { id: level.id },
+                                data: { quantity: { decrement: qtyToDeduct } }
+                            });
+                        } else {
+                            await tx.hms_stock_levels.create({
+                                data: {
+                                    id: crypto.randomUUID(),
+                                    tenant_id: tenantId,
+                                    company_id: (companyId as string),
+                                    product_id: item.product_id,
+                                    location_id: location.id,
+                                    quantity: -qtyToDeduct
+                                }
+                            });
+                        }
+
+                        // Stock Ledger Entry
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantId,
+                                company_id: (companyId as string),
+                                product_id: item.product_id,
+                                from_location_id: location.id,
+                                qty: -qtyToDeduct,
+                                movement_type: 'out',
+                                reference: updatedInvoice.invoice_number,
+                                related_type: 'hms_invoice',
+                                related_id: invoiceId
+                            }
+                        });
+                    }
+                }
+            }
+
             // FORCE UPDATE TOTAL: Ensure DB triggers didn't override the total to 0
             // This happens if a trigger calculates total from lines before lines are fully visible/committed
             await tx.hms_invoice.update({
@@ -969,7 +1135,7 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
 
         revalidatePath('/hms/billing');
         revalidatePath(`/hms/billing/${invoiceId}`);
-        return { success: true, data: result };
+        return { success: true, data: JSON.parse(JSON.stringify(result)) };
 
     } catch (error: any) {
         console.error("Failed to update invoice:", error);
@@ -1509,7 +1675,7 @@ export async function createQuickPatient(name: string, phone: string) {
             }
         });
 
-        return { success: true, data: newPatient };
+        return { success: true, data: JSON.parse(JSON.stringify(newPatient)) };
     } catch (error: any) {
         console.error("Failed to create quick patient:", error);
         if (error.code === 'P2002') {

@@ -79,7 +79,8 @@ export function ReceptionActionCenter({
     const { toast } = useToast()
     const [viewMode, setViewMode] = useState<'board' | 'list'>('list')
     const [isPrivacyMode, setIsPrivacyMode] = useState(false)
-    const [currentTime, setCurrentTime] = useState(new Date())
+    const [currentTime, setCurrentTime] = useState<Date | null>(null)
+    const [isMounted, setIsMounted] = useState(false)
     const [activeModal, setActiveModal] = useState<string | null>(null)
     const [editingAppointment, setEditingAppointment] = useState<any>(null)
     const [selectedDoctor, setSelectedDoctor] = useState<string>("all")
@@ -95,6 +96,8 @@ export function ReceptionActionCenter({
 
     // Update time every minute for aging timers
     useEffect(() => {
+        setIsMounted(true)
+        setCurrentTime(new Date())
         const timer = setInterval(() => setCurrentTime(new Date()), 60000)
         return () => clearInterval(timer)
     }, [])
@@ -264,6 +267,8 @@ export function ReceptionActionCenter({
         { id: 'expense', title: 'Expense', icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', border: 'border-amber-100 dark:border-amber-800' },
         { id: 'shift', title: 'Cash Counter', icon: Banknote, color: 'text-slate-600', bg: 'bg-slate-50 dark:bg-slate-800/50', border: 'border-slate-200 dark:border-slate-700' },
     ]
+
+    if (!isMounted) return null
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500 relative">
@@ -1175,7 +1180,7 @@ function PatientCard({
     onEdit: () => void,
     onBill?: () => void,
     isPrivacyMode: boolean,
-    currentTime: Date,
+    currentTime: Date | null,
     router: any,
     handleStatusUpdate: (id: string, status: string) => void,
     statusLoading: string | null,
@@ -1197,7 +1202,7 @@ function PatientCard({
     const isPaid = apt.invoiceStatus === 'paid';
 
     const startTime = new Date(apt.start_time);
-    const diffMins = Math.max(0, Math.floor((currentTime.getTime() - startTime.getTime()) / 60000));
+    const diffMins = currentTime ? Math.max(0, Math.floor((currentTime.getTime() - startTime.getTime()) / 60000)) : 0;
     const isOverdue = type === 'billing' && diffMins > 10;
     const isWarning = type === 'billing' && diffMins > 5;
 

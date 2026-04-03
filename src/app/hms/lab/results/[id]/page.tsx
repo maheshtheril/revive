@@ -10,10 +10,15 @@ import { Badge } from "@/components/ui/badge"
 import { 
     FlaskConical, Save, ArrowLeft, Loader2, User, 
     Calendar, CheckCircle2, FlaskRound, Info, Beaker,
-    Printer, Hash, ShieldCheck, FileText
+    Printer, Hash, ShieldCheck, FileText, Database
 } from "lucide-react"
 import { format } from "date-fns"
 import { useToast } from "@/components/ui/use-toast"
+import { 
+    Dialog, DialogContent, DialogHeader, DialogTitle, 
+    DialogTrigger, DialogDescription, DialogFooter
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import Link from "next/link"
 
 export default function LabResultEntryPage() {
@@ -24,6 +29,8 @@ export default function LabResultEntryPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [results, setResults] = useState<any[]>([])
+    const [machineText, setMachineText] = useState("")
+    const [isImportOpen, setIsImportOpen] = useState(false)
 
     useEffect(() => {
         loadOrder()
@@ -54,6 +61,76 @@ export default function LabResultEntryPage() {
         const newResults = [...results]
         newResults[index][field] = value
         setResults(newResults)
+    }
+
+    const getFlag = (value: string, range: any) => {
+        if (!value || isNaN(Number(value))) return null;
+        const val = Number(value);
+        
+        // Try to parse range: "min - max" or { min, max }
+        let min = null, max = null;
+        if (typeof range === 'string') {
+            const matches = range.match(/([\d\.]+)\s*-\s*([\d\.]+)/);
+            if (matches) {
+                min = Number(matches[1]);
+                max = Number(matches[2]);
+            }
+        } else if (range && typeof range === 'object') {
+            min = range.min !== undefined ? Number(range.min) : null;
+            max = range.max !== undefined ? Number(range.max) : null;
+        }
+
+        if (min !== null && val < min) return 'L';
+        if (max !== null && val > max) return 'H';
+        return 'N';
+    }
+
+    const handleMachineImport = () => {
+        if (!machineText.trim()) return;
+        
+        let newResults = [...results];
+        let foundCount = 0;
+
+        // Try JSON
+        try {
+            const data = JSON.parse(machineText);
+            Object.entries(data).forEach(([key, val]) => {
+                const index = newResults.findIndex(r => 
+                    r.testName.toLowerCase().includes(key.toLowerCase()) ||
+                    (r.testCode && r.testCode.toLowerCase() === key.toLowerCase())
+                );
+                if (index !== -1) {
+                    newResults[index].value = String(val);
+                    foundCount++;
+                }
+            });
+        } catch (e) {
+            // Try Line-by-Line (CSV or Key-Value)
+            const lines = machineText.split(/\r?\n/);
+            lines.forEach(line => {
+                const parts = line.split(/[=:,]/);
+                if (parts.length >= 2) {
+                    const key = parts[0].trim();
+                    const val = parts[1].trim();
+                    const index = newResults.findIndex(r => 
+                        r.testName.toLowerCase().includes(key.toLowerCase())
+                    );
+                    if (index !== -1) {
+                        newResults[index].value = val;
+                        foundCount++;
+                    }
+                }
+            });
+        }
+
+        setResults(newResults);
+        setIsImportOpen(false);
+        setMachineText("");
+        
+        toast({
+            title: "Import Complete",
+            description: `Matched and updated ${foundCount} test results from machine data.`
+        });
     }
 
     const handleSubmit = async (verify: boolean = false) => {
@@ -162,48 +239,65 @@ export default function LabResultEntryPage() {
                                     <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800">
                                         <th className="px-6 py-4 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Diagnostic Test</th>
                                         <th className="px-6 py-4 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest w-48">Result Value</th>
+                                        <th className="px-6 py-4 text-center text-[10px] font-black uppercase text-slate-400 tracking-widest w-20">Flag</th>
                                         <th className="px-6 py-4 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest w-32">Units</th>
                                         <th className="px-6 py-4 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Normal Range</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {results.map((res, index) => (
-                                        <tr key={index} className="group hover:bg-slate-50/50 dark:hover:bg-slate-900/20 transition-colors">
-                                            <td className="px-6 py-5">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 group-hover:text-indigo-500 transition-colors">
-                                                        <Beaker className="w-4 h-4" />
+                                    {results.map((res, index) => {
+                                        const flag = getFlag(res.value, res.refRange);
+                                        return (
+                                            <tr key={index} className={`group transition-colors ${flag === 'H' || flag === 'L' ? 'bg-red-50/10' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/20'}`}>
+                                                <td className="px-6 py-5">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-400 group-hover:text-indigo-500 transition-colors">
+                                                            <Beaker className="w-4 h-4" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-bold text-slate-800 dark:text-slate-200">{res.testName}</p>
+                                                            <Input 
+                                                                placeholder="Add clinical observation/remarks..." 
+                                                                className="mt-1 h-7 text-[10px] border-none bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 px-0 focus:ring-0 focus:px-2 rounded-md italic"
+                                                                value={res.remarks}
+                                                                onChange={(e) => handleResultChange(index, "remarks", e.target.value)}
+                                                            />
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <p className="font-bold text-slate-800 dark:text-slate-200">{res.testName}</p>
-                                                        <Input 
-                                                            placeholder="Add clinical observation/remarks..." 
-                                                            className="mt-1 h-7 text-[10px] border-none bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 px-0 focus:ring-0 focus:px-2 rounded-md italic"
-                                                            value={res.remarks}
-                                                            onChange={(e) => handleResultChange(index, "remarks", e.target.value)}
-                                                        />
+                                                </td>
+                                                <td className="px-6 py-5">
+                                                    <Input 
+                                                        className={`bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-xl font-bold focus:ring-2 focus:ring-indigo-500 ${
+                                                            flag === 'H' || flag === 'L' ? 'text-red-600 border-red-200' : ''
+                                                        }`}
+                                                        placeholder="Result..."
+                                                        value={res.value}
+                                                        onChange={(e) => handleResultChange(index, "value", e.target.value)}
+                                                    />
+                                                </td>
+                                                <td className="px-6 py-5 text-center">
+                                                    {flag && (
+                                                        <span className={`text-xs font-black px-2 py-1 rounded-md ${
+                                                            flag === 'H' ? 'bg-red-100 text-red-600' : 
+                                                            flag === 'L' ? 'bg-blue-100 text-blue-600' : 
+                                                            'bg-emerald-100 text-emerald-600'
+                                                        }`}>
+                                                            {flag === 'N' ? 'Normal' : flag === 'H' ? 'High' : 'Low'}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-5">
+                                                    <span className="text-sm font-black text-slate-500 uppercase">{res.units || "N/A"}</span>
+                                                </td>
+                                                <td className="px-6 py-5">
+                                                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-900/80 px-4 py-2 rounded-2xl border border-slate-200/50 dark:border-slate-800">
+                                                        <Info className="w-3 h-3 text-indigo-400" />
+                                                        {typeof res.refRange === 'object' ? JSON.stringify(res.refRange) : res.refRange || "—"}
                                                     </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-5">
-                                                <Input 
-                                                    className="bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-xl font-bold focus:ring-2 focus:ring-indigo-500"
-                                                    placeholder="Result..."
-                                                    value={res.value}
-                                                    onChange={(e) => handleResultChange(index, "value", e.target.value)}
-                                                />
-                                            </td>
-                                            <td className="px-6 py-5">
-                                                <span className="text-sm font-black text-slate-500 uppercase">{res.units || "N/A"}</span>
-                                            </td>
-                                            <td className="px-6 py-5">
-                                                <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-900/80 px-4 py-2 rounded-2xl border border-slate-200/50 dark:border-slate-800">
-                                                    <Info className="w-3 h-3 text-indigo-400" />
-                                                    {typeof res.refRange === 'object' ? JSON.stringify(res.refRange) : res.refRange || "—"}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -211,7 +305,7 @@ export default function LabResultEntryPage() {
 
                     <div className="flex justify-between items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-3xl gap-4">
                         <div className="flex gap-4">
-                           <Button 
+                            <Button 
                                 variant="outline" 
                                 className="rounded-2xl gap-2 font-bold px-6"
                                 onClick={() => handleSubmit(false)}
@@ -220,6 +314,47 @@ export default function LabResultEntryPage() {
                                 <Save className="w-4 h-4" />
                                 Save as Draft
                             </Button>
+
+                            <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+                                <DialogTrigger asChild>
+                                    <Button 
+                                        variant="outline" 
+                                        className="rounded-2xl gap-2 font-bold px-6 border-indigo-200 text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100"
+                                    >
+                                        <Database className="w-4 h-4" />
+                                        Machine Import
+                                    </Button>
+                                </DialogTrigger>
+                                <DialogContent className="max-w-lg rounded-3xl">
+                                    <DialogHeader>
+                                        <DialogTitle className="text-2xl font-black">Import Machine Data</DialogTitle>
+                                        <DialogDescription className="font-bold">
+                                            Paste the data output from your analyzer below.
+                                        </DialogDescription>
+                                    </DialogHeader>
+                                    <div className="space-y-4 py-4">
+                                        <Textarea 
+                                            placeholder="Paste analyzer 'code' or data here (JSON, CSV, or Key=Value pairs)..."
+                                            className="min-h-[200px] rounded-2xl p-4 font-mono text-sm bg-slate-50 border-slate-200 focus:ring-4 focus:ring-indigo-100 transition-all outline-none"
+                                            value={machineText}
+                                            onChange={(e) => setMachineText(e.target.value)}
+                                        />
+                                        <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100">
+                                            <p className="text-[10px] font-black uppercase text-indigo-600 mb-2">Example Formats Supported:</p>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <code className="text-[10px] text-indigo-500 whitespace-pre font-bold">WBC=8.5&#10;HGB=14.2</code>
+                                                <code className="text-[10px] text-indigo-500 whitespace-pre font-bold">{"{ \"WBC\": 8.5, \"HGB\": 14.2 }"}</code>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <DialogFooter className="gap-2 sm:gap-0">
+                                        <Button variant="ghost" className="rounded-xl font-bold" onClick={() => setIsImportOpen(false)}>Cancel</Button>
+                                        <Button className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black px-6 shadow-lg shadow-indigo-600/20" onClick={handleMachineImport}>
+                                            Apply Results
+                                        </Button>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
                         </div>
                         
                         <div className="flex gap-4">

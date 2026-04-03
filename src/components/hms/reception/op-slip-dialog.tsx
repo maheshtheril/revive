@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from "react"
-import { getHMSSettings } from "@/app/actions/settings"
+import { getHMSSettings, getPDFSettings } from "@/app/actions/settings"
 import {
     Dialog, DialogContent, DialogHeader,
     DialogTitle, DialogTrigger, DialogFooter,
@@ -21,15 +21,22 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
     const [isOpen, setIsOpen] = useState(false)
     const [printMode, setPrintMode] = useState<'standard' | 'letterhead' | 'thermal' | 'label'>(defaultPrintMode)
     const [hmsSettings, setHmsSettings] = useState<any>(null)
+    const [pdfConfig, setPdfConfig] = useState<any>(null)
 
     useEffect(() => {
         if (!isOpen) return;
-        getHMSSettings().then(res => {
-            if (res.success) {
-                setHmsSettings(res.settings)
-                if (res.settings?.opSlipPreprintedLetterhead && defaultPrintMode === 'standard') {
+        Promise.all([
+            getHMSSettings(),
+            getPDFSettings(undefined, undefined)
+        ]).then(([hmsRes, pdfRes]) => {
+            if (hmsRes.success) {
+                setHmsSettings(hmsRes.settings)
+                if (hmsRes.settings?.opSlipPreprintedLetterhead && defaultPrintMode === 'standard') {
                     setPrintMode('letterhead')
                 }
+            }
+            if (pdfRes.success) {
+                setPdfConfig(pdfRes.settings)
             }
         }).catch(() => {})
     }, [isOpen, defaultPrintMode])
@@ -77,7 +84,7 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                             <span>${date}</span>
                         </div>
                         <div class="meta" style="margin-top: 2px;">
-                            <span>T-ID: #${tokenNumber}</span>
+                            <span style="font-weight: 900; font-size: 10pt;">T-ID: #${tokenNumber}</span>
                             <span style="font-weight: bold;">${doctorName.slice(0, 15)}</span>
                         </div>
                         <script>window.onload = () => { window.print(); window.close(); };</script>
@@ -104,7 +111,7 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                             .center { text-align: center; }
                             .bold { font-weight: bold; }
                             .line { border-top: 1px dashed black; margin: 2mm 0; }
-                            .token { font-size: 20pt; font-weight: 900; margin: 2mm 0; }
+                            .token { font-size: 14pt; font-weight: 900; margin: 2mm 0; }
                             .row { display: flex; justify-content: space-between; margin-bottom: 1mm; }
                             .label { font-size: 8pt; }
                             .value { font-weight: bold; }
@@ -168,7 +175,7 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                             }
                             
                             body { 
-                                font-family: 'Outfit', sans-serif; 
+                                font-family: ${pdfConfig?.fontFamily === 'times' ? 'serif' : (pdfConfig?.fontFamily === 'courier' ? 'monospace' : "'Outfit', sans-serif")}; 
                                 margin: 0;
                                 padding: 0;
                                 color: #1e293b;
@@ -177,166 +184,59 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                                 print-color-adjust: exact;
                             }
 
-                            .page {
-                                width: 210mm;
-                                height: 297mm;
-                                padding: ${showHeader ? '15mm' : `${headerHeight}cm 15mm 15mm 15mm`};
-                                position: relative;
+                            /* --- NEW CARD DESIGN (MATCHING IMAGE) --- */
+                            .op-card {
+                                border: 1px solid #e2e8f0;
+                                border-radius: 12px;
+                                margin-top: 20px;
+                                display: grid;
+                                grid-template-columns: 1fr 1fr;
+                                overflow: hidden;
                             }
 
-                            /* --- HEADER SECTION --- */
-                            .hospital-header {
-                                display: ${showHeader ? 'flex' : 'none'};
-                                align-items: center;
-                                justify-content: center;
-                                margin-bottom: 20px;
-                                position: relative;
-                                border-bottom: 2px solid #334155;
-                                padding-bottom: 20px;
+                            .card-section {
+                                padding: 15px 20px;
+                                border-bottom: 1px solid #f1f5f9;
                             }
                             
-                            .logo-container {
-                                position: absolute;
-                                left: 0;
-                                height: 100px;
-                                width: 100px;
-                            }
-                            
-                            .logo-container img {
-                                height: 100%;
-                                width: 100%;
-                                object-fit: contain;
+                            .card-section:nth-child(odd) {
+                                border-right: 1px solid #f1f5f9;
                             }
 
-                            .header-content {
-                                text-align: center;
-                                max-width: 65%;
+                            .card-label {
+                                font-size: 8pt;
+                                font-weight: 800;
+                                color: #64748b;
+                                text-transform: uppercase;
+                                letter-spacing: 0.5px;
+                                margin-bottom: 4px;
                             }
 
-                            .hospital-name {
-                                font-size: 28pt;
+                            .card-value-large {
+                                font-size: 14pt; /* MATCHING SIZE */
+                                font-weight: 900;
+                                color: #0f172a;
+                                line-height: 1.1;
+                            }
+
+                            .card-value-token {
+                                font-size: 14pt; /* MATCHING SIZE */
                                 font-weight: 900;
                                 color: #1e3a8a;
-                                text-transform: uppercase;
-                                margin: 0;
-                                letter-spacing: -1px;
-                            }
-
-                            .dept-name {
-                                font-size: 14pt;
-                                font-weight: 700;
-                                color: #475569;
-                                margin: 5px 0;
-                                text-transform: uppercase;
-                            }
-
-                            .hospital-meta {
-                                font-size: 9pt;
-                                color: #64748b;
-                                font-weight: 500;
-                                margin-top: 5px;
-                            }
-
-                            /* --- PATIENT SECTION --- */
-                            .info-strip {
-                                display: grid;
-                                grid-template-cols: 1.5fr 1fr;
-                                gap: 40px;
-                                margin-top: 10px;
-                                border-bottom: 1.5px solid #e2e8f0;
-                                padding-bottom: 15px;
-                                margin-bottom: 20px;
-                            }
-
-                            .patient-details h2 {
-                                font-size: 10pt;
-                                color: #64748b;
-                                margin: 0 0 8px 0;
-                                text-transform: uppercase;
-                                font-weight: 800;
-                                letter-spacing: 1px;
-                            }
-
-                            .p-name { font-size: 16pt; font-weight: 900; color: #0f172a; text-transform: uppercase; line-height: 1.1; }
-                            .p-addr { font-size: 10pt; color: #475569; margin: 3px 0; font-weight: 600; }
-                            .p-meta { font-size: 11pt; font-weight: 700; color: #1e293b; margin-top: 8px; }
-
-                            .visit-details {
                                 text-align: right;
-                                display: grid;
-                                grid-template-cols: 1fr 1fr;
-                                font-size: 10.5pt;
-                                gap: 2px 15px;
-                            }
-                            
-                            .v-label { font-weight: 800; color: #64748b; text-transform: uppercase; font-size: 9pt; text-align: right; }
-                            .v-value { font-weight: 700; color: #0f172a; text-align: left; }
-
-                            /* --- MAIN BODY & SIDEBAR --- */
-                            .main-layout {
-                                display: grid;
-                                grid-template-cols: 1fr 65mm;
-                                gap: 30px;
-                                height: 16.5cm;
                             }
 
-                            .doctor-notes {
-                                border-right: 1.5px dashed #e2e8f0;
-                                position: relative;
-                            }
-                            
-                            .rx-watermark {
-                                font-size: 60pt;
-                                color: #f8fafc;
-                                font-weight: 900;
-                                position: absolute;
-                                top: 40px;
-                                left: 0;
-                                z-index: -1;
+                            .card-meta {
+                                font-size: 9pt;
+                                color: #475569;
+                                font-weight: 600;
+                                margin-top: 4px;
                             }
 
-                            .clinical-sidebar {
-                                padding-left: 0px;
-                            }
-
-                            .vitals-sec {
-                                margin-bottom: 30px;
-                            }
-
-                            .vital-row {
+                            .token-container {
                                 display: flex;
-                                justify-content: space-between;
+                                flex-direction: column;
                                 align-items: flex-end;
-                                margin-bottom: 12px;
-                            }
-
-                            .vital-label { font-size: 10pt; font-weight: 900; color: #475569; width: 60px; text-transform: uppercase; }
-                            .vital-box { 
-                                flex: 1; 
-                                border-bottom: 1px dotted #cbd5e1; 
-                                height: 18px; 
-                                margin-bottom: 2px;
-                            }
-
-                            /* --- TEST CHECKLIST --- */
-                            .labs-sec {
-                                border-top: 1px solid #f1f5f9;
-                                pt: 15px;
-                            }
-                            
-                            .lab-item {
-                                display: flex;
-                                align-items: center;
-                                justify-content: space-between;
-                                margin-bottom: 8px;
-                            }
-                            
-                            .lab-name { font-size: 9pt; font-weight: 800; color: #1e293b; text-transform: uppercase; }
-                            .lab-check { 
-                                width: 14pt; 
-                                height: 14pt; 
-                                border: 1.5pt solid #334155; 
-                                border-radius: 2pt;
                             }
 
                             /* --- FOOTER --- */
@@ -362,41 +262,85 @@ export function OpSlipDialog({ appointment, trigger, defaultPrintMode = 'standar
                     <body>
                         <div class="page">
                             <!-- HOSPITAL HEADER -->
-                            <div class="hospital-header">
-                                <div class="logo-container">
-                                    ${hospitalInfo?.logo_url ? `<img src="${hospitalInfo.logo_url}" />` : '<div style="background: #f1f5f9; width: 100%; height: 100%; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #cbd5e1;">LOGO</div>'}
-                                </div>
-                                <div class="header-content">
-                                    <h1 class="hospital-name">${hospitalInfo?.name || 'GLOBAL MEDICARE HOSPITAL'}</h1>
-                                    <div class="dept-name">${appointment.clinician?.metadata?.department || hospitalInfo?.metadata?.department || 'SMART EMERGENCY DEPARTMENT'}</div>
-                                    <div class="hospital-meta">
-                                        📍 ${hospitalInfo?.metadata?.address || 'MEDICAL PLAZA, SECTOR 4'} &nbsp;
-                                        ☎️ ${hospitalInfo?.metadata?.phone || '0495-2520588'} <br/>
-                                        📧 ${hospitalInfo?.metadata?.email || 'hospital@gmail.com'} &nbsp;
-                                        🌐 ${hospitalInfo?.metadata?.website || 'www.globalmedicare.com'}
+                            <div class="hospital-header" style="justify-content: ${pdfConfig?.headerAlignment === 'center' ? 'center' : (pdfConfig?.headerAlignment === 'left' ? 'flex-start' : 'flex-end')}; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; display: flex; text-align: ${pdfConfig?.headerAlignment};">
+                                <div style="display: flex; flex-direction: ${pdfConfig?.headerAlignment === 'center' ? 'column' : (pdfConfig?.headerAlignment === 'right' ? 'row-reverse' : 'row')}; align-items: center; gap: 15px; width: 100%;">
+                                    ${pdfConfig?.showLogo !== false ? `
+                                        <div class="logo-container" style="position: static; height: 70px; width: 70px; flex-shrink: 0;">
+                                            ${hospitalInfo?.logo_url ? `<img src="${hospitalInfo.logo_url}" />` : '<div style="background: #f1f5f9; width: 100%; height: 100%; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #cbd5e1;">LOGO</div>'}
+                                        </div>
+                                    ` : ''}
+                                    <div style="flex-grow: 1;">
+                                        <div style="font-size: ${pdfConfig?.hospitalNameSize || 18}pt; font-weight: 900; color: #0f172a; letter-spacing: -0.5px;">${hospitalInfo?.name || 'GLOBAL MEDICARE'}</div>
+                                        ${pdfConfig?.showContactInfo !== false ? `
+                                            <div style="font-size: ${pdfConfig?.addressSize || 9}pt; color: #64748b; font-weight: 600;">${hospitalInfo?.address || 'Hospital Address'}</div>
+                                            <div style="font-size: ${pdfConfig?.addressSize || 9}pt; color: #64748b; font-weight: 600;">${hospitalInfo?.phone || '+91 000-0000'} | ${hospitalInfo?.metadata?.email || 'hms@live.com'}</div>
+                                        ` : ''}
+                                    </div>
+                                    <div style="text-align: right; min-width: 150px;">
+                                        <div style="font-size: 9pt; font-weight: 800; color: #64748b; letter-spacing: 0.5px; text-transform: uppercase;">OP VISIT SLIP</div>
+                                        <div style="font-size: 10pt; font-weight: 900; color: #0f172a; margin-top: 2px;">${date.toUpperCase()}</div>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- PATIENT & VISIT STRIP -->
-                            <div class="info-strip">
-                                <div class="patient-details">
-                                    <h2>Patient Details :</h2>
-                                    <div class="p-name">${patientName}</div>
-                                    <div class="p-addr">${appointment.patient?.address || 'LOCAL ADDRESS NOT SPECIFIED'}</div>
-                                    <div class="p-meta">
-                                        ${appointment.patient?.contact_no || 'NO CONTACT'} &nbsp;|&nbsp;
-                                        Sex : ${appointment.patient?.gender || 'N/A'} &nbsp;|&nbsp;
-                                        Age : ${appointment.patient?.age || (appointment.patient?.dob ? (new Date().getFullYear() - new Date(appointment.patient.dob).getFullYear()) : 'N/A')}
+                            <!-- MAIN DATA CARD (MATCHING IMAGE) -->
+                            <div class="op-card">
+                                <!-- ROW 1: PATIENT & TOKEN -->
+                                <div class="card-section">
+                                    <div class="card-label">Patient Details</div>
+                                    <div class="card-value-large">${patientName}</div>
+                                    <div class="card-meta">
+                                        ID: ${appointment.patient?.patient_number || 'PAT-785651'} | 
+                                        ${appointment.patient?.gender || 'male'} | 
+                                        Age: ${appointment.patient?.age || 'N/A'}
                                     </div>
                                 </div>
-                                <div class="visit-details">
-                                    <span class="v-label">No</span><span class="v-value">: ${appointment.patient?.patient_number || '38822'}</span>
-                                    <span class="v-label">Date</span><span class="v-value">: ${date}</span>
-                                    <span class="v-label">Renew Date</span><span class="v-value">: ${new Date(new Date(appointment.start_time).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()}</span>
-                                    <span class="v-label">Token No</span><span class="v-value">: ${tokenNumber}</span>
+                                <div class="card-section token-container">
+                                    <div class="card-label">Token No</div>
+                                    <div class="card-value-token">#${tokenNumber}</div>
+                                </div>
+
+                                <!-- ROW 2: CLINICIAN & TIME -->
+                                <div class="card-section">
+                                    <div class="card-label">Consulting Clinician</div>
+                                    <div style="font-size: 11pt; font-weight: 800; color: #0f172a;">${doctorName}</div>
+                                </div>
+                                <div class="card-section" style="text-align: right;">
+                                    <div class="card-label">Encounter Time</div>
+                                    <div style="font-size: 11pt; font-weight: 800; color: #0f172a;">${time}</div>
                                 </div>
                             </div>
+
+                            <!-- CLINICAL WORKSPACE (REST OF THE PAGE) -->
+                            <div style="margin-top: 30px; display: grid; grid-template-cols: 1fr 200px; gap: 40px; border-top: 1px solid #f1f5f9; padding-top: 20px;">
+                                <div style="min-height: 500px; position: relative;">
+                                    <div style="font-size: 40pt; font-weight: 900; color: #f8fafc; position: absolute; top: 0; left: 0;">℞</div>
+                                    <!-- HANDWRITTEN AREA -->
+                                </div>
+                                <div>
+                                    <div style="font-size: 8pt; font-weight: 900; color: #cbd5e1; margin-bottom: 20px; border-bottom: 1px solid #f1f5f9; padding-bottom: 5px;">VITALS</div>
+                                    ${['BP', 'SPO2', 'PR', 'RR', 'WT', 'TEMP'].map(v => `
+                                        <div style="display: flex; justify-content: space-between; border-bottom: 1px dotted #f1f5f9; padding: 6px 0;">
+                                            <span style="font-size: 8pt; font-weight: 800; color: #94a3b8;">${v}</span>
+                                            <span style="width: 80px; height: 12px; border-bottom: 1px solid #f1f5f9;"></span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- FOOTER -->
+                            <div class="footer">
+                                <div class="f-legal">
+                                    ${hospitalInfo?.name || 'GLOBAL MEDICARE'} - OP SLIP PROTOCOL V4.2 <br/>
+                                    ${appointment.clinician?.official_hospital_email ? `<span style="color: #6366f1;">${appointment.clinician.official_hospital_email}</span> | ` : ''}
+                                    ID: ${appointment.id.slice(0, 8)} | AUTH: ${crypto.randomUUID().slice(0, 4).toUpperCase()}
+                                </div>
+                                <div class="f-sig">
+                                    <div class="sig-line"></div>
+                                    <div class="sig-text">${doctorName.toUpperCase()}</div>
+                                </div>
+                            </div>
+                        </div>
 
                             <!-- CLINICAL LAYOUT -->
                             <div class="main-layout">

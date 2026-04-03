@@ -841,7 +841,7 @@ export class AccountingService {
                     where: { company_id: companyId, created_at: { gte: startOfDay, lte: endOfDay } }
                 }),
                 prisma.hms_invoice_payments.findMany({
-                    where: { hms_invoice: { company_id: companyId }, created_at: { gte: startOfDay, lte: endOfDay } }
+                    where: { company_id: companyId, created_at: { gte: startOfDay, lte: endOfDay } }
                 }),
                 prisma.hms_purchase_receipt.findMany({
                     where: { company_id: companyId, created_at: { gte: startOfDay, lte: endOfDay } },
@@ -952,7 +952,7 @@ export class AccountingService {
                         posted: true
                     },
                     accounts: {
-                        type: { in: ['Revenue', 'Income', 'Expense', 'COGS'] }
+                        type: { in: ['Revenue', 'Income', 'Expense', 'COGS', 'Purchase', 'Direct Expense', 'Indirect Expense'] }
                     }
                 },
                 include: { accounts: true }
@@ -988,7 +988,7 @@ export class AccountingService {
                 if (type === 'revenue' || type === 'income') {
                     report.revenue.push(val);
                     report.totalRevenue += val.amount;
-                } else if (type === 'cogs') {
+                } else if (['cogs', 'purchase', 'direct expense'].includes(type)) {
                     report.cogs.push(val);
                     report.totalCOGS += val.amount;
                 } else {

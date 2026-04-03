@@ -644,3 +644,43 @@ export async function deleteUserPermanently(userId: string) {
         return { error: error.message || "Failed to delete user" }
     }
 }
+
+/**
+ * Bulk invite multiple users at once
+ */
+export async function bulkInviteUsers(users: { email: string; fullName?: string; roleId?: string; systemRole: 'admin' | 'user' }[]) {
+    const session = await auth()
+    if (!session?.user?.id || !session.user.isAdmin) {
+        return { error: "Unauthorized" }
+    }
+
+    const results = {
+        total: users.length,
+        invited: 0,
+        failed: 0,
+        errors: [] as string[]
+    }
+
+    for (const userData of users) {
+        try {
+            const res = await inviteUser({
+                email: userData.email,
+                fullName: userData.fullName,
+                roleId: userData.roleId,
+                systemRole: userData.systemRole
+            })
+            if (res.success) {
+                results.invited++
+            } else {
+                results.failed++
+                results.errors.push(`${userData.email}: ${res.error}`)
+            }
+        } catch (e: any) {
+            results.failed++
+            results.errors.push(`${userData.email}: ${e.message}`)
+        }
+    }
+
+    revalidatePath('/settings/users')
+    return { success: true, results }
+}

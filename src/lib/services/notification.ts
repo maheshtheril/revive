@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getWhatsAppConfig } from "@/app/actions/settings";
-import { generateInvoicePDFBase64 } from "@/lib/utils/pdf-generator";
+import { generateInvoicePDFBase64, generateLabReportPDFBase64 } from "@/lib/utils/pdf-generator";
 import { generatePrescriptionPDFBase64 } from "@/lib/utils/prescription-pdf-generator";
 
 export class NotificationService {
@@ -212,24 +212,29 @@ export class NotificationService {
                 payload.text = message;
             }
 
-            console.log(`[WhatsApp-Evolution] Calling: ${url}`);
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'apikey': token },
-                body: JSON.stringify(payload)
-            });
-
-            const text = await response.text();
-            let result;
             try {
-                result = JSON.parse(text);
-            } catch (e) {
-                return { success: false, error: `Invalid Response from WhatsApp Server: ${text.slice(0, 50)}...` };
-            }
+                console.log(`[WhatsApp-Evolution] Calling: ${url}`);
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'apikey': token },
+                    body: JSON.stringify(payload)
+                });
 
-            return (result?.key || result?.messageId || result?.status === 'SUCCESS' || result?.status === 200) 
-                ? { success: true, message: 'Sent via Evolution' }
-                : { success: false, error: text };
+                const text = await response.text();
+                let result;
+                try {
+                    result = JSON.parse(text);
+                } catch (e) {
+                    return { success: false, error: `Invalid Response from WhatsApp Server: ${text.slice(0, 50)}...` };
+                }
+
+                return (result?.key || result?.messageId || result?.status === 'SUCCESS' || result?.status === 200) 
+                    ? { success: true, message: 'Sent via Evolution' }
+                    : { success: false, error: text };
+            } catch (err: any) {
+                console.error(`[WhatsApp-Evolution] API Error:`, err.message);
+                return { success: false, error: `Evolution Connection Failed: ${err.message}` };
+            }
         } else {
             // Standard UltraMsg Logic
             const resolvedInstanceId = `instance${cleanId.toLowerCase()}`;
@@ -245,17 +250,22 @@ export class NotificationService {
                 payload.body = message;
             }
 
-            console.log(`[WhatsApp-UltraMsg] Calling: ${url}`);
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+            try {
+                console.log(`[WhatsApp-UltraMsg] Calling: ${url}`);
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
 
-            const result = await response.json();
-            return (result.sent === "true" || result.success === true || result.id)
-                ? { success: true, message: 'Sent via UltraMsg' }
-                : { success: false, error: JSON.stringify(result) };
+                const result = await response.json();
+                return (result.sent === "true" || result.success === true || result.id)
+                    ? { success: true, message: 'Sent via UltraMsg' }
+                    : { success: false, error: JSON.stringify(result) };
+            } catch (err: any) {
+                console.error(`[WhatsApp-UltraMsg] API Error:`, err.message);
+                return { success: false, error: `UltraMsg Connection Failed: ${err.message}` };
+            }
         }
     }
 
@@ -398,6 +408,77 @@ export class NotificationService {
 
         } catch (error) {
             console.error("[NotificationService] Payment Link WhatsApp failed:", error);
+            return { success: false, error: 'Internal server error' };
+        }
+    }
+
+    /**
+     * Sends a Laboratory Report to the patient via WhatsApp.
+     */
+    static async sendLabReportWhatsapp(orderId: string, tenantId: string) {
+        try {
+            // 1. Fetch Lab Order & Patient Details
+            const order = await prisma.hms_lab_order.findUnique({
+                where: { id: orderId },
+                include: {
+                    hms_patient: true,
+                    hms_appointment: {
+                        include: {
+                            hms_clinician: true
+                        }
+                    }
+                }
+            });
+
+            if (!order || !order.hms_patient) {
+                return { success: false, error: 'Lab Report or Patient not found' };
+            }
+
+            const companyId = order?.company_id;
+            const company = (companyId && typeof companyId === 'string' && companyId !== "undefined")
+                ? await prisma.company.findUnique({ where: { id: companyId } })
+                : null;
+
+            // 2. Extract Phone
+            const patientName = `${order.hms_patient.first_name} ${order.hms_patient.last_name}`;
+            const contact = order.hms_patient.contact as any;
+            const patientMobile = contact?.phone || contact?.mobile || contact?.primary_phone || '';
+            const phone = (patientMobile || '').replace(/\D/g, '');
+            
+            if (!phone || phone.length < 10) {
+                console.warn(`[WhatsApp-LabReport] No valid phone number for Patient: ${patientName}`);
+                return { success: false, error: 'No valid phone number found' };
+            }
+
+            // 3. Generate PDF
+            const pdfBase64 = await generateLabReportPDFBase64(order, company);
+
+            // 4. Construct Message
+            const companyName = company?.name || "HealthCare Center";
+            const message = `Hello *${patientName}*,\n\n` +
+                `Your diagnostic laboratory report from *${companyName}* is now ready.\n` +
+                `Please find the attached PDF report.\n\n` +
+                `Healthy Regards,\n*${companyName}*`;
+
+            // 5. Dynamic Configuration
+            const dynamicConfig = await this.getDynamicConfig(order.company_id!, tenantId);
+
+            if (!dynamicConfig.enabled) {
+                return { success: false, error: 'WhatsApp delivery is disabled.' };
+            }
+
+            const { instanceId, token } = dynamicConfig;
+
+            // 6. Dispatch via Unified Sender
+            return await this.dispatchWhatsApp(instanceId, token, phone, message, {
+                endpoint: 'document',
+                pdfBase64: pdfBase64,
+                filename: `LabReport_${patientName.replace(/\s+/g, '_')}.pdf`,
+                provider: dynamicConfig.provider
+            });
+
+        } catch (error) {
+            console.error("[NotificationService] Lab Report WhatsApp failed:", error);
             return { success: false, error: 'Internal server error' };
         }
     }

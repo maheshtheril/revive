@@ -120,9 +120,9 @@ export default async function DoctorDashboardPage() {
     const labMap = new Map()
     labs.forEach(lab => {
         if (!lab.encounter_id) return
-        // If there are multiple orders, we prioritize completed ones with reports
         const existing = labMap.get(lab.encounter_id)
-        const isCompleted = lab.status === 'completed' && !!lab.report_url
+        // If there are multiple orders, we prioritize completed ones
+        const isCompleted = lab.status === 'completed'
 
         if (!existing || (isCompleted && !existing.isReady)) {
             labMap.set(lab.encounter_id, {

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Building2, Stethoscope, Settings2, ChevronRight, Zap, Calculator } from 'lucide-react'
+import { Building2, Stethoscope, Settings2, ChevronRight, Zap, Calculator, Shield, FlaskConical } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 
 interface LinkItem {
@@ -40,8 +40,28 @@ export default function SettingsHubPage() {
             description: 'Configure charts of accounts, taxes, and payment mappings.',
             icon: <Calculator className="h-6 w-6 text-indigo-600" />,
             links: [
+                { name: 'POS Terminals & HMS Config', href: '/settings/hms', badge: 'New' },
                 { name: 'Accounting Configuration', href: '/settings/accounting' },
                 { name: 'Payment Ledger Mapping', href: '/settings/accounting' },
+            ]
+        },
+        {
+            title: 'Access Control',
+            description: 'Manage staff credentials, security roles, and system access.',
+            icon: <Shield className="h-6 w-6 text-orange-600" />,
+            links: [
+                { name: 'Staff Accounts', href: '/settings/users' },
+                { name: 'Security Roles', href: '/admin/roles' },
+            ]
+        },
+        {
+            title: 'Laboratory Diagnostics',
+            description: 'Configure analyzers, reference ranges, and digital signatures.',
+            icon: <FlaskConical className="h-6 w-6 text-purple-600" />,
+            links: [
+                { name: 'Lab Test Catalog & Pricing', href: '/hms/lab/tests' },
+                { name: 'Report Templates & Signatures', href: '/hms/settings/lab', badge: 'World Standard' },
+                { name: 'Analyzer Interfacing (LIMS)', href: '/hms/settings/lab/lims', badge: 'New' },
             ]
         }
     ]

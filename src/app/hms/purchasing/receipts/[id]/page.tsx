@@ -386,7 +386,7 @@ export default function EditPurchaseReceiptPage() {
         setItems(newItems);
     };
 
-    const applyQuickMargin = (marginTemplate: 'mrp-5' | 'mrp-10' | 'mrp-15' | 'mrp-20') => {
+    const applyQuickMargin = (marginTemplate: 'mrp-0' | 'mrp-5' | 'mrp-10' | 'mrp-12' | 'mrp-15') => {
         const discountPct = parseInt(marginTemplate.split('-')[1]);
         const newItems = items.map(item => {
             if (item.mrp && item.mrp > 0) {
@@ -408,13 +408,29 @@ export default function EditPurchaseReceiptPage() {
 
     // ========== END PRICING HELPERS ==========
 
-    const handleProductSelect = (index: number, productId: string | null, opt: Option | null | undefined) => {
+    const handleProductSelect = async (index: number, productId: string | null, opt: Option | null | undefined) => {
         const newItems = [...items];
         newItems[index] = {
             ...newItems[index],
             productId: productId || "",
             productName: opt?.label || ""
         };
+
+        if (productId) {
+            const { getProduct } = await import('@/app/actions/purchase');
+            const p = await getProduct(productId);
+            if (p) {
+                newItems[index] = {
+                    ...newItems[index],
+                    mrp: p.mrp || 0,
+                    salePrice: p.mrp || p.price || 0,
+                    marginPct: 100,
+                    hsn: p.hsn || "",
+                    packing: p.packing || "",
+                    taxRate: p.taxRate || 0
+                };
+            }
+        }
         setItems(newItems);
     };
 
@@ -425,7 +441,9 @@ export default function EditPurchaseReceiptPage() {
             receivedQty: 1,
             unitPrice: 0,
             pendingQty: 0,
-            orderedQty: 0
+            orderedQty: 0,
+            marginPct: 100,
+            pricingStrategy: 'custom'
         }]);
     };
 
@@ -860,10 +878,10 @@ export default function EditPurchaseReceiptPage() {
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => applyQuickMargin('mrp-20')}
-                                    className="px-3 py-1 text-xs rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-colors font-mono"
+                                    onClick={() => applyQuickMargin('mrp-0')}
+                                    className="px-3 py-1 text-xs rounded bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 transition-all font-black uppercase tracking-widest shadow-lg shadow-emerald-500/10"
                                 >
-                                    MRP - 20%
+                                    Full MRP (0%)
                                 </button>
                                 <span className="text-xs text-neutral-500 ml-2">
                                     Applies to {items.filter(i => i.mrp && i.mrp > 0).length} items

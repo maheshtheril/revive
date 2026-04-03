@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Activity, Users, Calendar, LayoutDashboard, Settings, LogOut, Stethoscope, Receipt, Shield, Menu } from 'lucide-react'
 import { signOut, auth } from '@/auth'
-import { getMenuItems } from '../actions/navigation'
+import { getMenuItems, auditAndFixMenuPermissions } from '../actions/navigation'
 import { CompanySwitcher } from '@/components/company-switcher'
 import { getCurrentCompany } from '../actions/company'
 import { getTenant } from '../actions/tenant'
@@ -20,6 +20,9 @@ export default async function HMSLayout({
     modal: React.ReactNode
 }) {
     const session = await auth();
+
+    // Nuclear Sync: Ensure all Lab and World-Class HMS menus are seeded
+    await auditAndFixMenuPermissions();
 
     // Parallelize independent data fetches
     const [menuItems, currentCompany, tenant] = await Promise.all([

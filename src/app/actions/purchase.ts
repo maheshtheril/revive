@@ -96,6 +96,7 @@ export async function createSupplier(data: {
     contactPerson?: string
     openingBalance?: number
     openingBalanceDate?: Date
+    aiRules?: string
 }) {
     const session = await auth()
     if (!session?.user?.companyId) return { error: "Unauthorized" }
@@ -116,7 +117,8 @@ export async function createSupplier(data: {
                     phone: data.phone,
                     contact_person: data.contactPerson,
                     opening_balance: data.openingBalance,
-                    opening_balance_date: data.openingBalanceDate
+                    opening_balance_date: data.openingBalanceDate,
+                    ai_rules: data.aiRules
                 }
             }
         })
@@ -154,6 +156,7 @@ export async function updateSupplier(id: string, data: {
     phone?: string
     contactPerson?: string
     is_active?: boolean
+    aiRules?: string
 }) {
     const session = await auth()
     if (!session?.user?.companyId) return { error: "Unauthorized" }
@@ -179,7 +182,8 @@ export async function updateSupplier(id: string, data: {
                     ...(data.address !== undefined && { address: data.address }),
                     ...(data.email !== undefined && { email: data.email }),
                     ...(data.phone !== undefined && { phone: data.phone }),
-                    ...(data.contactPerson !== undefined && { contact_person: data.contactPerson })
+                    ...(data.contactPerson !== undefined && { contact_person: data.contactPerson }),
+                    ...(data.aiRules !== undefined && { ai_rules: data.aiRules })
                 }
             }
         })

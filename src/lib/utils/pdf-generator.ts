@@ -59,12 +59,13 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
         }
 
         // 3. Draw Branding Info
+        const fontFamily = config?.fontFamily || 'helvetica';
         const brandX = alignment === 'right' ? pageWidth - margin : (alignment === 'center' ? pageWidth / 2 : margin);
         const textAlign = alignment;
 
         doc.setTextColor(79, 70, 229); // Indigo-600
         doc.setFontSize(config?.hospitalNameSize || 12); // Reduced default from 16
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(fontFamily, 'bold');
 
         let brandY = headerY + logoHeight; // Move down if logo exists
         if (alignment === 'center') brandY = headerY + 60;
@@ -74,7 +75,7 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
 
         doc.setTextColor(102, 102, 102);
         doc.setFontSize(config?.addressSize || 8); // Reduced default from 10
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(fontFamily, 'normal');
         doc.text(address, brandX, brandY + 12, { align: textAlign });
 
         if (config?.showContactInfo !== false) {
@@ -93,27 +94,28 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
         // --- Patient Info ---
         doc.setTextColor(153, 153, 153);
         doc.setFontSize(8);
+        doc.setFont(fontFamily, 'normal');
         doc.text('BILL TO', margin, dividerY + 20);
 
         doc.setTextColor(0, 0, 0);
         doc.setFontSize(10); // Reduced from 12
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(fontFamily, 'bold');
         doc.text(`${invoice.hms_patient?.first_name} ${invoice.hms_patient?.last_name}`, margin, dividerY + 35); // Relative positioning
 
         doc.setTextColor(102, 102, 102);
         doc.setFontSize(8); // Reduced from 10
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(fontFamily, 'normal');
         doc.text(`Patient ID: ${invoice.hms_patient?.patient_number || 'N/A'}`, margin, dividerY + 47);
         doc.text(`Mobile: ${((invoice.hms_patient?.contact as any)?.phone) || 'N/A'}`, margin, dividerY + 59);
 
         const patientMeta = invoice.hms_patient?.metadata as any;
         if (patientMeta?.registration_expiry) {
             const expiryStr = new Date(patientMeta.registration_expiry).toLocaleDateString();
-            doc.setFont('helvetica', 'bold');
+            doc.setFont(fontFamily, 'bold');
             doc.setTextColor(220, 38, 38); // Red-600
             doc.text(`Registration Valid Till: ${expiryStr}`, margin, dividerY + 71);
             doc.setTextColor(102, 102, 102);
-            doc.setFont('helvetica', 'normal');
+            doc.setFont(fontFamily, 'normal');
         }
 
         // --- Table Headers ---
@@ -122,7 +124,7 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
         const symbol = currency === 'INR' ? 'Rs. ' : currency + ' ';
 
         doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(fontFamily, 'bold');
         doc.setTextColor(68, 68, 68);
         doc.text('Item Description', 50, tableTop);
         doc.text('Qty', 300, tableTop, { align: 'right' });
@@ -134,7 +136,7 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
 
         // --- Table Rows ---
         let currentY = tableTop + 25;
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(fontFamily, 'normal');
         doc.setTextColor(51, 51, 51);
 
         invoice.hms_invoice_lines.forEach((item: any) => {
@@ -160,6 +162,7 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
         const rightValueX = pageWidth - 50;
 
         doc.setFontSize(10);
+        doc.setFont(fontFamily, 'normal');
         doc.text('Subtotal:', rightLabelX, totalsY + 20);
         doc.text(`${symbol}${Number(invoice.subtotal).toLocaleString('en-IN')}`, rightValueX, totalsY + 20, { align: 'right' });
 
@@ -178,14 +181,14 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
         doc.rect(350, grandTotalY - 15, pageWidth - 350 - 50, 40, 'F');
 
         doc.setTextColor(15, 23, 42); // slate-900
-        doc.setFont('helvetica', 'bold');
+        doc.setFont(fontFamily, 'bold');
         doc.setFontSize(12);
         doc.text('GRAND TOTAL', 365, grandTotalY + 10);
         doc.setFontSize(16);
         doc.text(`${symbol}${Number(invoice.total).toLocaleString('en-IN')}`, rightValueX - 10, grandTotalY + 10, { align: 'right' });
 
         // --- Footer ---
-        doc.setFont('helvetica', 'normal');
+        doc.setFont(fontFamily, 'normal');
         doc.setFontSize(8);
         doc.setTextColor(153, 153, 153);
         const footerText1 = 'This is a computer generated invoice and does not require a signature.';
@@ -198,6 +201,134 @@ export async function generateInvoicePDFBase64(invoice: any, company?: any, auto
             doc.autoPrint({ variant: 'non-conform' });
         }
 
+        return doc.output('datauristring').split(',')[1];
+    } catch (err) {
+        throw err;
+    }
+}
+
+export async function generateLabReportPDFBase64(order: any, company?: any): Promise<string> {
+    try {
+        const doc = new jsPDF('p', 'pt', 'a4');
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const margin = 50;
+
+        // --- Branding & Configuration ---
+        const config = await getPDFConfig(order.company_id!, order.tenant_id!);
+        const alignment = config?.headerAlignment || 'right';
+        const showLogo = config?.showLogo ?? true;
+        const logoUrl = company?.logo_url;
+        const fontFamily = config?.fontFamily || 'helvetica';
+
+        let headerY = 60;
+        
+        // 1. Draw Title (LAB REPORT)
+        doc.setTextColor(79, 70, 229); // Indigo-600
+        doc.setFontSize(14);
+        doc.setFont(fontFamily, 'bold');
+        doc.text('DIAGNOSTIC REPORT', margin, headerY);
+        headerY += 15;
+
+        doc.setFontSize(8); 
+        doc.setFont(fontFamily, 'normal');
+        doc.setTextColor(153, 153, 153);
+        doc.text(`Report ID: LAB-${order.id.substring(0,8).toUpperCase()}`, margin, headerY);
+        doc.text(`Date: ${new Date(order.created_at).toLocaleDateString()}`, margin, headerY + 12);
+
+        // 2. Logo & Branding (Same as Invoice)
+        let logoHeight = 0;
+        if (showLogo && logoUrl) {
+            const logoBase64 = await fetchImageAsBase64(logoUrl);
+            if (logoBase64) {
+                let logoX = alignment === 'right' ? pageWidth - margin - 60 : (alignment === 'center' ? (pageWidth / 2) - 30 : margin);
+                doc.addImage(logoBase64, 'PNG', logoX, headerY - 30, 60, 60, undefined, 'FAST');
+                logoHeight = 40;
+            }
+        }
+
+        const brandX = alignment === 'right' ? pageWidth - margin : (alignment === 'center' ? pageWidth / 2 : margin);
+        doc.setTextColor(79, 70, 229);
+        doc.setFontSize(config?.hospitalNameSize || 12);
+        doc.setFont(fontFamily, 'bold');
+        let brandY = headerY + logoHeight + 50;
+        doc.text(company?.name || 'Ziona Health', brandX, brandY, { align: alignment });
+
+        doc.setTextColor(102, 102, 102);
+        doc.setFontSize(config?.addressSize || 8);
+        doc.setFont(fontFamily, 'normal');
+        doc.text(company?.metadata?.address || 'Medical Research Hub', brandX, brandY + 12, { align: alignment });
+
+        // Divider
+        const dividerY = brandY + 40;
+        doc.setDrawColor(238, 238, 238);
+        doc.line(margin, dividerY, pageWidth - margin, dividerY);
+
+        // --- Patient Info Block ---
+        doc.setFillColor(248, 250, 252); // slate-50
+        doc.rect(margin, dividerY + 15, pageWidth - (margin * 2), 60, 'F');
+        
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(10);
+        doc.setFont(fontFamily, 'bold');
+        doc.text(`Patient: ${order.hms_patient?.first_name} ${order.hms_patient?.last_name}`, margin + 15, dividerY + 35);
+        
+        doc.setFontSize(8);
+        doc.setFont(fontFamily, 'normal');
+        doc.setTextColor(102, 102, 102);
+        doc.text(`Age/Sex: ${order.hms_patient?.age || 'N/A'}Y / ${order.hms_patient?.gender || 'N/A'}`, margin + 15, dividerY + 50);
+        doc.text(`ID: ${order.hms_patient?.patient_number || 'N/A'}`, margin + 15, dividerY + 62);
+        
+        doc.text(`Referrer: Dr. ${order.hms_appointment?.clinician?.first_name || 'Unit Clinician'}`, pageWidth - margin - 15, dividerY + 35, { align: 'right' });
+        doc.text(`Specimen: ${order.specimen_type || 'VENOUS BLOOD'}`, pageWidth - margin - 15, dividerY + 50, { align: 'right' });
+
+        // --- Results Table ---
+        let currentY = dividerY + 100;
+        doc.setFont(fontFamily, 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(68, 68, 68);
+        doc.text('Investigation', margin, currentY);
+        doc.text('Result', 300, currentY, { align: 'right' });
+        doc.text('Units', 380, currentY, { align: 'right' });
+        doc.text('Reference Range', pageWidth - margin, currentY, { align: 'right' });
+        
+        doc.line(margin, currentY + 7, pageWidth - margin, currentY + 7);
+        currentY += 25;
+
+        doc.setFont(fontFamily, 'normal');
+        doc.setFontSize(9);
+        const results = order.results || [];
+        
+        results.forEach((item: any) => {
+            doc.setTextColor(0, 0, 0);
+            doc.setFont(fontFamily, 'bold');
+            doc.text(item.name, margin, currentY);
+            
+            doc.setFont(fontFamily, 'normal');
+            doc.setTextColor(79, 70, 229); // Result in Indigo
+            doc.text(String(item.value || 'PENDING'), 300, currentY, { align: 'right' });
+            
+            doc.setTextColor(102, 102, 102);
+            doc.text(item.units || '-', 380, currentY, { align: 'right' });
+            doc.text(item.range || '-', pageWidth - margin, currentY, { align: 'right' });
+            
+            currentY += 20;
+        });
+
+        // --- Authentication Footer ---
+        const footerY = 750;
+        doc.setDrawColor(79, 70, 229);
+        doc.setLineWidth(2);
+        doc.line(margin, footerY, pageWidth - margin, footerY);
+        
+        doc.setFontSize(8);
+        doc.setFont(fontFamily, 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('AUTHENTICATED DIGITAL REPORT', margin, footerY + 15);
+        
+        doc.setFont(fontFamily, 'normal');
+        doc.setTextColor(153, 153, 153);
+        doc.text(`This report is digitally signed and verified by Ziona Health Information System on ${new Date().toLocaleString()}`, margin, footerY + 30);
+        
         return doc.output('datauristring').split(',')[1];
     } catch (err) {
         throw err;

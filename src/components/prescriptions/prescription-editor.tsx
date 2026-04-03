@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Printer, Plus, Trash2, Copy, Eraser, Clock, Zap, X, Save, Thermometer, Brain, Heart, Activity as ActivityIcon, MessageCircle, FileText, Share2, Loader2, User, Pill, CheckCircle2, Search, AlertCircle, PenTool, Edit3 } from 'lucide-react'
+import { Printer, Plus, Trash2, Copy, Eraser, Clock, Zap, X, Save, Thermometer, Brain, Heart, Activity as ActivityIcon, MessageCircle, FileText, Share2, Loader2, User, Pill, CheckCircle2, Search, AlertCircle, PenTool, Edit3, MapPin, Phone, Mail, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useToast } from '@/components/ui/use-toast'
 import { sharePrescriptionWhatsapp } from '@/app/actions/prescription'
 import { getLabReportForAppointment } from '@/app/actions/lab'
+import { getPDFSettings, getHMSSettings } from '@/app/actions/settings'
+import { getCompanyDetails } from '@/app/actions/purchase'
 
 interface PrescriptionEditorProps {
     isModal?: boolean
@@ -53,6 +55,9 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
     const [isSaving, setIsSaving] = useState(false)
     const [isSharing, setIsSharing] = useState(false)
     const [lastSavedId, setLastSavedId] = useState<string | null>(null)
+    const [pdfConfig, setPdfConfig] = useState<any>(null)
+    const [companyDetails, setCompanyDetails] = useState<any>(null)
+    const [hmsSettings, setHmsSettings] = useState<any>(null)
 
     // Clinical Text Fields
     const [convertedText, setConvertedText] = useState({
@@ -673,7 +678,58 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
     }
 
     const content = (
-        <div className={`flex flex-col h-full bg-slate-50/50 relative overflow-hidden ${isModal ? 'rounded-3xl shadow-2xl border border-white/20' : 'h-[92vh] max-w-[98vw] mx-auto border border-slate-200/60 rounded-2xl shadow-xl'}`}>
+        <div className={`flex flex-col h-full bg-slate-50/50 relative overflow-hidden ${isModal ? 'rounded-3xl shadow-2xl border border-white/20' : 'h-[92vh] max-w-[98vw] mx-auto border border-slate-200/60 rounded-2xl shadow-xl'}`}
+             style={{ fontFamily: pdfConfig?.fontFamily === 'times' ? 'serif' : (pdfConfig?.fontFamily === 'courier' ? 'monospace' : 'inherit') }}>
+
+            {/* PRINT-ONLY PROFESSIONAL HEADER (PRESCRIPTION PAD LOOK) */}
+            <div className={`hidden print:flex flex-col w-full mb-10 pb-8 border-b-2 border-slate-900 
+                ${hmsSettings?.opSlipPreprintedLetterhead ? 'opacity-0' : 'opacity-100'}
+            `} style={{ height: hmsSettings?.opSlipPreprintedLetterhead ? `${hmsSettings.opSlipHeaderHeight || 4.5}cm` : 'auto' }}>
+                {!hmsSettings?.opSlipPreprintedLetterhead && (
+                    <div className={`flex flex-col gap-6 w-full ${pdfConfig?.headerAlignment === 'center' ? 'items-center text-center' : (pdfConfig?.headerAlignment === 'left' ? 'items-start text-left' : 'items-end text-right')}`}>
+                        <div className={`flex items-center gap-6 ${pdfConfig?.headerAlignment === 'center' ? 'flex-col' : (pdfConfig?.headerAlignment === 'right' ? 'flex-row-reverse' : '')}`}>
+                            {pdfConfig?.showLogo !== false && (
+                                <div className="h-20 w-20 bg-slate-900 rounded-3xl flex items-center justify-center text-white font-black text-4xl shadow-2xl shadow-slate-900/20">
+                                    {companyDetails?.company_name?.[0] || 'Z'}
+                                </div>
+                            )}
+                            <div>
+                                <h1 className="font-black tracking-tighter text-slate-900 leading-tight uppercase"
+                                    style={{ fontSize: (pdfConfig?.hospitalNameSize || 16) * 2 }}>
+                                    {companyDetails?.company_name || 'Hospital Name'}
+                                </h1>
+                                <p className="text-sm font-black text-slate-500 tracking-[0.2em] uppercase mt-2">Certified Clinical Consultation Pad</p>
+                            </div>
+                        </div>
+                        {pdfConfig?.showContactInfo !== false && (
+                            <div className="grid grid-cols-2 gap-x-12 text-slate-500 font-bold leading-relaxed max-w-2xl"
+                                 style={{ fontSize: (pdfConfig?.addressSize || 10) }}>
+                                <p className="flex items-center gap-2"><MapPin className="h-4 w-4" /> {companyDetails?.address?.split('\n')[0] || 'Hospital Address'}</p>
+                                <p className="flex items-center gap-2"><Phone className="h-4 w-4" /> {companyDetails?.phone || '+91 000-000-0000'}</p>
+                                <p className="flex items-center gap-2"><Mail className="h-4 w-4" /> {companyDetails?.email || 'contact@hospital.com'}</p>
+                                <p className="flex items-center gap-2"><Globe className="h-4 w-4" /> {companyDetails?.website || 'www.hospital.com'}</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* PRINT-ONLY PATIENT BAR */}
+            <div className="hidden print:grid grid-cols-3 gap-8 p-6 bg-slate-50 rounded-[2rem] mb-10 border border-slate-200">
+                <div className="col-span-2">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Patient Subject</p>
+                    <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter">
+                        {patientInfo?.first_name} {patientInfo?.last_name || ''}
+                    </h2>
+                    <p className="text-sm font-bold text-slate-500 mt-1">
+                        {patientInfo?.age || '--'}Y • {patientInfo?.gender || '--'} • ID: {patientInfo?.patient_number || 'N/A'}
+                    </p>
+                </div>
+                <div className="text-right flex flex-col justify-end">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Visit Date</p>
+                    <p className="text-xl font-black text-slate-900">{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                </div>
+            </div>
 
             {/* Background Ambient Glow */}
             <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-blue-50/50 to-transparent pointer-events-none" />
@@ -1367,6 +1423,21 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
             </AnimatePresence>
         )
     }
+
+    // Fetch branding and settings
+    useEffect(() => {
+        async function loadSettings() {
+            const [pdfRes, compRes, hmsRes] = await Promise.all([
+                getPDFSettings(undefined, undefined),
+                getCompanyDetails(),
+                getHMSSettings()
+            ])
+            if (pdfRes.success) setPdfConfig(pdfRes.settings)
+            if (compRes) setCompanyDetails(compRes)
+            if (hmsRes.success) setHmsSettings(hmsRes.settings)
+        }
+        loadSettings()
+    }, [])
 
     return content
 }

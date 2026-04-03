@@ -29,14 +29,54 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
             const hostParts = cleanHost.split('.');
             const firstPart = hostParts[0];
 
+            // [BYPASS: CLOUD CONNECTIVITY PROTECTION]
+            try {
+                tenant = await prisma.tenant.findFirst({
+                    where: slugOverride ? { slug: slugOverride } : {
+                        OR: [
+                            { domain: cleanHost },
+                            { domain: host },
+                            { slug: firstPart }
+                        ]
+                    },
+                    select: {
+                        id: true,
+                        app_name: true,
+                        logo_url: true,
+                        name: true,
+                        metadata: true,
+                        company_settings: {
+                            select: {
+                                company: {
+                                    select: {
+                                        logo_url: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (pErr: any) {
+                console.warn("[PRISMA] Cloud Tenant Lookup Failed. Using System Static Branding.", pErr?.message || pErr);
+                tenant = null;
+            }
+        }
+
+        if (tenant) {
+            const meta = (tenant.metadata as any) || {};
+            const isPublic = meta.registration_enabled !== false;
+            return {
+                app_name: tenant.app_name || "Ziona ERP",
+                logo_url: tenant.logo_url || (tenant.company_settings?.[0]?.company?.logo_url) || "/logo-ziona.svg",
+                name: tenant.name || "Ziona Solutions",
+                isPublic
+            };
+        }
+
+        // 3. System Fallback: Newest Tenant
+        try {
             tenant = await prisma.tenant.findFirst({
-                where: slugOverride ? { slug: slugOverride } : {
-                    OR: [
-                        { domain: cleanHost },
-                        { domain: host },
-                        { slug: firstPart }
-                    ]
-                },
+                orderBy: { created_at: 'desc' },
                 select: {
                     id: true,
                     app_name: true,
@@ -54,39 +94,10 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
                     }
                 }
             });
+        } catch (sErr: any) {
+            console.error("[PRISMA] Secondary Branding Lookup Failed.", sErr?.message || sErr);
+            tenant = null;
         }
-
-        if (tenant) {
-            const meta = (tenant.metadata as any) || {};
-            const isPublic = meta.registration_enabled !== false;
-            return {
-                app_name: tenant.app_name || "Ziona ERP",
-                logo_url: tenant.logo_url || (tenant.company_settings?.[0]?.company?.logo_url) || "/logo-ziona.svg",
-                name: tenant.name || "Ziona Solutions",
-                isPublic
-            };
-        }
-
-        // 3. System Fallback: Newest Tenant
-        tenant = await prisma.tenant.findFirst({
-            orderBy: { created_at: 'desc' },
-            select: {
-                id: true,
-                app_name: true,
-                logo_url: true,
-                name: true,
-                metadata: true,
-                company_settings: {
-                    select: {
-                        company: {
-                            select: {
-                                logo_url: true
-                            }
-                        }
-                    }
-                }
-            }
-        });
 
         const meta = (tenant?.metadata as any) || {};
         const isPublic = meta.registration_enabled !== false;

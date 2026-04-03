@@ -964,7 +964,11 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
                     hms_product_category_rel: {
                         include: { hms_product_category: true }
                     },
-                    hms_uom: true
+                    hms_uom: true,
+                    hms_product_batch: {
+                        orderBy: { created_at: 'desc' },
+                        take: 1
+                    }
                 }
             }),
             prisma.hms_product.count({ where }),
@@ -980,7 +984,8 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
             if (totalStock === 0) status = 'Out of Stock';
             else if (totalStock < 10) status = 'Low Stock';
 
-            // Extract brand from metadata if exists
+            // Memory Asset: Last Batch Price Recall
+            const lastBatch = p.hms_product_batch?.[0];
             const metadata = p.metadata as Record<string, any> || {};
 
             return {
@@ -991,8 +996,9 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
                 category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
                 brand: metadata.brand || '',
                 uom: p.hms_uom?.name || p.uom,
-                default_cost: Number(metadata.cost_price || p.default_cost || 0),
-                mrp: Number(metadata.mrp || p.price || 0)
+                default_cost: Number(lastBatch?.cost || metadata.cost_price || p.default_cost || 0),
+                mrp: Number(lastBatch?.mrp || metadata.mrp || p.price || 0),
+                lastSellingPrice: Number(lastBatch?.sale_price || 0)
             };
         });
 
@@ -1542,7 +1548,8 @@ export async function getStockMoves(query?: string, page: number = 1, options?: 
     }
 }
 
-export async function getStockReport(query?: string, page: number = 1) {
+export async function getStockReport(params: { query?: string, page?: number, status?: string } = {}) {
+    const { query, page = 1, status: statusFilter, categoryId, manufacturerId } = params as any;
     const session = await auth();
     if (!session?.user?.companyId) return { error: "Unauthorized" };
 
@@ -1562,7 +1569,22 @@ export async function getStockReport(query?: string, page: number = 1) {
             ];
         }
 
-        // 1. Fetch Products
+        if (statusFilter === 'IN_STOCK') {
+            where.hms_stock_levels = { some: { quantity: { gt: 0 } } };
+        } else if (statusFilter === 'OUT_OF_STOCK') {
+            where.hms_stock_levels = { none: { quantity: { gt: 0 } } };
+        } else if (statusFilter === 'LOW_STOCK') {
+            where.hms_stock_levels = { some: { quantity: { lt: 10, gt: 0 } } };
+        }
+
+        if (categoryId && categoryId !== 'ALL') {
+            where.hms_product_category_rel = { some: { category_id: categoryId } };
+        }
+
+        if (manufacturerId && manufacturerId !== 'ALL') {
+            where.manufacturer_id = manufacturerId;
+        }
+
         const [products, total] = await prisma.$transaction([
             prisma.hms_product.findMany({
                 where,
@@ -1572,6 +1594,7 @@ export async function getStockReport(query?: string, page: number = 1) {
                     sku: true,
                     default_cost: true,
                     uom: true,
+                    hms_manufacturer: { select: { name: true } },
                     hms_product_category_rel: {
                         include: { hms_product_category: { select: { name: true } } }
                     }
@@ -1583,80 +1606,56 @@ export async function getStockReport(query?: string, page: number = 1) {
             prisma.hms_product.count({ where })
         ]);
 
-        if (products.length === 0) {
-            return { success: true, data: [], meta: { total: 0, page, totalPages: 0 } };
-        }
-
-        // 3. Aggregate Stock from Current Levels (Source of Truth)
-        const productIds = products.map(p => p.id);
-        const aggregates = await prisma.hms_stock_levels.groupBy({
-            by: ['product_id'],
-            where: {
-                product_id: { in: productIds },
-                company_id: session.user.companyId
-            },
-            _sum: {
-                quantity: true
+        // 2. Fetch Stock Items with Batch Costs
+        const allLevels = await prisma.hms_stock_levels.findMany({
+            where: { company_id: session.user.companyId },
+            include: {
+                hms_product: { select: { default_cost: true, price: true } },
+                hms_product_batch: { select: { cost: true, sale_price: true } }
             }
         });
 
+        const productValuationMap = new Map<string, { asset: number; saleable: number }>();
         const stockMap = new Map<string, number>();
-        aggregates.forEach(agg => {
-            stockMap.set(agg.product_id, Number(agg._sum.quantity || 0));
+        let totalAssetValue = 0;   
+        let totalSaleableValue = 0; 
+        let totalStockOnHand = 0;
+
+        allLevels.forEach(s => {
+            const qty = Number(s.quantity || 0);
+            const cost = Number(s.hms_product_batch?.cost || s.hms_product?.default_cost || 0);
+            const price = Number(s.hms_product_batch?.sale_price || s.hms_product?.price || 0);
+
+            totalStockOnHand += qty;
+            totalAssetValue += (qty * cost);
+            totalSaleableValue += (qty * price);
+
+            // 2a. Update per-product quantity
+            stockMap.set(s.product_id, (stockMap.get(s.product_id) || 0) + qty);
+
+            // 2b. Track per-product valuation for the table rows
+            const current = productValuationMap.get(s.product_id) || { asset: 0, saleable: 0 };
+            productValuationMap.set(s.product_id, {
+                asset: current.asset + (qty * cost),
+                saleable: current.saleable + (qty * price)
+            });
         });
 
-        // 4. Map Results
         const reportData = products.map(p => {
             const stock = stockMap.get(p.id) || 0;
-            const cost = Number(p.default_cost || 0);
+            const valuation = productValuationMap.get(p.id) || { asset: 0, saleable: 0 };
             return {
                 id: p.id,
-                sku: p.sku,
+                sku: p.sku || 'N/A',
                 name: p.name,
                 category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
-                uom: p.uom,
+                manufacturer: p.hms_manufacturer?.name || 'N/A',
+                uom: p.uom || 'Unit',
                 stockOnHand: stock,
-                stockValue: stock * cost,
+                stockValue: valuation.asset,
                 status: stock <= 0 ? 'Out of Stock' : (stock < 10 ? 'Low Stock' : 'In Stock')
             };
         });
-
-        // 5. Calculate Global Totals (across all pages)
-        // We use hms_stock_levels for global aggregation as it's more efficient than aggregating the entire ledger
-        let totalStockOnHand = 0;
-        let totalValue = 0;
-
-        try {
-            const allMatchingStock = await prisma.hms_stock_levels.findMany({
-                where: {
-                    company_id: session.user.companyId,
-                    hms_product: {
-                        is_active: true,
-                        ...(query ? {
-                            OR: [
-                                { name: { contains: query, mode: 'insensitive' } },
-                                { sku: { contains: query, mode: 'insensitive' } }
-                            ]
-                        } : {})
-                    }
-                },
-                include: {
-                    hms_product: {
-                        select: { default_cost: true }
-                    }
-                }
-            });
-
-            allMatchingStock.forEach(item => {
-                const qty = Number(item.quantity || 0);
-                const cost = Number(item.hms_product?.default_cost || 0);
-                totalStockOnHand += qty;
-                totalValue += qty * cost;
-            });
-        } catch (e) {
-            console.error("Failed to calculate global totals:", e);
-            // Fail silently on totals if optimization fails
-        }
 
         return {
             success: true,
@@ -1665,18 +1664,19 @@ export async function getStockReport(query?: string, page: number = 1) {
                 total,
                 page,
                 totalPages: Math.ceil(total / pageSize),
-                summary: {
-                    totalStockOnHand,
-                    totalValue
+                summary: { 
+                    totalStockOnHand, 
+                    totalAssetValue,
+                    totalSaleableValue
                 }
             }
         };
-
-    } catch (error) {
-        console.error("Failed to generate stock report:", error);
-        return { error: "Failed to generate stock report" };
+    } catch (error: any) {
+        console.error("getStockReport Error:", error);
+        return { success: false, error: error.message };
     }
 }
+
 
 // --- Smart Product Matching & Auto-Creation ---
 
@@ -1685,6 +1685,8 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
     hsn?: string;
     packing?: string;
     taxRate?: number;
+    uom?: string;
+    conversionFactor?: number;
 }) {
     const session = await auth();
     if (!session?.user?.companyId || !session?.user?.tenantId) {
@@ -1740,10 +1742,18 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                 }
             }
 
+            // Fetch memory assets for AI recall
+            const lastBatch = await prisma.hms_product_batch.findFirst({
+                where: { product_id: product.id, company_id: companyId },
+                orderBy: { created_at: 'desc' }
+            });
+
             return {
                 productId: product.id,
                 productName: product.name,
-                created: false
+                created: false,
+                lastSellingPrice: Number(lastBatch?.sale_price || product.price || 0),
+                lastMrp: Number(lastBatch?.mrp || (product.metadata as any)?.mrp || product.price || 0)
             };
         }
 
@@ -1793,13 +1803,19 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                         }
                     }
                 }
-            }
+            }            // Fetch memory assets for AI recall (Fuzzy Match)
+            const lastBatch = await prisma.hms_product_batch.findFirst({
+                where: { product_id: product.id, company_id: companyId },
+                orderBy: { created_at: 'desc' }
+            });
 
             return {
                 productId: product.id,
                 productName: product.name,
                 created: false,
-                fuzzyMatch: true
+                fuzzyMatch: true,
+                lastSellingPrice: Number(lastBatch?.sale_price || product.price || 0),
+                lastMrp: Number(lastBatch?.mrp || (product.metadata as any)?.mrp || product.price || 0)
             };
         }
 
@@ -1820,6 +1836,11 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                     ...(additionalData?.hsn && { hsn: additionalData.hsn }),
                     ...(additionalData?.packing && { packing: additionalData.packing }),
                     tax_rate: additionalData?.taxRate, // Proactive tax capture
+                    uom_data: {
+                        purchase_uom: additionalData?.uom || 'PCS',
+                        base_uom: 'PCS', // Default base to pieces for pharmacy/retail
+                        conversion_factor: additionalData?.conversionFactor || 1
+                    },
                     autoCreated: true,
                     created_from: 'invoice_scan',
                     scan_details: additionalData
@@ -1855,21 +1876,21 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
             }
         }
 
-        console.log(`✅ Auto-created product: ${productName}`);
-
         return {
             productId: newProduct.id,
             productName: newProduct.name,
-            created: true
+            created: true,
+            lastSellingPrice: additionalData?.mrp || 0, // Fallback to MRP for new
+            lastMrp: additionalData?.mrp || 0
         };
 
     } catch (error) {
-        console.error("Failed to find/create product:", error);
-        return { error: "Failed to process product" };
+        console.error("findOrCreateProduct Error:", error);
+        return { error: "Failed to resolve product" };
     }
 }
 
-export async function findOrCreateProductsBatch(items: { productName: string, mrp?: number, hsn?: string, packing?: string, taxRate?: number }[]) {
+export async function findOrCreateProductsBatch(items: { productName: string, mrp?: number, hsn?: string, packing?: string, taxRate?: number, uom?: string, conversion_factor?: number }[]) {
     const session = await auth();
     if (!session?.user?.companyId || !session?.user?.tenantId) return { error: "Unauthorized" };
 
@@ -2159,6 +2180,7 @@ export async function importProductsCSV(formData: FormData) {
                     const batchNo = row[idxBatch];
                     const expiry = idxExpiry !== -1 && row[idxExpiry] ? new Date(row[idxExpiry]) : null;
 
+
                     // Upsert Batch
                     const batch = await prisma.hms_product_batch.upsert({
                         where: {
@@ -2184,10 +2206,10 @@ export async function importProductsCSV(formData: FormData) {
                     batchId = batch.id;
                 }
 
-                // Get Last Balance
+                // Get Last Balance from ledger
                 let currentBalance = 0;
                 const lastLedger = await prisma.hms_product_stock_ledger.findFirst({
-                    where: { product_id: productId },
+                    where: { product_id: productId, company_id: companyId },
                     orderBy: { created_at: 'desc' }
                 });
                 if (lastLedger) currentBalance = Number(lastLedger.balance_qty);
@@ -2200,7 +2222,7 @@ export async function importProductsCSV(formData: FormData) {
                         tenant_id: tenantId,
                         company_id: companyId,
                         product_id: productId,
-                        movement_type: 'OPENING', // ensure enum or string matches
+                        movement_type: 'OPENING',
                         change_qty: openingStock,
                         balance_qty: newBalance,
                         batch_id: batchId,
@@ -2209,9 +2231,6 @@ export async function importProductsCSV(formData: FormData) {
                     }
                 });
             }
-
-
-
         } catch (e) {
             const msg = (e as Error).message;
             errors.push({ row: i + 1, error: msg });
@@ -2231,13 +2250,9 @@ export async function importProductsCSV(formData: FormData) {
 export async function getBatchHistory(batchId: string) {
     const session = await auth();
     if (!session?.user?.companyId) return [];
-
     try {
         return await prisma.hms_stock_ledger.findMany({
-            where: {
-                batch_id: batchId,
-                company_id: session.user.companyId
-            },
+            where: { batch_id: batchId, company_id: session.user.companyId },
             orderBy: { created_at: 'desc' }
         });
     } catch (error) {
@@ -2257,62 +2272,41 @@ export async function adjustStock(prevState: any, formData: FormData) {
 
     if (!batchId || changeQty === 0) return { error: "Invalid data" };
 
-    const companyId = session.user.companyId; // Store after null check
-
     try {
         await prisma.$transaction(async (tx) => {
-            // 1. Get current batch and product info
             const batch = await tx.hms_product_batch.findUnique({
-                where: {
-                    id: batchId,
-                    company_id: companyId
-                }
+                where: { id: batchId, company_id: session.user.companyId }
             });
             if (!batch) throw new Error("Batch not found");
 
-            // 2. Find Main Warehouse
             let warehouse = await tx.hms_stock_location.findFirst({
-                where: {
-                    company_id: companyId,
-                    code: { equals: 'WH-MAIN' }
-                }
+                where: { company_id: session.user.companyId, name: 'Main Warehouse' }
+            }) || await tx.hms_stock_location.findFirst({
+                where: { company_id: session.user.companyId }
             });
-
-            if (!warehouse) {
-                warehouse = await tx.hms_stock_location.findFirst({
-                    where: { company_id: companyId }
-                });
-            }
 
             if (!warehouse) throw new Error("No stock location found");
 
-            // 3. Update Batch Qty
-            const updatedBatch = await tx.hms_product_batch.update({
+            await tx.hms_product_batch.update({
                 where: { id: batchId },
                 data: { qty_on_hand: { increment: changeQty } }
             });
 
-            // 4. Update Stock Levels
             const stockLevelWhere = {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
                 product_id: batch.product_id,
                 location_id: warehouse.id,
                 batch_id: batchId
-            }
+            };
 
-            const existingLevel = await tx.hms_stock_levels.findFirst({
-                where: stockLevelWhere as any
-            })
+            const existingLevel = await tx.hms_stock_levels.findFirst({ where: stockLevelWhere as any });
 
             if (existingLevel) {
                 await tx.hms_stock_levels.update({
                     where: { id: existingLevel.id },
-                    data: {
-                        quantity: { increment: changeQty },
-                        updated_at: new Date()
-                    }
-                })
+                    data: { quantity: { increment: changeQty }, updated_at: new Date() }
+                });
             } else {
                 await tx.hms_stock_levels.create({
                     data: {
@@ -2324,26 +2318,21 @@ export async function adjustStock(prevState: any, formData: FormData) {
                         quantity: changeQty,
                         reserved: 0
                     }
-                })
+                });
             }
 
-            // 5. Create Ledger Entry
+            // Standardize: Adjustments should be logged in hms_stock_ledger (signed sums)
             await tx.hms_stock_ledger.create({
                 data: {
                     tenant_id: session.user.tenantId as string,
                     company_id: session.user.companyId as string,
                     product_id: batch.product_id,
                     movement_type: changeQty > 0 ? 'adjustment-in' : 'adjustment-out',
-                    qty: Math.abs(changeQty),
+                    qty: changeQty, // Store SIGNED value for World Standard reconciliation
                     batch_id: batchId,
                     reference: reason,
                     to_location_id: changeQty > 0 ? warehouse.id : null,
-                    from_location_id: changeQty < 0 ? warehouse.id : null,
-                    metadata: {
-                        previous_qty: Number(batch.qty_on_hand),
-                        new_qty: Number(updatedBatch.qty_on_hand),
-                        adjusted_by: session.user.name
-                    }
+                    from_location_id: changeQty < 0 ? warehouse.id : null
                 }
             });
         });
@@ -2370,25 +2359,104 @@ export async function searchProducts(query: string) {
                     { sku: { contains: query, mode: 'insensitive' } }
                 ]
             },
-            select: {
-                id: true,
-                name: true,
-                sku: true,
-                price: true,
-                uom: true,
-                metadata: true
-            },
+            select: { id: true, name: true, sku: true, price: true, uom: true, metadata: true },
             take: 10
         });
 
-        const serialized = products.map(p => ({
-            ...p,
-            mrp: Number(p.price || 0),
-            default_cost: p.metadata && typeof p.metadata === 'object' ? (p.metadata as any).cost || 0 : 0
-        }));
-
-        return { success: true, data: serialized };
+        return {
+            success: true,
+            data: products.map(p => {
+                const metadata = p.metadata as any || {};
+                const uomData = metadata.uom_data || {};
+                return {
+                    ...p,
+                    mrp: Number(p.price || 0),
+                    // Flatten key UOM fields for the UI
+                    purchase_uom: metadata.purchase_uom || uomData.purchase_uom || metadata.pack_uom || uomData.pack_uom || '',
+                    base_uom: metadata.base_uom || uomData.base_uom || '',
+                    default_cost: metadata.cost || uomData.cost || 0
+                };
+            })
+        };
     } catch (e: any) {
         return { error: e.message };
+    }
+}
+
+
+export async function recalculateStockLevels() {
+    const session = await auth();
+    if (!session?.user?.companyId) return { error: "Unauthorized" };
+    const { companyId, tenantId } = session.user as any;
+
+    try {
+        await prisma.$transaction(async (tx) => {
+            // 1. Wipe the cache. This is the only way to kill ghost entries (the "367" bug).
+            await tx.hms_stock_levels.deleteMany({
+                where: { company_id: companyId }
+            });
+
+            // 2. Locate the Primary Storage
+            const location = await tx.hms_stock_location.findFirst({
+                where: { company_id: companyId, is_active: true }
+            });
+            if (!location) throw new Error("No active stock location found for reconciliation.");
+
+            // 3. Aggregate Pure Truth from Ledger
+            // We group by product AND batch to keep inventory granular
+            const ledgerAggregates = await tx.hms_stock_ledger.groupBy({
+                by: ['product_id', 'batch_id'],
+                where: { company_id: companyId },
+                _sum: { qty: true }
+            });
+
+            // 4. Batch Restore the Stock Levels
+            if (ledgerAggregates.length > 0) {
+                await tx.hms_stock_levels.createMany({
+                    data: ledgerAggregates.map(agg => ({
+                        id: crypto.randomUUID(),
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        product_id: agg.product_id,
+                        location_id: location.id, // Re-map to primary location for now
+                        batch_id: agg.batch_id,
+                        quantity: Number(agg._sum.qty || 0),
+                        reserved: 0
+                    }))
+                });
+            }
+
+            // 5. Heal Product Costs (Landed Cost Recovery)
+            const products = await tx.hms_product.findMany({
+                where: { company_id: companyId },
+                select: { id: true }
+            });
+
+            for (const p of products) {
+                const lastPurchaseLine = await tx.hms_stock_ledger.findFirst({
+                    where: { 
+                        product_id: p.id, 
+                        company_id: companyId, 
+                        movement_type: 'in',
+                        unit_cost: { gt: 0 }
+                    },
+                    orderBy: { created_at: 'desc' },
+                    select: { unit_cost: true }
+                });
+
+                if (lastPurchaseLine?.unit_cost) {
+                    await tx.hms_product.update({
+                        where: { id: p.id },
+                        data: { default_cost: lastPurchaseLine.unit_cost }
+                    });
+                }
+            }
+        }, { timeout: 30000 }); // Larger timeout for full reconciliation
+
+        revalidatePath('/hms/inventory/reports/stock');
+        return { success: true, message: "Inventory re-synchronized successfully. All ghost entries purged." };
+    } catch (e: any) {
+        console.error("Recalculate Error:", e);
+        return { success: false, error: e.message };
     }
 }

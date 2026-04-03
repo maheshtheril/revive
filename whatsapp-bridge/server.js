@@ -10,9 +10,11 @@ const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode-terminal');
 const qrcodeImage = require('qrcode'); // Added for image generation
 const express = require('express');
-const pino = require('pino');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const pino = require('pino');
+const logStream = fs.createWriteStream(path.join(__dirname, 'bridge.log'), { flags: 'a' });
+const logger = pino({ level: 'debug' }, logStream);
 const cors = require('cors'); // Added for frontend access
 const app = express();
 app.use(cors());
@@ -25,15 +27,26 @@ let latestQr = null;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info'));
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    console.log(`[INFO] Using WA version v${version.join('.')}, isLatest: ${isLatest}`);
+    let version;
+    try {
+        const v = await fetchLatestBaileysVersion();
+        version = v.version;
+        console.log(`[INFO] Using latest WA version v${version.join('.')}`);
+    } catch (e) {
+        version = [2, 3000, 1015901307]; // Hardcoded fallback
+        console.log(`[WARNING] Failed to fetch latest version, using fallback v${version.join('.')}`);
+    }
     
     sock = makeWASocket({
         version,
         auth: state,
-        logger: pino({ level: 'silent' }),
-        browser: Browsers.macOS('Desktop'),
-        syncFullHistory: false
+        logger,
+        browser: ['Chrome (Linux)', 'Chrome', '110.0.5481.177'],
+        syncFullHistory: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
+        retryRequestDelayMs: 5000
     });
 
     sock.ev.on('creds.update', saveCreds);

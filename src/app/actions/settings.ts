@@ -331,6 +331,8 @@ export async function getHMSSettings() {
                 enableCardIssuance: configData.enableCardIssuance ?? true,
                 consultationBillingMode: configData.consultationBillingMode || 'post_visit',
                 defaultDoctorId: configData.defaultDoctorId || null,
+                opSlipPreprintedLetterhead: configData.opSlipPreprintedLetterhead ?? false,
+                opSlipHeaderHeight: configData.opSlipHeaderHeight || '4.5',
                 feeHistory: feeHistory.map(f => ({
                     id: f.id,
                     amount: Number(f.fee_amount),
@@ -454,6 +456,8 @@ export async function updateHMSSettings(data: any) {
                 fee: feeAmount,
                 productId: regProduct.id,
                 defaultDoctorId: data.defaultDoctorId || null,
+                opSlipPreprintedLetterhead: !!data.opSlipPreprintedLetterhead,
+                opSlipHeaderHeight: data.opSlipHeaderHeight || '4.5',
                 lastUpdated: new Date().toISOString()
             });
 
@@ -1098,6 +1102,8 @@ export async function getPDFSettings(providedCompanyId?: string, providedTenantI
                 addressSize: data.addressSize || 10,
                 showContactInfo: data.showContactInfo ?? true,
                 autoPrint: data.autoPrint ?? false,
+                showTaxInvoiceTitle: data.showTaxInvoiceTitle ?? true,
+                fontFamily: data.fontFamily || 'helvetica'
             }
         };
     } catch (error: any) {
@@ -1113,6 +1119,7 @@ export async function updatePDFSettings(data: {
     showContactInfo?: boolean;
     autoPrint: boolean;
     showTaxInvoiceTitle: boolean;
+    fontFamily?: string;
 }) {
     const session = await auth();
     const companyId = session?.user?.companyId;

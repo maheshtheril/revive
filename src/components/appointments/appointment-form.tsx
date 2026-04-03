@@ -552,9 +552,9 @@ export function AppointmentForm({
   .slip-row { display: flex; justify-content: space-between; align-items: center; }
   .token-box { text-align: right; }
   .lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #64748b; display: block; margin-bottom: 2px; }
-  .patient-name { font-size: 16px; font-weight: 700; color: #1e293b; margin-bottom: 2px; }
+  .patient-name { font-size: 14pt; font-weight: 800; color: #1e293b; margin-bottom: 2px; }
   .patient-meta { font-size: 11px; font-weight: 500; color: #64748b; margin-top: 2px; }
-  .token-num { font-size: 24px; font-weight: 800; color: #1e293b; line-height: 1; }
+  .token-num { font-size: 14pt; font-weight: 800; color: #1e293b; line-height: 1; }
   .divider { border: none; border-top: 1px solid #f1f5f9; margin: 12px 0; }
   .info-row { display: flex; gap: 30px; }
   .info-block { flex: 1; }

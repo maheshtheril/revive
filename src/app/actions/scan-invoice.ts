@@ -161,7 +161,9 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
             
             Line Items (Table Items):
             - "items": Array of items.
-                - "productName": Item Name / Description.
+                - "productName": Item Name / Description. 
+                    * ACTION: Be RESILIENT to vertical ink marks or pen scribbles on the left margin.
+                    * ACTION: Ensure the FIRST row (e.g. "KIDPRED SUSP") is captured even if it is very close to the header text.
                 - "hsn": HSN/SAC Code.
                 - "batch": Batch Number. (Alphanumeric, e.g., "GH4521"). 
                     * WARNING: Do NOT confuse Batch with Qty. Batch usually has letters.
@@ -181,6 +183,9 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
                 - "expiry": Expiry (YYYY-MM-DD).
                 - "uom": Unit of Measure (e.g., "10S", "STRIP", "BOX", "PACK-10").
                 - "packing": Packing format (e.g., "1x10", "10 TAB", "15 CAP").
+
+            VERIFICATION RULE:
+            Count the total number of physical rows in the item table. The "items" array MUST contain every row, including the very first one at the top of the table. 
         `;
 
         const configurations = [
