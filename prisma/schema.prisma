@@ -268,12 +268,8 @@ model audit_log {
   row_id     String?   @db.Uuid
   event      String?
   app_user   app_user? @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-<<<<<<< HEAD
-
-  @@ignore
-=======
->>>>>>> 5fa1f8d3a774f449029a8d86d52c17bf2b97038e
 }
+
 
 model business_partners {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
