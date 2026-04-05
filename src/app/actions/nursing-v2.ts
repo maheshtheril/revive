@@ -3,6 +3,7 @@
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
+import { serialize } from "@/lib/utils"
 
 export async function saveVitals(data: {
     tenantId: string
@@ -121,7 +122,23 @@ export async function getVitals(encounterId: string) {
         const vitals = await prisma.hms_vitals.findFirst({
             where: { encounter_id: encounterId }
         })
-        return vitals
+
+        if (!vitals) return null
+
+        // Explicitly map fields to avoid any recursive serialization issues
+        // converting Decimals to Numbers manually here
+        return {
+            ...vitals,
+            height: vitals.height ? Number(vitals.height) : null,
+            weight: vitals.weight ? Number(vitals.weight) : null,
+            temperature: vitals.temperature ? Number(vitals.temperature) : null,
+            pulse: vitals.pulse ? Number(vitals.pulse) : null,
+            systolic: vitals.systolic ? Number(vitals.systolic) : null,
+            diastolic: vitals.diastolic ? Number(vitals.diastolic) : null,
+            spo2: vitals.spo2 ? Number(vitals.spo2) : null,
+            respiration: vitals.respiration ? Number(vitals.respiration) : null,
+            recorded_at: vitals.recorded_at ? vitals.recorded_at.toISOString() : null
+        }
     } catch (error) {
         console.error('Fetch Vitals Error:', error)
         return null

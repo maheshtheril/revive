@@ -17,14 +17,12 @@ interface ClassicBalanceSheetProps {
         retainedEarnings: number
     } | null
     date: Date
-    onDateChange?: (newDate: Date) => void
     currencySymbol?: string
 }
 
 export function ClassicBalanceSheet({
     data,
     date,
-    onDateChange,
     currencySymbol = '₹'
 }: ClassicBalanceSheetProps) {
     const { formatCurrency } = useLocalization()
@@ -66,29 +64,7 @@ export function ClassicBalanceSheet({
                             <div className="flex items-center gap-2 text-[10px] bg-[#002b2b] px-3 py-1 border border-[#008080]">
                                 <Calendar className="h-3 w-3 text-[#64ffff]" />
                                 <span className="text-[#64ffff]">As at:</span>
-                                <div className="flex items-center gap-2">
-                                    <select 
-                                        value={date.getMonth()} 
-                                        onChange={(e) => onDateChange?.(new Date(date.getFullYear(), parseInt(e.target.value), 1))}
-                                        className="bg-[#002b2b] text-[#64ffff] font-black outline-none border border-[#008080] px-2 py-0.5 cursor-pointer uppercase text-[10px]"
-                                    >
-                                        {Array.from({ length: 12 }, (_, i) => (
-                                            <option key={i} value={i} className="bg-[#002b2b] text-[#64ffff]">
-                                                {new Date(0, i).toLocaleString('default', { month: 'short' }).toUpperCase()}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <select 
-                                        value={date.getFullYear()} 
-                                        onChange={(e) => onDateChange?.(new Date(parseInt(e.target.value), date.getMonth(), 1))}
-                                        className="bg-[#002b2b] text-[#64ffff] font-black outline-none border border-[#008080] px-2 py-0.5 cursor-pointer text-[10px]"
-                                    >
-                                        {Array.from({ length: 10 }, (_, i) => {
-                                            const y = new Date().getFullYear() - 5 + i;
-                                            return <option key={y} value={y} className="bg-[#002b2b] text-[#64ffff]">{y}</option>;
-                                        })}
-                                    </select>
-                                </div>
+                                <span className="text-white font-bold">{format(date, 'd-MMM-yy').toUpperCase()}</span>
                             </div>
                         </div>
                         <div className="flex items-center gap-3">

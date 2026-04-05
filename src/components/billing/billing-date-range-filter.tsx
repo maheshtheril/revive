@@ -22,6 +22,11 @@ export function BillingDateRangeFilter() {
     const fromParam = searchParams.get('from')
     const toParam = searchParams.get('to')
 
+    const [mounted, setMounted] = React.useState(false)
+    React.useEffect(() => {
+        setMounted(true)
+    }, [])
+
     const [range, setRange] = React.useState<DateRange | undefined>(() => {
         if (fromParam && toParam) {
             return { from: new Date(fromParam), to: new Date(toParam) }
@@ -30,6 +35,23 @@ export function BillingDateRangeFilter() {
         }
         return undefined
     })
+
+    if (!mounted) {
+        return (
+            <div className="flex items-center gap-2 bg-white rounded-xl p-1 shadow-sm border border-slate-200">
+                <Button
+                    variant={"ghost"}
+                    className={cn(
+                        "h-9 px-4 justify-start text-left font-bold text-sm tracking-tight rounded-lg min-w-[200px] text-slate-500"
+                    )}
+                    disabled
+                >
+                    <CalendarIcon className="mr-2 h-4 w-4 text-slate-400" />
+                    Filtered by Dates
+                </Button>
+            </div>
+        )
+    }
 
     const applyRange = (newRange: DateRange | undefined) => {
         setRange(newRange)

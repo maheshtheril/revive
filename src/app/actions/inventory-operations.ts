@@ -134,14 +134,19 @@ export async function receiveStock(data: ReceiveStockData) {
                                 batch_no: item.batchNumber,
                                 expiry_date: item.expiryDate ? new Date(item.expiryDate) : null,
                                 cost: item.unitCost,
-                                mrp: item.mrp
+                                mrp: item.mrp,
+                                qty_on_hand: item.quantity // Initialize with receipt qty
                             }
                         })
-                    } else if (item.mrp) {
-                        // Update MRP if provided (correction/update)
+                    } else {
+                        // Update existing batch: Increment stock and update pricing
                         await tx.hms_product_batch.update({
                             where: { id: batch.id },
-                            data: { mrp: item.mrp }
+                            data: {
+                                qty_on_hand: { increment: item.quantity },
+                                cost: item.unitCost, // Update latest cost
+                                ...(item.mrp ? { mrp: item.mrp } : {})
+                            }
                         })
                     }
                     batchId = batch.id
@@ -265,7 +270,11 @@ export async function receiveStock(data: ReceiveStockData) {
         revalidatePath('/hms/inventory/products')
         revalidatePath('/hms/inventory')
 
-        return { success: true, warning: !warehouse ? "Default warehouse created" : undefined, data: result }
+        return {
+            success: true,
+            warning: !warehouse ? "Default warehouse created" : undefined,
+            data: JSON.parse(JSON.stringify(result))
+        }
 
     } catch (error: any) {
         console.error("Receive stock error:", error)

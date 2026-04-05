@@ -10,7 +10,15 @@ import { InitializeProfileButton } from "@/components/hms/doctor/initialize-prof
 
 export const dynamic = 'force-dynamic'
 
-export default async function DoctorDashboardPage() {
+export default async function DoctorDashboardPage({ 
+    searchParams 
+}: { 
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }> 
+}) {
+    const params = await searchParams
+    const dateStr = params.date as string
+    const targetDate = dateStr ? new Date(dateStr) : new Date()
+
     await ensureHmsMenus()
     const session = await auth()
 
@@ -64,10 +72,10 @@ export default async function DoctorDashboardPage() {
         )
     }
 
-    // 2. Fetch Today's Appointments
-    const todayStart = new Date()
+    // 2. [ELITE DATE DYNAMIC RANGE] Adjusted to target specific date from URL
+    const todayStart = new Date(targetDate)
     todayStart.setHours(0, 0, 0, 0)
-    const todayEnd = new Date()
+    const todayEnd = new Date(targetDate)
     todayEnd.setHours(23, 59, 59, 999)
 
     const appointments = await prisma.hms_appointments.findMany({
@@ -120,9 +128,9 @@ export default async function DoctorDashboardPage() {
     const labMap = new Map()
     labs.forEach(lab => {
         if (!lab.encounter_id) return
+        // If there are multiple orders, we prioritize completed ones with reports
         const existing = labMap.get(lab.encounter_id)
-        // If there are multiple orders, we prioritize completed ones
-        const isCompleted = lab.status === 'completed'
+        const isCompleted = lab.status === 'completed' && !!lab.report_url
 
         if (!existing || (isCompleted && !existing.isReady)) {
             labMap.set(lab.encounter_id, {

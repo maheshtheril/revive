@@ -20,8 +20,6 @@ call npm install
 if errorlevel 1 goto :INSTALL_FAILED
 
 :START_SERVICE
-echo [0/3] Clearing port 8081...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8081') do taskkill /f /pid %%a >nul 2>&1
 echo.
 echo [2/3] Starting WhatsApp Bridge Service...
 echo.

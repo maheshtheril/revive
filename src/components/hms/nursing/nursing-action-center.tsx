@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { differenceInYears } from "date-fns"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle, DialogHeader } from "@/components/ui/dialog"
 import NursingVitalsForm from "@/components/nursing/vitals-form"
 import { UsageForm } from "./usage-form"
 
@@ -21,6 +21,8 @@ interface NursingActionCenterProps {
     allPatients?: any[]
 }
 
+import { DashboardDateFilter } from "../dashboard-date-filter"
+
 export function NursingActionCenter({ pendingTriage, completedTriage = [], activeAdmissions, pendingSamples, allPatients = [] }: NursingActionCenterProps) {
     const router = useRouter()
     const [searchQuery, setSearchQuery] = useState("")
@@ -28,44 +30,7 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
     const [selectedUsageTask, setSelectedUsageTask] = useState<any>(null)
     const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'census'>('queue')
 
-    const quickActions = [
-        {
-            title: 'Vitals & Triage',
-            icon: HeartPulse,
-            color: 'text-pink-600',
-            bg: 'bg-pink-50 dark:bg-pink-900/20',
-            border: 'border-pink-100 dark:border-pink-800',
-            desc: 'Record patient vitals',
-            link: '/hms/nursing/vitals'
-        },
-        {
-            title: 'Medication',
-            icon: Syringe,
-            color: 'text-blue-600',
-            bg: 'bg-blue-50 dark:bg-blue-900/20',
-            border: 'border-blue-100 dark:border-blue-800',
-            desc: 'Administer due meds',
-            link: '/hms/nursing/medications'
-        },
-        {
-            title: 'Sample Collection',
-            icon: TestTube2,
-            color: 'text-violet-600',
-            bg: 'bg-violet-50 dark:bg-violet-900/20',
-            border: 'border-violet-100 dark:border-violet-800',
-            desc: 'Collect lab samples',
-            link: '/hms/labs/collection'
-        },
-        {
-            title: 'IPD Rounds',
-            icon: BedDouble,
-            color: 'text-emerald-600',
-            bg: 'bg-emerald-50 dark:bg-emerald-900/20',
-            border: 'border-emerald-100 dark:border-emerald-800',
-            desc: 'Monitor admitted patients',
-            link: '/hms/nursing/wards'
-        }
-    ]
+    // [MOD] Removed unused quickActions array to ensure UI clarity and prevent accidental rendering of legacy blocks
 
     const displayedTasks = (activeTab === 'queue' ? pendingTriage : activeTab === 'census' ? allPatients : completedTriage).filter(task => {
         if (!searchQuery) return true;
@@ -83,14 +48,17 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
             <div className="flex-1 space-y-6">
 
                 {/* Header Section */}
-                <div>
-                    <h2 className="text-2xl font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-                        <Activity className="h-6 w-6 text-pink-500" />
-                        Nursing Station
-                    </h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        Manage patient care, vitals, and ward duties
-                    </p>
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-4">
+                    <div>
+                        <h2 className="text-2xl font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                            <Activity className="h-6 w-6 text-pink-500" />
+                            Nursing Station
+                        </h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                            Manage patient care, vitals, and ward duties
+                        </p>
+                    </div>
+                    <DashboardDateFilter />
                 </div>
 
                 {/* Queue Summary Grid */}
@@ -211,58 +179,55 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
                                 return (
                                     <div
                                         key={task.id}
-                                        className={`p-4 transition-all duration-300 flex items-center justify-between cursor-pointer ${rowColor}`}
+                                        className={`p-4 transition-all duration-300 flex flex-row items-center justify-between cursor-pointer gap-2 md:gap-4 ${rowColor}`}
                                         onClick={() => setSelectedTask(task)}
                                     >
-                                        <div className="flex items-center gap-4">
-                                            <div className={`h-12 w-12 rounded-2xl flex items-center justify-center text-lg font-bold shadow-sm transition-transform group-hover:scale-105 ${task.patient_gender?.toLowerCase() === 'female' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'}`}>
+                                        <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
+                                            <div className={`h-11 w-11 md:h-12 md:w-12 rounded-2xl flex items-center justify-center text-base md:text-lg font-bold shadow-sm shrink-0 transition-transform group-hover:scale-105 ${task.patient_gender?.toLowerCase() === 'female' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'}`}>
                                                 {task.patient_name.charAt(0)}
                                             </div>
-                                            <div>
-                                                <div className="flex items-center gap-2">
-                                                    <h4 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight">{task.patient_name}</h4>
-                                                    {isEmergency && activeTab === 'queue' && <span className="text-[9px] font-black bg-red-600 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1 animate-pulse shadow-sm shadow-red-200">Critical</span>}
-                                                    {isUrgent && activeTab === 'queue' && <span className="text-[9px] font-black bg-orange-500 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1">Urgent</span>}
-                                                    {isHigh && activeTab === 'queue' && <span className="text-[9px] font-black bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1">High</span>}
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <h4 className="font-black text-xs md:text-sm text-slate-900 dark:text-white uppercase tracking-tight truncate max-w-[120px] md:max-w-none">{task.patient_name}</h4>
+                                                    {isEmergency && activeTab === 'queue' && <span className="text-[8px] md:text-[9px] font-black bg-red-600 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1 animate-pulse shadow-sm">Critical</span>}
+                                                    {isUrgent && activeTab === 'queue' && <span className="text-[8px] md:text-[9px] font-black bg-orange-500 text-white px-2 py-0.5 rounded-full uppercase">Urgent</span>}
                                                     {activeTab === 'history' && (
                                                         task.invoiceStatus === 'paid' ? (
-                                                            <span className="text-[9px] font-black bg-emerald-500 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1 shadow-sm shadow-emerald-200">Discharged / Paid</span>
-                                                        ) : task.invoiceStatus === 'pending' ? (
-                                                            <span className="text-[9px] font-black bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1 shadow-sm shadow-amber-200">Billing / Draft</span>
+                                                            <span className="text-[8px] md:text-[9px] font-black bg-emerald-500 text-white px-2 py-0.5 rounded-full uppercase shadow-sm shadow-emerald-200">Paid</span>
                                                         ) : (
-                                                            <span className="text-[9px] font-black bg-slate-500 text-white px-2 py-0.5 rounded-full uppercase flex items-center gap-1">Processed</span>
+                                                            <span className="text-[8px] md:text-[9px] font-black bg-amber-500 text-white px-2 py-0.5 rounded-full uppercase shadow-sm shadow-amber-200">Billing</span>
                                                         )
                                                     )}
                                                 </div>
-                                                <p className="text-xs text-slate-500 mt-0.5 font-medium flex items-center gap-2">
-                                                    <span className="capitalize">{task.patient_gender || 'Unknown'}</span>
-                                                    <span className="h-1 w-1 bg-slate-300 rounded-full" />
+                                                <p className="text-[10px] md:text-xs text-slate-500 mt-0.5 font-medium flex items-center gap-1.5 md:gap-2">
+                                                    <span className="capitalize">{task.patient_gender || '?'}</span>
+                                                    <span className="h-0.5 w-0.5 bg-slate-300 rounded-full" />
                                                     <span>{task.patient_dob ? differenceInYears(new Date(), new Date(task.patient_dob)) + 'y' : '-'}</span>
-                                                    <span className="h-1 w-1 bg-slate-300 rounded-full" />
-                                                    <span className="text-slate-400">ID: {task.patient_id || 'N/A'}</span>
+                                                    <span className="h-0.5 w-0.5 bg-slate-300 rounded-full" />
+                                                    <span className="text-slate-400 truncate max-w-[60px]">#{task.patient_id || 'N/A'}</span>
                                                 </p>
-                                                <p className="text-xs text-slate-400 mt-1 truncate max-w-[200px]">
+                                                <p className="text-[10px] md:text-xs text-slate-400 mt-1 truncate max-w-[150px] md:max-w-[200px]">
                                                     {task.reason || 'General Visit'} • {task.doctor_name}
                                                 </p>
                                             </div>
                                         </div>
-                                        <div className="flex flex-col items-end gap-2 text-right">
-                                            <div className="text-xs font-bold text-slate-400 flex items-center gap-1">
+                                        <div className="flex flex-col items-end gap-1.5 md:gap-2 text-right shrink-0">
+                                            <div className="text-[10px] md:text-xs font-bold text-slate-400 flex items-center gap-1">
                                                 <Clock className="h-3 w-3" />
                                                 {new Date(task.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </div>
-                                            <div className="flex items-center gap-1">
+                                            <div className="flex items-center gap-1.5">
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         setSelectedUsageTask(task);
                                                     }}
-                                                    className="flex items-center justify-center h-8 w-8 rounded-full bg-slate-100 text-slate-500 hover:bg-orange-100 hover:text-orange-600 transition-colors"
+                                                    className="flex items-center justify-center h-8 w-8 md:h-9 md:w-9 rounded-xl bg-slate-100 text-slate-500 hover:bg-orange-100 hover:text-orange-600 transition-colors border border-slate-200"
                                                     title="Record Consumables Usage"
                                                 >
                                                     <ClipboardList className="h-4 w-4" />
                                                 </button>
-                                                <div className={`flex items-center gap-1 font-bold text-xs px-3 py-1.5 rounded-full transition-all shadow-sm ${activeTab === 'history' ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-pink-50 text-pink-600 hover:bg-pink-600 hover:text-white'
+                                                <div className={`flex items-center gap-1 font-bold text-[10px] md:text-xs px-2.5 md:px-3 py-1.5 md:py-2 rounded-xl transition-all shadow-sm ${activeTab === 'history' ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-pink-50 text-pink-600 hover:bg-pink-600 hover:text-white'
                                                     }`}>
                                                     {activeTab === 'history' ? 'Edit' : 'Assess'} <ChevronRight className="h-3 w-3" />
                                                 </div>
@@ -277,47 +242,38 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
 
             </div>
 
-            {/* Right Column: Quick Actions & Alerts */}
+            {/* Right Column: Alerts & Alerts */}
             <div className="w-full lg:w-80 space-y-6">
-                {/* Quick Actions */}
-                <div className="space-y-4">
-                    <h2 className="text-lg font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-                        <ClipboardList className="h-5 w-5 text-slate-500" />
-                        Quick Actions
-                    </h2>
-                    <div className="grid grid-cols-1 gap-3">
-                        {quickActions.map((action) => (
-                            <motion.button
-                                key={action.title}
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => router.push(action.link)}
-                                className={`flex items-start gap-3 p-4 rounded-xl border text-left bg-white dark:bg-slate-900 shadow-sm group hover:shadow-md transition-all ${action.border}`}
-                            >
-                                <div className={`p-2 rounded-lg ${action.bg} ${action.color}`}>
-                                    <action.icon className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                        {action.title}
-                                    </h3>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium leading-relaxed">
-                                        {action.desc}
-                                    </p>
-                                </div>
-                            </motion.button>
-                        ))}
+                {/* Status / Meta Card */}
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 rounded-lg bg-pink-100 text-pink-600">
+                            <Activity className="h-5 w-5" />
+                        </div>
+                        <h3 className="font-bold text-slate-900 dark:text-white">Station Status</h3>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex justify-between text-xs">
+                            <span className="text-slate-500 font-bold">Shift Lead</span>
+                            <span className="text-slate-900 font-black">Charge Nurse</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                            <span className="text-slate-500 font-bold">Active Station</span>
+                            <span className="text-emerald-500 font-black flex items-center gap-1">
+                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> ONLINE
+                            </span>
+                        </div>
                     </div>
                 </div>
 
-                {/* Notifications / Alerts Placeholder */}
+                {/* Notifications / Alerts */}
                 <div className="bg-amber-50 dark:bg-amber-900/10 rounded-xl p-4 border border-amber-100 dark:border-amber-800">
                     <div className="flex items-start gap-3">
                         <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                         <div>
                             <h4 className="font-bold text-sm text-amber-800 dark:text-amber-200">Shift Reminder</h4>
                             <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-                                Handover notes required for Ward 2A by 2:00 PM.
+                                Please ensure all vitals are synced before shift handover.
                             </p>
                         </div>
                     </div>
@@ -326,7 +282,11 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
 
             {/* Modal for Vitals */}
             <Dialog open={!!selectedTask} onOpenChange={(open) => !open && setSelectedTask(null)}>
-                <DialogContent className="max-w-[95vw] h-[95vh] flex flex-col p-0 overflow-hidden bg-slate-50/95 backdrop-blur-xl border-slate-200 focus:outline-none">
+                <DialogContent className="max-w-[95vw] h-[95vh] flex flex-col p-0 overflow-hidden bg-slate-50/95 backdrop-blur-xl border-slate-200 outline-none">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Vitals Assessment for {selectedTask?.patient_name}</DialogTitle>
+                    </DialogHeader>
+
                     {/* Sticky Header inside Modal */}
                     <div className="flex items-center gap-4 px-6 py-4 bg-white/50 backdrop-blur-md border-b border-slate-100 flex-none z-10 relative">
                         <div className={`h-12 w-12 rounded-full flex items-center justify-center text-lg font-bold ${selectedTask?.patient_gender?.toLowerCase() === 'female' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'}`}>
@@ -403,11 +363,10 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
 
             {/* Modal for Usage */}
             <Dialog open={!!selectedUsageTask} onOpenChange={(open) => !open && setSelectedUsageTask(null)}>
-                <DialogContent className="max-w-4xl p-0 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 overflow-hidden">
-                    <div className="mb-4">
-                        <h2 className="text-lg font-bold">Record Consumption</h2>
-                        <p className="text-sm text-slate-500">For {selectedUsageTask?.patient_name}</p>
-                    </div>
+                <DialogContent className="max-w-4xl p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 overflow-hidden">
+                    <DialogHeader>
+                        <DialogTitle>Record Consumption for {selectedUsageTask?.patient_name}</DialogTitle>
+                    </DialogHeader>
                     {selectedUsageTask && (
                         <UsageForm
                             patientId={selectedUsageTask.patient_uuid}

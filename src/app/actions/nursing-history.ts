@@ -11,7 +11,7 @@ export async function getConsumptionHistory(encounterId: string) {
     const moves = await prisma.hms_stock_move.findMany({
         where: {
             source_reference: encounterId,
-            source: 'Nursing Consumption'
+            source: { in: ['Nursing Consumption', 'Nursing Consumption (Pending)'] }
         },
         orderBy: {
             created_at: 'desc'
@@ -54,7 +54,7 @@ export async function getConsumptionHistory(encounterId: string) {
     moves.forEach(move => {
         const moveTime = new Date(move.created_at).getTime()
         const product = productMap.get(move.product_id)
-        
+
         // Find an existing event close to this time (within 2 seconds)
         let event = events.find(e => Math.abs(new Date(e.timestamp).getTime() - moveTime) < 2000 && e.nurseId === move.created_by)
 
@@ -64,13 +64,15 @@ export async function getConsumptionHistory(encounterId: string) {
                 timestamp: move.created_at,
                 nurseName: userMap.get(move.created_by || '') || 'Unknown Nurse',
                 nurseId: move.created_by,
-                status: globalStatus, // Apply encounter invoice status to the event
+                status: move.source === 'Nursing Consumption (Pending)' ? 'Pending Confirmation' : globalStatus,
                 invoiceNumber: globalInvoiceNo,
-                items: []
+                items: [],
+                moveIds: []
             }
             events.push(event)
         }
 
+        event.moveIds.push(move.id)
         event.items.push({
             productName: product?.name || 'Unknown Item',
             quantity: move.qty.toNumber(),

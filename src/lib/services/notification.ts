@@ -10,11 +10,11 @@ export class NotificationService {
      */
     static async sendInvoiceWhatsapp(invoiceId: string, tenantId: string, pdfBase64?: string) {
         console.log(`[NotificationService] Sending WhatsApp for Invoice: ${invoiceId} (Te: ${tenantId})`);
-        
+
         try {
             // Support both UUID and Official Invoice Number
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invoiceId);
-            
+
             let invoice;
             if (isUuid) {
                 invoice = await prisma.hms_invoice.findUnique({
@@ -127,17 +127,17 @@ export class NotificationService {
      * UNIFIED SENDER: Dispatches to either UltraMsg or Evolution API
      */
     private static async dispatchWhatsApp(
-        instanceId: string, 
-        token: string, 
-        phone: string, 
-        message: string, 
+        instanceId: string,
+        token: string,
+        phone: string,
+        message: string,
         options: { endpoint: 'chat' | 'document', pdfBase64?: string, filename?: string, provider?: 'ultramsg' | 'evolution' }
     ) {
         // Detect API Type (Priority: Explicit Provider > Token/ID naming convention)
         const apiType = options.provider || (token === 'local' ? 'local-bridge' : (token.startsWith('evo_') || instanceId.includes('-') ? 'evolution' : 'ultramsg'));
         const baseUrl = process.env.WHATSAPP_BASE_URL || 'http://localhost:8081';
         const isLocalHost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
-        
+
         let cleanId = instanceId.toString().trim();
         if (cleanId.toLowerCase().startsWith('instance')) {
             cleanId = cleanId.substring(8);
@@ -146,7 +146,7 @@ export class NotificationService {
         // HEALER: If we are on localhost, always try the Direct Bridge first since it's the 90% use case for free users
         if (isLocalHost || apiType === 'local-bridge') {
             const url = `${baseUrl}/send-message`;
-            
+
             const payload: any = {
                 number: phone,
                 message: message,
@@ -169,14 +169,14 @@ export class NotificationService {
                 } catch (e) {
                     // If bridge is alive but returns HTML, it's likely a 404 or something else MISCONFIGURED. Stop here if it's local-bridge.
                     if (apiType === 'local-bridge') return { success: false, error: `Bridge error: ${text.slice(0, 50)}...` };
-                    
+
                     // Otherwise, maybe it's actually an Evolution API instance on 8080, continue to fallback
                     console.warn("[WhatsApp-Bridge] Bridge returned non-JSON. Continuing to fallback...");
-                    throw new Error("NOT_THE_BRIDGE"); 
+                    throw new Error("NOT_THE_BRIDGE");
                 }
 
                 if (response.ok) {
-                    return result.success 
+                    return result.success
                         ? { success: true, message: 'Sent via Local Bridge' }
                         : { success: false, error: result.error || 'Failed' };
                 } else {
@@ -197,7 +197,7 @@ export class NotificationService {
         if (apiType === 'evolution') {
             const endpoint = options.endpoint === 'document' ? 'sendMedia' : 'sendText';
             const url = `${baseUrl}/message/${endpoint}/${instanceId}`;
-            
+
             const payload: any = {
                 number: phone,
                 options: { delay: 1200, presence: "composing", linkPreview: false }
@@ -212,35 +212,30 @@ export class NotificationService {
                 payload.text = message;
             }
 
+            console.log(`[WhatsApp-Evolution] Calling: ${url}`);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'apikey': token },
+                body: JSON.stringify(payload)
+            });
+
+            const text = await response.text();
+            let result;
             try {
-                console.log(`[WhatsApp-Evolution] Calling: ${url}`);
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'apikey': token },
-                    body: JSON.stringify(payload)
-                });
-
-                const text = await response.text();
-                let result;
-                try {
-                    result = JSON.parse(text);
-                } catch (e) {
-                    return { success: false, error: `Invalid Response from WhatsApp Server: ${text.slice(0, 50)}...` };
-                }
-
-                return (result?.key || result?.messageId || result?.status === 'SUCCESS' || result?.status === 200) 
-                    ? { success: true, message: 'Sent via Evolution' }
-                    : { success: false, error: text };
-            } catch (err: any) {
-                console.error(`[WhatsApp-Evolution] API Error:`, err.message);
-                return { success: false, error: `Evolution Connection Failed: ${err.message}` };
+                result = JSON.parse(text);
+            } catch (e) {
+                return { success: false, error: `Invalid Response from WhatsApp Server: ${text.slice(0, 50)}...` };
             }
+
+            return (result?.key || result?.messageId || result?.status === 'SUCCESS' || result?.status === 200)
+                ? { success: true, message: 'Sent via Evolution' }
+                : { success: false, error: text };
         } else {
             // Standard UltraMsg Logic
             const resolvedInstanceId = `instance${cleanId.toLowerCase()}`;
             const endpoint = options.endpoint === 'document' ? 'document' : 'chat';
             const url = `https://api.ultramsg.com/${resolvedInstanceId}/messages/${endpoint}`;
-            
+
             const payload: any = { token, to: phone, priority: 10 };
             if (options.endpoint === 'document') {
                 payload.document = options.pdfBase64;
@@ -250,22 +245,17 @@ export class NotificationService {
                 payload.body = message;
             }
 
-            try {
-                console.log(`[WhatsApp-UltraMsg] Calling: ${url}`);
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+            console.log(`[WhatsApp-UltraMsg] Calling: ${url}`);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-                const result = await response.json();
-                return (result.sent === "true" || result.success === true || result.id)
-                    ? { success: true, message: 'Sent via UltraMsg' }
-                    : { success: false, error: JSON.stringify(result) };
-            } catch (err: any) {
-                console.error(`[WhatsApp-UltraMsg] API Error:`, err.message);
-                return { success: false, error: `UltraMsg Connection Failed: ${err.message}` };
-            }
+            const result = await response.json();
+            return (result.sent === "true" || result.success === true || result.id)
+                ? { success: true, message: 'Sent via UltraMsg' }
+                : { success: false, error: JSON.stringify(result) };
         }
     }
 
@@ -444,7 +434,7 @@ export class NotificationService {
             const contact = order.hms_patient.contact as any;
             const patientMobile = contact?.phone || contact?.mobile || contact?.primary_phone || '';
             const phone = (patientMobile || '').replace(/\D/g, '');
-            
+
             if (!phone || phone.length < 10) {
                 console.warn(`[WhatsApp-LabReport] No valid phone number for Patient: ${patientName}`);
                 return { success: false, error: 'No valid phone number found' };
@@ -492,7 +482,7 @@ export class NotificationService {
         const safeCoId = companyId || 'Global';
         const safeTeId = tenantId || 'Unknown';
         const logPrefix = `[WhatsApp-Config][Co:${safeCoId.toString().slice(0, 8)}][Te:${safeTeId.toString().slice(0, 8)}]`;
-        
+
         try {
             console.log(`${logPrefix} Resolving configuration...`);
             const dbConfig = await getWhatsAppConfig(companyId, tenantId);
@@ -500,7 +490,7 @@ export class NotificationService {
             if (dbConfig) {
                 const hasToken = !!dbConfig.token;
                 console.log(`${logPrefix} Found DB config. Enabled: ${dbConfig.enabled}, Instance: ${dbConfig.instanceId}, TokenPresent: ${hasToken}`);
-                
+
                 return {
                     enabled: dbConfig.enabled ?? true,
                     provider: dbConfig.provider ?? 'evolution',
@@ -521,7 +511,7 @@ export class NotificationService {
             console.log(`${logPrefix} Falling back to System Environment Variables. Found: ${envToken.slice(0, 4)}...`);
             return {
                 enabled: true,
-                provider: 'evolution', 
+                provider: 'evolution',
                 instanceId: process.env.WHATSAPP_INSTANCE_ID || 'ZIONA-HMS',
                 token: envToken,
                 autoSendBill: true,

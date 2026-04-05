@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
+import { serialize } from "@/lib/utils"
 
 export async function getWards(branchId?: string) {
     const session = await auth()
@@ -43,7 +44,7 @@ export async function getWards(branchId?: string) {
         hms_bed: ward.hms_bed.map(bed => {
             const admission = activeAdmissions.find(a => (a.metadata as any)?.bed_id === bed.id)
             const patientVitals = admission?.hms_patient?.hms_vitals?.[0]
-            
+
             return {
                 ...bed,
                 admissionId: admission?.id || null,
@@ -60,7 +61,7 @@ export async function getWards(branchId?: string) {
         })
     }))
 
-    return { success: true, data: enrichedWards }
+    return { success: true, data: serialize(enrichedWards) }
 }
 
 
@@ -80,7 +81,7 @@ export async function createWard(name: string, branchId: string) {
             }
         })
         revalidatePath('/hms/wards')
-        return { success: true, data: ward }
+        return { success: true, data: serialize(ward) }
     } catch (e: any) {
         return { success: false, error: e.message }
     }
@@ -102,7 +103,7 @@ export async function createBed(wardId: string, bedNo: string) {
             }
         })
         revalidatePath('/hms/wards')
-        return { success: true, data: bed }
+        return { success: true, data: serialize(bed) }
     } catch (e: any) {
         return { success: false, error: e.message }
     }
@@ -122,7 +123,7 @@ export async function getActiveAdmissions() {
         }
     })
 
-    return { success: true, data: admissions }
+    return { success: true, data: serialize(admissions) }
 }
 
 export async function assignBedToPatient(admissionId: string, bedId: string) {
@@ -325,7 +326,7 @@ export async function createAdmission(patientId: string, doctorId?: string, ward
         revalidatePath('/hms/wards')
         revalidatePath('/hms/patients')
         revalidatePath(`/hms/patients/${patientId}`)
-        return { success: true, data: admission }
+        return { success: true, data: serialize(admission) }
     } catch (e: any) {
         console.error("ADMISSION_ERROR:", e)
         return { success: false, error: e.message }

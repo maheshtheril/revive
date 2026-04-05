@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings, updateAISettings, resetWhatsAppSession } from "@/app/actions/settings"
-import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2, MonitorCheck, Tablet } from "lucide-react"
+import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { Label } from "@/components/ui/label"
 
@@ -24,6 +24,12 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [billPreprintedLetterhead, setBillPreprintedLetterhead] = useState(settings.billPreprintedLetterhead ?? false)
     const [billHeaderHeight, setBillHeaderHeight] = useState<string>(settings.billHeaderHeight || '4.5')
     const [allowRateEdit, setAllowRateEdit] = useState(settings.allowRateEdit ?? true)
+    
+    // OP Slip Customization State
+    const [opSlipShowVitals, setOpSlipShowVitals] = useState(settings.opSlipShowVitals ?? true)
+    const [opSlipVitalsPosition, setOpSlipVitalsPosition] = useState<'left' | 'right'>(settings.opSlipVitalsPosition || 'right')
+    const [opSlipVitalsList, setOpSlipVitalsList] = useState<string[]>(settings.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'])
+    const [opSlipRxStyle, setOpSlipRxStyle] = useState<'centered_small' | 'large_left' | 'none'>(settings.opSlipRxStyle || 'centered_small')
 
     // Bridge Status
     const [bridgeStatus, setBridgeStatus] = useState<{ connected: boolean, hasQr: boolean } | null>(null)
@@ -55,7 +61,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [pdfShowContactInfo, setPdfShowContactInfo] = useState(pdfSettings?.showContactInfo ?? true)
     const [pdfAutoPrint, setPdfAutoPrint] = useState(pdfSettings?.autoPrint ?? false)
     const [pdfShowTaxInvoiceTitle, setPdfShowTaxInvoiceTitle] = useState(pdfSettings?.showTaxInvoiceTitle ?? true)
-    const [pdfFontFamily, setPdfFontFamily] = useState<string>(pdfSettings?.fontFamily || 'helvetica')
 
     // AI Settings Mirror
     const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
@@ -63,11 +68,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [aiModel, setAiModel] = useState(aiSettings?.model || 'gemini-1.5-flash')
     const [showAiApiKey, setShowAiApiKey] = useState(false)
     const [hasExistingAiKey, setHasExistingAiKey] = useState(aiSettings?.hasKey ?? false)
-    
-    // POS Terminal Settings
-    const [posTerminalType, setPosTerminalType] = useState<string>('auto')
-    const [isScanningPos, setIsScanningPos] = useState(false)
-    const [scanResult, setScanResult] = useState<string | null>(null)
 
     // Sync local state when settings props change
     useEffect(() => {
@@ -114,7 +114,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             setPdfShowContactInfo(pdfSettings.showContactInfo ?? true);
             setPdfAutoPrint(pdfSettings.autoPrint ?? false);
             setPdfShowTaxInvoiceTitle(pdfSettings.showTaxInvoiceTitle ?? true);
-            setPdfFontFamily(pdfSettings.fontFamily || 'helvetica');
         }
     }, [pdfSettings]);
 
@@ -216,30 +215,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         }
     };
 
-    const handleScanTerminals = async () => {
-        setIsScanningPos(true);
-        setScanResult(null);
-        try {
-            // Dynamically import to avoid SSR issues if not handled by getPOSService
-            const { getPOSService } = await import("@/lib/services/pos-device");
-            const pos = getPOSService();
-            const found = await pos.autoDiscover();
-            if (found) {
-                const type = pos.getType();
-                const brand = type === 'paytm' ? 'Paytm Machine' : (type === 'pinelabs' ? 'PineLabs Terminal' : 'Generic POS');
-                setScanResult(`CONNECTED: ${brand}`);
-                toast({ title: "Terminal Found!", description: `Successfully linked with ${brand} on localhost.` });
-            } else {
-                setScanResult("NOT FOUND");
-                toast({ title: "No Terminal Found", description: "Could not find any EDC bridge on localhost. Ensure your machine is plugged in and bridge software is running.", variant: "destructive" });
-            }
-        } catch (err) {
-            setScanResult("SCAN ERROR");
-        } finally {
-            setIsScanningPos(false);
-        }
-    };
-
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -261,6 +236,10 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     opSlipHeaderHeight: opSlipHeaderHeight || '4.5',
                     billPreprintedLetterhead: !!billPreprintedLetterhead,
                     billHeaderHeight: billHeaderHeight || '4.5',
+                    opSlipShowVitals: !!opSlipShowVitals,
+                    opSlipVitalsPosition: opSlipVitalsPosition,
+                    opSlipVitalsList: opSlipVitalsList,
+                    opSlipRxStyle: opSlipRxStyle,
                     productId: selectedProductId,
                     defaultDoctorId: defaultDoctorId || null,
                     allowRateEdit: allowRateEdit
@@ -286,8 +265,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     addressSize: pdfAddressSize,
                     showContactInfo: pdfShowContactInfo,
                     autoPrint: pdfAutoPrint,
-                    showTaxInvoiceTitle: pdfShowTaxInvoiceTitle,
-                    fontFamily: pdfFontFamily
+                    showTaxInvoiceTitle: pdfShowTaxInvoiceTitle
                 }),
                 updateAISettings({
                     enabled: aiEnabled,
@@ -763,6 +741,80 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                 <span className="text-[10px] font-bold text-indigo-400">cm</span>
                             </div>
                         )}
+
+                        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-100 italic">Vitals Printing</h4>
+                                    <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Include nurse entry fields</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" checked={opSlipShowVitals} onChange={(e) => setOpSlipShowVitals(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-10 h-5 bg-slate-200 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+
+                            {opSlipShowVitals && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                                    {/* Vitals List Selector */}
+                                    <div className="flex flex-wrap gap-2">
+                                        {['BP', 'Pulse', 'SPO2', 'Temp', 'Respiration', 'Weight', 'Height', 'BMI'].map(v => (
+                                            <button
+                                                key={v}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (opSlipVitalsList.includes(v)) setOpSlipVitalsList(opSlipVitalsList.filter(x => x !== v))
+                                                    else setOpSlipVitalsList([...opSlipVitalsList, v])
+                                                }}
+                                                className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border ${opSlipVitalsList.includes(v) ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-slate-50 text-slate-400 border-slate-100'}`}
+                                            >
+                                                {v}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Position Toggle */}
+                                    <div className="flex items-center gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl">
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpSlipVitalsPosition('left')}
+                                            className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] transition-all ${opSlipVitalsPosition === 'left' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                                        >
+                                            Vitals Left
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpSlipVitalsPosition('right')}
+                                            className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] transition-all ${opSlipVitalsPosition === 'right' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+                                        >
+                                            Vitals Right
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                                <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-100 italic mb-3">Rx Symbol Style</h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOpSlipRxStyle('centered_small')}
+                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${opSlipRxStyle === 'centered_small' ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-100 opacity-60'}`}
+                                    >
+                                        <span className="text-xs font-black uppercase tracking-tight">Centered</span>
+                                        <span className="text-[8px] font-bold text-slate-400 uppercase italic">Elite Subtle</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setOpSlipRxStyle('large_left')}
+                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${opSlipRxStyle === 'large_left' ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-100 opacity-60'}`}
+                                    >
+                                        <span className="text-xs font-black uppercase tracking-tight">Standard Left</span>
+                                        <span className="text-[8px] font-bold text-slate-400 uppercase italic">Classic Clinical</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -859,18 +911,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                 <div className="text-center text-[10px] font-bold text-indigo-600">{pdfAddressSize}px</div>
                             </div>
                         </div>
-                        <div className="flex flex-col gap-1.5">
-                            <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">Report Font Style</Label>
-                            <select 
-                                value={pdfFontFamily} 
-                                onChange={(e) => setPdfFontFamily(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-xs"
-                            >
-                                <option value="helvetica">Clean Helvetica (Recommended)</option>
-                                <option value="times">Classic Times (Professional Serif)</option>
-                                <option value="courier">Modern Courier (Monospaced)</option>
-                            </select>
-                        </div>
                         <div className="flex flex-col gap-2">
                             <label className="flex items-center gap-3 text-xs font-bold italic text-slate-700 dark:text-slate-300 cursor-pointer">
                                 <input type="checkbox" checked={pdfShowLogo} onChange={(e) => setPdfShowLogo(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
@@ -890,8 +930,10 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                             </label>
                         </div>
                     </div>
-                </div>                {/* Payment Gateway */}
-                <div className="md:col-span-2 bg-gradient-to-r from-violet-950 to-indigo-950 text-white rounded-2xl p-6 shadow-xl border border-violet-800/40 mt-4">
+                </div>
+
+                {/* Payment Gateway */}
+                <div className="md:col-span-2 bg-gradient-to-r from-violet-950 to-indigo-950 text-white rounded-2xl p-6 shadow-xl border border-violet-800/40">
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center gap-4">
                             <div className="h-12 w-12 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm">
@@ -912,76 +954,10 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                         <input type="text" value={gatewayUpiVpa} onChange={(e) => setGatewayUpiVpa(e.target.value)} placeholder="UPI ID (VPA)" className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40" />
                         <input type="text" value={gatewayKeyId} onChange={(e) => setGatewayKeyId(e.target.value)} placeholder="Razorpay Key ID" className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40" />
                         <div className="relative">
-                            <input type={showSecret ? 'text' : 'password'} value={gatewayKeySecret} onChange={(e) => setGatewayKeySecret(e.target.value)} placeholder={hasExistingSecret ? '••••••••' : 'Key Secret'} className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40 shadow-none outline-none focus:ring-0" />
+                            <input type={showSecret ? 'text' : 'password'} value={gatewayKeySecret} onChange={(e) => setGatewayKeySecret(e.target.value)} placeholder={hasExistingSecret ? '••••••••' : 'Key Secret'} className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40" />
                             <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40">
                                 {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                             </button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* POS Terminal Integration */}
-                <div className="md:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm group">
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center">
-                                <MonitorCheck className="h-6 w-6 text-slate-600 dark:text-slate-400" />
-                            </div>
-                            <div>
-                                <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">Payment Terminal (EDC/POS)</h3>
-                                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-0.5">Physical Card Machine Integration</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            {scanResult && (
-                                <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter ${(scanResult || '').includes('CONNECTED') ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                    {scanResult}
-                                </span>
-                            )}
-                            <button
-                                type="button"
-                                onClick={handleScanTerminals}
-                                disabled={isScanningPos}
-                                className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all flex items-center gap-2 shadow-sm"
-                            >
-                                {isScanningPos ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
-                                {isScanningPos ? 'Scanning...' : 'Scan Localhost'}
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                        <div className="space-y-4">
-                            <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800">
-                                <h4 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-tight mb-2">Supported Terminals</h4>
-                                <div className="flex gap-4">
-                                    <div className="flex flex-col items-center gap-1 opacity-80">
-                                        <div className="h-10 w-10 bg-white dark:bg-slate-900 rounded-lg flex items-center justify-center border border-slate-200 dark:border-slate-800">
-                                            <Tablet className="h-5 w-5 text-indigo-500" />
-                                        </div>
-                                        <span className="text-[9px] font-bold">Paytm EDC</span>
-                                    </div>
-                                    <div className="flex flex-col items-center gap-1 opacity-80">
-                                        <div className="h-10 w-10 bg-white dark:bg-slate-900 rounded-lg flex items-center justify-center border border-slate-200 dark:border-slate-800">
-                                            <Tablet className="h-5 w-5 text-blue-500" />
-                                        </div>
-                                        <span className="text-[9px] font-bold">PineLabs</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <p className="text-[10px] text-slate-500 font-medium leading-relaxed italic">
-                                * System automatically detects connected machines via local bridge software (ECR/HTTP). Ensure YOUR_TERMINAL_BRIDGE is running on this PC.
-                            </p>
-                        </div>
-
-                        <div className="bg-indigo-50/50 dark:bg-indigo-900/10 p-6 rounded-3xl border border-indigo-100 dark:border-indigo-900/20">
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="h-2 w-2 bg-indigo-500 rounded-full animate-ping" />
-                                <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase">Plug-n-Play Active</span>
-                            </div>
-                            <p className="text-[11px] text-slate-600 dark:text-slate-400 font-bold">
-                                No server-side configuration required. The billing terminal will automatically offer "Card Payment" via machine if it detects a bridge on ports 5001, 8080, 8082, or 12345.
-                            </p>
                         </div>
                     </div>
                 </div>

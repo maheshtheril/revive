@@ -29,7 +29,6 @@ export async function createEmployee(data: {
     targetType?: string;
     targetCycle?: string;
     targets?: Record<string, string>;
-    official_hospital_email?: string;
 }) {
     const session = await auth();
     if (!session?.user?.id || !session.user.tenantId) {
@@ -81,8 +80,7 @@ export async function createEmployee(data: {
                     pincode: data.pincode,
                     country: data.country,
                     state: data.state,
-                    district: data.district,
-                    official_hospital_email: data.official_hospital_email
+                    district: data.district
                 }
             }
         });
@@ -226,7 +224,6 @@ export async function updateEmployee(id: string, data: {
     office?: string;
     category?: string;
     status?: string;
-    official_hospital_email?: string;
 }) {
     const session = await auth();
     if (!session?.user?.id || !session.user.tenantId) {
@@ -248,11 +245,7 @@ export async function updateEmployee(id: string, data: {
                 branch_id: data.branch_id,
                 office: data.office,
                 category: data.category,
-                status: data.status,
-                metadata: {
-                    ...(id ? (await prisma.crm_employee.findUnique({ where: { id } }))?.metadata as any : {}),
-                    official_hospital_email: data.official_hospital_email
-                }
+                status: data.status
             }
         });
 

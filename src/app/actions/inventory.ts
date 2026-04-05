@@ -8,6 +8,7 @@ import { redirect } from "next/navigation"
 import crypto from 'crypto';
 import { Prisma } from "@prisma/client";
 import * as XLSX from 'xlsx';
+import { serialize } from "@/lib/utils"
 
 // --- Dashboard Stats ---
 
@@ -37,34 +38,47 @@ export async function getInventoryDashboardStats() {
         }).length;
 
         // 3. Inventory Value (Sum of Stock * Unit Cost)
-        // We'll approximate this by summing hms_stock_ledger current value or
-        // by summing stock_levels.quantity * product.price (if cost not available)
-        // Let's use hms_stock_levels * product.price (assuming price ~ value for now if cost is missing)
-        const stockItems = await prisma.hms_stock_levels.findMany({
-            where: { company_id: companyId },
-            include: {
-                hms_product: {
-                    select: { price: true } // Using selling price as proxy if cost is null
-                }
-            }
+        // [WORLD CLASS] Multi-layered valuation: Use batch cost first, fallback to derived unit price
+        const batches = await prisma.hms_product_batch.findMany({
+            where: { company_id: companyId, qty_on_hand: { gt: 0 } },
+            select: { qty_on_hand: true, cost: true, mrp: true }
         });
 
         let totalValue = 0;
-        stockItems.forEach(item => {
-            const qty = Number(item.quantity || 0);
-            const price = Number(item.hms_product?.price || 0); // fallback to 0
-            totalValue += qty * price;
+        batches.forEach(b => {
+            const qty = Number(b.qty_on_hand || 0);
+            const cost = Number(b.cost || b.mrp || 0); // Using cost or mrp fallback
+            totalValue += qty * cost;
         });
 
+        // If no batches found (perhaps old stock system), fallback to stock_levels
+        if (totalValue === 0) {
+            const stockItems = await prisma.hms_stock_levels.findMany({
+                where: { company_id: companyId },
+                include: { hms_product: { select: { price: true, metadata: true } } }
+            });
+
+            stockItems.forEach(item => {
+                const qty = Number(item.quantity || 0);
+                const metadata = (item.hms_product?.metadata || {}) as any;
+                const packingQty = Number(metadata.packingQty) || 1;
+                const fullPrice = Number(item.hms_product?.price || 0);
+                const unitPrice = packingQty > 1 ? (fullPrice / packingQty) : fullPrice;
+                totalValue += qty * unitPrice;
+            });
+        }
+
         // 4. Recent Activity (Stock Moves)
-        const recentMoves = await prisma.hms_stock_ledger.findMany({
+        const recentMovesRes = await prisma.hms_stock_ledger.findMany({
             where: { company_id: companyId },
             take: 5,
             orderBy: { created_at: 'desc' },
             include: {
-                hms_product: { select: { name: true, sku: true } }
+                hms_product: { select: { name: true, sku: true, metadata: true } }
             }
         });
+
+        const { formatFriendlyQty } = await import("@/lib/utils/inventory-formatter");
 
         return {
             success: true,
@@ -72,12 +86,13 @@ export async function getInventoryDashboardStats() {
                 totalProducts,
                 lowStockCount,
                 totalValue,
-                recentMoves: recentMoves.map(m => ({
+                recentMoves: recentMovesRes.map(m => ({
                     id: m.id,
                     product: m.hms_product?.name || 'Unknown',
                     sku: m.hms_product?.sku,
                     type: m.movement_type,
                     qty: Number(m.qty),
+                    friendlyQty: formatFriendlyQty(Math.abs(Number(m.qty)), m.hms_product?.metadata),
                     date: m.created_at
                 }))
             }
@@ -220,7 +235,7 @@ export async function getTaxRates() {
                 where: { id: companyId },
                 select: { country_id: true }
             });
-            
+
             const countryTaxesWhere: any = {};
             if (company?.country_id) {
                 countryTaxesWhere.country_id = company.country_id;
@@ -230,7 +245,7 @@ export async function getTaxRates() {
                 where: countryTaxesWhere,
                 include: { tax_rates: true }
             });
-            
+
             countryTaxes.forEach(ct => {
                 if (ct.tax_rates && !allTaxesMap.has(ct.tax_rates.id)) {
                     allTaxesMap.set(ct.tax_rates.id, {
@@ -246,7 +261,7 @@ export async function getTaxRates() {
         if (allTaxesMap.size === 0) {
             const { ensureGlobalTaxes } = await import("@/lib/services/tax-seed");
             await ensureGlobalTaxes();
-            
+
             const globalTaxes = await prisma.tax_rates.findMany({
                 take: 50
             });
@@ -309,7 +324,7 @@ export async function getUOMs() {
                 for (let i = 1; i < refs.length; i++) {
                     const refToMove = refs[i];
                     let catName = `${refToMove.name} Category`;
-                    
+
                     let newCategory = await prisma.hms_uom_category.findFirst({
                         where: { company_id: session.user.companyId, name: catName }
                     });
@@ -470,7 +485,7 @@ export async function findOrCreateUOM(name: string): Promise<string> {
     if (!session?.user?.companyId || !session?.user?.tenantId) return "";
 
     const cleanName = name.trim().toUpperCase() || "PCS";
-    
+
     try {
         // 1. Search existing
         const existing = await prisma.hms_uom.findFirst({
@@ -524,7 +539,7 @@ export async function findOrCreateUOM(name: string): Promise<string> {
 export async function findOrCreateUOMsBatch(names: string[]): Promise<Map<string, string>> {
     const results = new Map<string, string>();
     const uniqueNames = Array.from(new Set(names.filter(Boolean).map(n => n.trim().toUpperCase())));
-    
+
     // Process sequentially to avoid race conditions on category creation for now, 
     // or we could optimize with more complex logic. Given the small number of lines, 
     // sequential is safer and usually fast enough for a single scan.
@@ -532,7 +547,7 @@ export async function findOrCreateUOMsBatch(names: string[]): Promise<Map<string
         const id = await findOrCreateUOM(name);
         if (id) results.set(name, id);
     }
-    
+
     return results;
 }
 
@@ -559,33 +574,33 @@ export async function updateUOM(prevState: any, formData: FormData): Promise<{ e
         };
 
         const currentUom = await prisma.hms_uom.findUnique({
-             where: { id, company_id: session.user.companyId }
+            where: { id, company_id: session.user.companyId }
         });
 
         if (type === 'derived') {
-             if (!baseUnitId) return { error: "Base Unit is required for alternative units." };
-             const baseUnit = await prisma.hms_uom.findUnique({
-                 where: { id: baseUnitId, company_id: session.user.companyId }
-             });
-             if (!baseUnit) return { error: "Selected Base Unit not found." };
-             updateData.category_id = baseUnit.category_id;
+            if (!baseUnitId) return { error: "Base Unit is required for alternative units." };
+            const baseUnit = await prisma.hms_uom.findUnique({
+                where: { id: baseUnitId, company_id: session.user.companyId }
+            });
+            if (!baseUnit) return { error: "Selected Base Unit not found." };
+            updateData.category_id = baseUnit.category_id;
         } else if (currentUom?.uom_type === 'derived') {
-             // Type changed from derived to reference. Needs its own category.
-             let catName = `${name} Category`;
-             let newCategory = await prisma.hms_uom_category.findFirst({
-                 where: { company_id: session.user.companyId, name: catName }
-             });
-             if (!newCategory) {
-                 newCategory = await prisma.hms_uom_category.create({
-                     data: {
-                         id: crypto.randomUUID(),
-                         tenant_id: session.user.tenantId,
-                         company_id: session.user.companyId,
-                         name: catName
-                     }
-                 });
-             }
-             updateData.category_id = newCategory.id;
+            // Type changed from derived to reference. Needs its own category.
+            let catName = `${name} Category`;
+            let newCategory = await prisma.hms_uom_category.findFirst({
+                where: { company_id: session.user.companyId, name: catName }
+            });
+            if (!newCategory) {
+                newCategory = await prisma.hms_uom_category.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: session.user.tenantId,
+                        company_id: session.user.companyId,
+                        name: catName
+                    }
+                });
+            }
+            updateData.category_id = newCategory.id;
         }
 
         if (categoryId && !updateData.category_id) {
@@ -964,11 +979,7 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
                     hms_product_category_rel: {
                         include: { hms_product_category: true }
                     },
-                    hms_uom: true,
-                    hms_product_batch: {
-                        orderBy: { created_at: 'desc' },
-                        take: 1
-                    }
+                    hms_uom: true
                 }
             }),
             prisma.hms_product.count({ where }),
@@ -984,21 +995,23 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
             if (totalStock === 0) status = 'Out of Stock';
             else if (totalStock < 10) status = 'Low Stock';
 
-            // Memory Asset: Last Batch Price Recall
-            const lastBatch = p.hms_product_batch?.[0];
+            // Extract brand from metadata if exists
             const metadata = p.metadata as Record<string, any> || {};
 
+            // Explicitly exclude raw complex objects like hms_stock_levels to avoid Decimal leakage
+            // and serialize all Decimal fields.
+            const { hms_stock_levels, ...rest } = p;
+
             return {
-                ...p,
+                ...rest,
                 price: Number(p.price || 0),
                 totalStock,
                 stockStatus: status,
                 category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
                 brand: metadata.brand || '',
                 uom: p.hms_uom?.name || p.uom,
-                default_cost: Number(lastBatch?.cost || metadata.cost_price || p.default_cost || 0),
-                mrp: Number(lastBatch?.mrp || metadata.mrp || p.price || 0),
-                lastSellingPrice: Number(lastBatch?.sale_price || 0)
+                default_cost: Number(metadata.cost_price || p.default_cost || 0),
+                mrp: Number(metadata.mrp || p.price || 0)
             };
         });
 
@@ -1007,7 +1020,7 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
 
         return {
             success: true,
-            data: processed,
+            data: serialize(processed),
             meta: {
                 total,
                 page,
@@ -1178,7 +1191,7 @@ export async function getProduct(id: string) {
 
         const metadata = product.metadata as Record<string, any> || {};
 
-        return {
+        return serialize({
             ...product,
             price: Number(product.price || 0),
             mrp: Number(metadata.mrp || product.price || 0),
@@ -1194,7 +1207,7 @@ export async function getProduct(id: string) {
             categoryId: product.hms_product_category_rel[0]?.category_id || '',
             manufacturerId: product.manufacturer_id || '',
             stock_levels: product.hms_stock_levels
-        };
+        });
     } catch (error) {
         console.error("Failed to fetch product:", error);
         return null;
@@ -1348,13 +1361,14 @@ export async function getProductBatches(productId: string) {
     if (!session?.user?.companyId) return [];
 
     try {
-        return await prisma.hms_product_batch.findMany({
+        const batches = await prisma.hms_product_batch.findMany({
             where: {
                 product_id: productId,
                 company_id: session.user.companyId
             },
             orderBy: { expiry_date: 'asc' }
         });
+        return serialize(batches);
     } catch (error) {
         console.error("Failed to fetch product batches:", error);
         return [];
@@ -1366,7 +1380,7 @@ export async function getBestBatch(productId: string) {
     if (!session?.user?.companyId) return null;
 
     try {
-        return await prisma.hms_product_batch.findFirst({
+        const batch = await prisma.hms_product_batch.findFirst({
             where: {
                 product_id: productId,
                 company_id: session.user.companyId,
@@ -1377,6 +1391,11 @@ export async function getBestBatch(productId: string) {
                 { created_at: 'asc' }
             ]
         });
+
+        if (!batch) return null;
+
+        // Serialization fix: Convert all Decimals and complex types for Client Component safety
+        return serialize(batch);
     } catch (error) {
         console.error("Failed to fetch best batch:", error);
         return null;
@@ -1389,6 +1408,8 @@ export async function updateProductBatch(prevState: any, formData: FormData) {
 
     const id = formData.get("id") as string;
     const mrp = parseFloat(formData.get("mrp") as string) || 0;
+    const cost = parseFloat(formData.get("cost") as string);
+    const salePrice = parseFloat(formData.get("salePrice") as string);
     const expiryDate = formData.get("expiryDate") as string;
 
     if (!id) return { error: "Batch ID is required" };
@@ -1398,6 +1419,8 @@ export async function updateProductBatch(prevState: any, formData: FormData) {
             where: { id, company_id: session.user.companyId },
             data: {
                 mrp,
+                cost: isNaN(cost) ? undefined : cost,
+                sale_price: isNaN(salePrice) ? undefined : salePrice,
                 expiry_date: expiryDate ? new Date(expiryDate) : null
             }
         });
@@ -1548,135 +1571,239 @@ export async function getStockMoves(query?: string, page: number = 1, options?: 
     }
 }
 
-export async function getStockReport(params: { query?: string, page?: number, status?: string } = {}) {
-    const { query, page = 1, status: statusFilter, categoryId, manufacturerId } = params as any;
+export async function getStockReport(options: {
+    query?: string;
+    page?: number;
+    limit?: number;
+    category?: string;
+    status?: 'all' | 'low' | 'out' | 'expiry' | 'in';
+    sortBy?: 'name' | 'qty' | 'value' | 'expiry';
+    sortOrder?: 'asc' | 'desc';
+}) {
     const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
 
-    const pageSize = 50;
-    const skip = (page - 1) * pageSize;
+    if (!companyId || !tenantId) return { error: "Session expired. Please re-login." };
+
+    const page = options.page || 1;
+    const limit = options.limit || 50;
 
     try {
-        const where: any = {
-            company_id: session.user.companyId,
-            is_active: true
+        const productWhere: any = {
+            tenant_id: tenantId,
+            is_active: true,
+            // [MOD] Removed strict is_stockable: true to show all products that might have physical batches/stock
+            // even if mistakenly marked as non-stockable in Master File.
         };
 
-        if (query) {
-            where.OR = [
-                { name: { contains: query, mode: 'insensitive' } },
-                { sku: { contains: query, mode: 'insensitive' } }
+        if (options.query) {
+            productWhere.OR = [
+                { name: { contains: options.query, mode: 'insensitive' } },
+                { sku: { contains: options.query, mode: 'insensitive' } },
+                { hms_product_batch: { some: { company_id: companyId, batch_no: { contains: options.query, mode: 'insensitive' } } } }
             ];
         }
 
-        if (statusFilter === 'IN_STOCK') {
-            where.hms_stock_levels = { some: { quantity: { gt: 0 } } };
-        } else if (statusFilter === 'OUT_OF_STOCK') {
-            where.hms_stock_levels = { none: { quantity: { gt: 0 } } };
-        } else if (statusFilter === 'LOW_STOCK') {
-            where.hms_stock_levels = { some: { quantity: { lt: 10, gt: 0 } } };
+        if (options.category) {
+            productWhere.hms_product_category_rel = {
+                some: { category_id: options.category }
+            };
         }
 
-        if (categoryId && categoryId !== 'ALL') {
-            where.hms_product_category_rel = { some: { category_id: categoryId } };
+        // --- Server-Side Status Constraints ---
+        if (options.status && options.status !== 'all') {
+            if (options.status === 'in') {
+                productWhere.hms_product_batch = { some: { company_id: companyId, qty_on_hand: { gt: 0 } } };
+            } else if (options.status === 'out') {
+                productWhere.hms_product_batch = {
+                    OR: [
+                        { every: { company_id: companyId, qty_on_hand: { lte: 0 } } },
+                        { none: { company_id: companyId } }
+                    ]
+                };
+            } else if (options.status === 'low') {
+                productWhere.hms_product_batch = { some: { company_id: companyId, qty_on_hand: { gt: 0, lt: 10 } } };
+            } else if (options.status === 'expiry') {
+                const threeMonths = new Date();
+                threeMonths.setMonth(threeMonths.getMonth() + 3);
+                productWhere.hms_product_batch = { some: { company_id: companyId, expiry_date: { lte: threeMonths, gt: new Date() } } };
+            }
         }
 
-        if (manufacturerId && manufacturerId !== 'ALL') {
-            where.manufacturer_id = manufacturerId;
-        }
-
-        const [products, total] = await prisma.$transaction([
+        const [products, total] = await Promise.all([
             prisma.hms_product.findMany({
-                where,
-                select: {
-                    id: true,
-                    name: true,
-                    sku: true,
-                    default_cost: true,
-                    uom: true,
-                    hms_manufacturer: { select: { name: true } },
+                where: productWhere,
+                include: {
+                    hms_uom: true,
                     hms_product_category_rel: {
-                        include: { hms_product_category: { select: { name: true } } }
+                        include: { hms_product_category: true }
+                    },
+                    hms_product_batch: {
+                        where: {
+                            company_id: companyId,
+                            // If filtering 'in', only show batches with stock in the result
+                            ...(options.status === 'in' ? { qty_on_hand: { gt: 0 } } : {})
+                        },
+                        orderBy: { expiry_date: 'asc' }
                     }
                 },
-                take: pageSize,
-                skip,
+                skip: (page - 1) * limit,
+                take: limit,
                 orderBy: { name: 'asc' }
             }),
-            prisma.hms_product.count({ where })
+            prisma.hms_product.count({ where: productWhere })
         ]);
 
-        // 2. Fetch Stock Items with Batch Costs
-        const allLevels = await prisma.hms_stock_levels.findMany({
-            where: { company_id: session.user.companyId },
-            include: {
-                hms_product: { select: { default_cost: true, price: true } },
-                hms_product_batch: { select: { cost: true, sale_price: true } }
+        const { formatFriendlyQty } = await import("@/lib/utils/inventory-formatter");
+
+        const reportData: any[] = [];
+        products.forEach(p => {
+            const categoryName = p.hms_product_category_rel[0]?.hms_product_category?.name || 'General';
+            const uomName = (p as any).hms_uom?.name || 'Unit';
+            const batches = p.hms_product_batch;
+
+            if (batches.length === 0) {
+                // Only show 0-stock products if we are looking at 'All' or 'Out of Stock'
+                if (options.status === 'all' || options.status === 'out') {
+                    reportData.push({
+                        id: `p-${p.id}`,
+                        productId: p.id,
+                        sku: p.sku || 'N/A',
+                        productName: p.name,
+                        batchNo: 'N/A',
+                        expiryDate: null,
+                        qty: 0,
+                        uom: uomName,
+                        friendlyQty: '0 Units',
+                        costPrice: p.default_cost?.toNumber() || 0,
+                        mrp: (p.metadata as any)?.last_mrp || 0,
+                        salePrice: p.price?.toNumber() || 0,
+                        totalValue: 0,
+                        category: categoryName,
+                        metadata: p.metadata
+                    });
+                }
+            } else {
+                batches.forEach(b => {
+                    reportData.push({
+                        id: b.id,
+                        productId: p.id,
+                        sku: p.sku,
+                        name: p.name,
+                        batchNo: b.batch_no,
+                        expiryDate: b.expiry_date,
+                        qty: b.qty_on_hand.toNumber(),
+                        friendlyQty: formatFriendlyQty(b.qty_on_hand.toNumber(), p.metadata),
+                        uom: uomName,
+                        costPrice: b.cost.toNumber(),
+                        mrp: b.mrp.toNumber(),
+                        salePrice: b.sale_price.toNumber(),
+                        totalValue: b.cost.toNumber() * b.qty_on_hand.toNumber(),
+                        category: categoryName,
+                        metadata: p.metadata
+                    });
+                });
             }
         });
 
-        const productValuationMap = new Map<string, { asset: number; saleable: number }>();
-        const stockMap = new Map<string, number>();
-        let totalAssetValue = 0;   
-        let totalSaleableValue = 0; 
-        let totalStockOnHand = 0;
-
-        allLevels.forEach(s => {
-            const qty = Number(s.quantity || 0);
-            const cost = Number(s.hms_product_batch?.cost || s.hms_product?.default_cost || 0);
-            const price = Number(s.hms_product_batch?.sale_price || s.hms_product?.price || 0);
-
-            totalStockOnHand += qty;
-            totalAssetValue += (qty * cost);
-            totalSaleableValue += (qty * price);
-
-            // 2a. Update per-product quantity
-            stockMap.set(s.product_id, (stockMap.get(s.product_id) || 0) + qty);
-
-            // 2b. Track per-product valuation for the table rows
-            const current = productValuationMap.get(s.product_id) || { asset: 0, saleable: 0 };
-            productValuationMap.set(s.product_id, {
-                asset: current.asset + (qty * cost),
-                saleable: current.saleable + (qty * price)
-            });
+        // Global Valuation calculation (across the ENTIRE company, regardless of paging)
+        // We calculate this using a raw query or sum aggregation for accuracy
+        // [MOD] Optimized: Use the same tenant/active filters for summary consistency
+        const allBatches = await prisma.hms_product_batch.findMany({
+            where: {
+                company_id: companyId,
+                tenant_id: tenantId,
+                hms_product: { is_active: true }
+            },
+            select: { qty_on_hand: true, cost: true, expiry_date: true }
         });
 
-        const reportData = products.map(p => {
-            const stock = stockMap.get(p.id) || 0;
-            const valuation = productValuationMap.get(p.id) || { asset: 0, saleable: 0 };
-            return {
-                id: p.id,
-                sku: p.sku || 'N/A',
-                name: p.name,
-                category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
-                manufacturer: p.hms_manufacturer?.name || 'N/A',
-                uom: p.uom || 'Unit',
-                stockOnHand: stock,
-                stockValue: valuation.asset,
-                status: stock <= 0 ? 'Out of Stock' : (stock < 10 ? 'Low Stock' : 'In Stock')
-            };
-        });
+        const now = new Date();
+        const threeMonths = new Date();
+        threeMonths.setMonth(now.getMonth() + 3);
+
+        const summary = allBatches.reduce((acc, curr) => {
+            const qty = curr.qty_on_hand.toNumber();
+            const costValue = qty * (curr.cost?.toNumber() || 0);
+
+            acc.totalValue += costValue;
+            acc.totalQty += qty;
+
+            if (curr.expiry_date && curr.expiry_date <= threeMonths && curr.expiry_date > now) {
+                acc.expiringCount++;
+            }
+
+            if (qty > 0 && qty < 10) {
+                acc.criticalCount++;
+            }
+
+            return acc;
+        }, { totalValue: 0, totalQty: 0, expiringCount: 0, criticalCount: 0 });
 
         return {
             success: true,
-            data: reportData,
+            data: serialize(reportData),
             meta: {
                 total,
                 page,
-                totalPages: Math.ceil(total / pageSize),
-                summary: { 
-                    totalStockOnHand, 
-                    totalAssetValue,
-                    totalSaleableValue
-                }
+                totalPages: Math.ceil(total / limit),
+                globalSummary: summary
             }
         };
-    } catch (error: any) {
-        console.error("getStockReport Error:", error);
-        return { success: false, error: error.message };
+    } catch (err: any) {
+        console.error("Stock Report Error:", err);
+        return { success: false, error: err.message };
     }
 }
 
+export async function exportStockReportToExcel() {
+    const reportData: any = await getStockReport({ limit: 1000, status: 'all' });
+    if (!reportData.success || !reportData.data) return { error: "Failed to generate report" };
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(reportData.data.map((item: any) => ({
+        'Category': item.category,
+        'SKU': item.sku,
+        'Product Name': item.productName,
+        'Batch No': item.batchNo,
+        'Expiry Date': item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'N/A',
+        'Quantity': item.qty,
+        'UOM': item.uom,
+        'Packing (Friendly)': item.friendlyQty,
+        'Cost Price': item.costPrice,
+        'MRP': item.mrp,
+        'Sale Price': item.salePrice,
+        'Stock Value': item.totalValue
+    })));
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock Report');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    return { success: true, base64: buffer.toString('base64'), filename: `Stock_Report_${new Date().toISOString().split('T')[0]}.xlsx` };
+}
+
+export async function bulkUpdateBatchPricing(updates: { batchId: string, cost?: number, mrp?: number, salePrice?: number }[]) {
+    const session = await auth();
+    if (!session?.user?.id || !session.user.companyId) return { error: "Unauthorized" };
+
+    try {
+        await prisma.$transaction(
+            updates.map(u => prisma.hms_product_batch.update({
+                where: { id: u.batchId, company_id: session.user.companyId },
+                data: {
+                    ...(u.cost !== undefined && { cost: new Prisma.Decimal(u.cost) }),
+                    ...(u.mrp !== undefined && { mrp: new Prisma.Decimal(u.mrp) }),
+                    ...(u.salePrice !== undefined && { sale_price: new Prisma.Decimal(u.salePrice) })
+                }
+            }))
+        );
+        revalidatePath('/hms/inventory/reports/stock');
+        return { success: true };
+    } catch (err: any) {
+        return { error: err.message };
+    }
+}
 
 // --- Smart Product Matching & Auto-Creation ---
 
@@ -1685,8 +1812,6 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
     hsn?: string;
     packing?: string;
     taxRate?: number;
-    uom?: string;
-    conversionFactor?: number;
 }) {
     const session = await auth();
     if (!session?.user?.companyId || !session?.user?.tenantId) {
@@ -1742,18 +1867,10 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                 }
             }
 
-            // Fetch memory assets for AI recall
-            const lastBatch = await prisma.hms_product_batch.findFirst({
-                where: { product_id: product.id, company_id: companyId },
-                orderBy: { created_at: 'desc' }
-            });
-
             return {
                 productId: product.id,
                 productName: product.name,
-                created: false,
-                lastSellingPrice: Number(lastBatch?.sale_price || product.price || 0),
-                lastMrp: Number(lastBatch?.mrp || (product.metadata as any)?.mrp || product.price || 0)
+                created: false
             };
         }
 
@@ -1803,19 +1920,13 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                         }
                     }
                 }
-            }            // Fetch memory assets for AI recall (Fuzzy Match)
-            const lastBatch = await prisma.hms_product_batch.findFirst({
-                where: { product_id: product.id, company_id: companyId },
-                orderBy: { created_at: 'desc' }
-            });
+            }
 
             return {
                 productId: product.id,
                 productName: product.name,
                 created: false,
-                fuzzyMatch: true,
-                lastSellingPrice: Number(lastBatch?.sale_price || product.price || 0),
-                lastMrp: Number(lastBatch?.mrp || (product.metadata as any)?.mrp || product.price || 0)
+                fuzzyMatch: true
             };
         }
 
@@ -1836,11 +1947,6 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
                     ...(additionalData?.hsn && { hsn: additionalData.hsn }),
                     ...(additionalData?.packing && { packing: additionalData.packing }),
                     tax_rate: additionalData?.taxRate, // Proactive tax capture
-                    uom_data: {
-                        purchase_uom: additionalData?.uom || 'PCS',
-                        base_uom: 'PCS', // Default base to pieces for pharmacy/retail
-                        conversion_factor: additionalData?.conversionFactor || 1
-                    },
                     autoCreated: true,
                     created_from: 'invoice_scan',
                     scan_details: additionalData
@@ -1876,21 +1982,21 @@ export async function findOrCreateProduct(productName: string, additionalData?: 
             }
         }
 
+        console.log(`✅ Auto-created product: ${productName}`);
+
         return {
             productId: newProduct.id,
             productName: newProduct.name,
-            created: true,
-            lastSellingPrice: additionalData?.mrp || 0, // Fallback to MRP for new
-            lastMrp: additionalData?.mrp || 0
+            created: true
         };
 
     } catch (error) {
-        console.error("findOrCreateProduct Error:", error);
-        return { error: "Failed to resolve product" };
+        console.error("Failed to find/create product:", error);
+        return { error: "Failed to process product" };
     }
 }
 
-export async function findOrCreateProductsBatch(items: { productName: string, mrp?: number, hsn?: string, packing?: string, taxRate?: number, uom?: string, conversion_factor?: number }[]) {
+export async function findOrCreateProductsBatch(items: { productName: string, mrp?: number, hsn?: string, packing?: string, taxRate?: number }[]) {
     const session = await auth();
     if (!session?.user?.companyId || !session?.user?.tenantId) return { error: "Unauthorized" };
 
@@ -1950,7 +2056,7 @@ export async function importProductsCSV(formData: FormData) {
         const workbook = XLSX.read(buffer, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        
+
         // Convert to CSV string then split by lines
         const csvContent = XLSX.utils.sheet_to_csv(worksheet);
         lines = csvContent.split(/\r?\n/);
@@ -2009,7 +2115,7 @@ export async function importProductsCSV(formData: FormData) {
             if (!name) continue;
 
             const sku = idxSku !== -1 && row[idxSku] ? row[idxSku] : `PRD-${name.toUpperCase().replace(/[^A-Z0-9]/g, '-').slice(0, 30)}`;
-            
+
             // Basic sanitization for SKU
             const sanitizedSku = sku.trim().replace(/[^a-zA-Z0-9-]/g, '');
 
@@ -2045,9 +2151,9 @@ export async function importProductsCSV(formData: FormData) {
                     }
 
                     const newCat = await prisma.hms_product_category.create({
-                        data: { 
-                            tenant_id: tenantId, 
-                            company_id: companyId, 
+                        data: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
                             name: catName,
                             income_account_id: incomeAccountId,
                             expense_account_id: expenseAccountId
@@ -2111,7 +2217,7 @@ export async function importProductsCSV(formData: FormData) {
             // Always Link Category if provided (for both New and Existing)
             if (categoryId) {
                 await prisma.hms_product_category_rel.upsert({
-                    where: { 
+                    where: {
                         product_id_category_id: {
                             product_id: productId,
                             category_id: categoryId
@@ -2138,7 +2244,7 @@ export async function importProductsCSV(formData: FormData) {
             }
 
             if (taxRateIdToApply) {
-                 const existingRule = await prisma.product_tax_rules.findFirst({
+                const existingRule = await prisma.product_tax_rules.findFirst({
                     where: { product_id: productId }
                 });
                 if (!existingRule) {
@@ -2180,7 +2286,6 @@ export async function importProductsCSV(formData: FormData) {
                     const batchNo = row[idxBatch];
                     const expiry = idxExpiry !== -1 && row[idxExpiry] ? new Date(row[idxExpiry]) : null;
 
-
                     // Upsert Batch
                     const batch = await prisma.hms_product_batch.upsert({
                         where: {
@@ -2206,10 +2311,10 @@ export async function importProductsCSV(formData: FormData) {
                     batchId = batch.id;
                 }
 
-                // Get Last Balance from ledger
+                // Get Last Balance
                 let currentBalance = 0;
                 const lastLedger = await prisma.hms_product_stock_ledger.findFirst({
-                    where: { product_id: productId, company_id: companyId },
+                    where: { product_id: productId },
                     orderBy: { created_at: 'desc' }
                 });
                 if (lastLedger) currentBalance = Number(lastLedger.balance_qty);
@@ -2222,7 +2327,7 @@ export async function importProductsCSV(formData: FormData) {
                         tenant_id: tenantId,
                         company_id: companyId,
                         product_id: productId,
-                        movement_type: 'OPENING',
+                        movement_type: 'OPENING', // ensure enum or string matches
                         change_qty: openingStock,
                         balance_qty: newBalance,
                         batch_id: batchId,
@@ -2231,6 +2336,9 @@ export async function importProductsCSV(formData: FormData) {
                     }
                 });
             }
+
+
+
         } catch (e) {
             const msg = (e as Error).message;
             errors.push({ row: i + 1, error: msg });
@@ -2238,23 +2346,28 @@ export async function importProductsCSV(formData: FormData) {
     }
 
     revalidatePath('/hms/inventory/products');
-    return { 
-        success: true, 
+    return {
+        success: true,
         message: `Import complete. ${createdCount} new products added, ${updatedCount} existing products updated.`,
         created: createdCount,
         updated: updatedCount,
-        errors 
+        errors
     };
 }
 
 export async function getBatchHistory(batchId: string) {
     const session = await auth();
     if (!session?.user?.companyId) return [];
+
     try {
-        return await prisma.hms_stock_ledger.findMany({
-            where: { batch_id: batchId, company_id: session.user.companyId },
+        const history = await prisma.hms_stock_ledger.findMany({
+            where: {
+                batch_id: batchId,
+                company_id: session.user.companyId
+            },
             orderBy: { created_at: 'desc' }
         });
+        return serialize(history);
     } catch (error) {
         console.error("Failed to fetch batch history:", error);
         return [];
@@ -2272,41 +2385,62 @@ export async function adjustStock(prevState: any, formData: FormData) {
 
     if (!batchId || changeQty === 0) return { error: "Invalid data" };
 
+    const companyId = session.user.companyId; // Store after null check
+
     try {
         await prisma.$transaction(async (tx) => {
+            // 1. Get current batch and product info
             const batch = await tx.hms_product_batch.findUnique({
-                where: { id: batchId, company_id: session.user.companyId }
+                where: {
+                    id: batchId,
+                    company_id: companyId
+                }
             });
             if (!batch) throw new Error("Batch not found");
 
+            // 2. Find Main Warehouse
             let warehouse = await tx.hms_stock_location.findFirst({
-                where: { company_id: session.user.companyId, name: 'Main Warehouse' }
-            }) || await tx.hms_stock_location.findFirst({
-                where: { company_id: session.user.companyId }
+                where: {
+                    company_id: companyId,
+                    code: { equals: 'WH-MAIN' }
+                }
             });
+
+            if (!warehouse) {
+                warehouse = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId }
+                });
+            }
 
             if (!warehouse) throw new Error("No stock location found");
 
-            await tx.hms_product_batch.update({
+            // 3. Update Batch Qty
+            const updatedBatch = await tx.hms_product_batch.update({
                 where: { id: batchId },
                 data: { qty_on_hand: { increment: changeQty } }
             });
 
+            // 4. Update Stock Levels
             const stockLevelWhere = {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
                 product_id: batch.product_id,
                 location_id: warehouse.id,
                 batch_id: batchId
-            };
+            }
 
-            const existingLevel = await tx.hms_stock_levels.findFirst({ where: stockLevelWhere as any });
+            const existingLevel = await tx.hms_stock_levels.findFirst({
+                where: stockLevelWhere as any
+            })
 
             if (existingLevel) {
                 await tx.hms_stock_levels.update({
                     where: { id: existingLevel.id },
-                    data: { quantity: { increment: changeQty }, updated_at: new Date() }
-                });
+                    data: {
+                        quantity: { increment: changeQty },
+                        updated_at: new Date()
+                    }
+                })
             } else {
                 await tx.hms_stock_levels.create({
                     data: {
@@ -2318,21 +2452,26 @@ export async function adjustStock(prevState: any, formData: FormData) {
                         quantity: changeQty,
                         reserved: 0
                     }
-                });
+                })
             }
 
-            // Standardize: Adjustments should be logged in hms_stock_ledger (signed sums)
+            // 5. Create Ledger Entry
             await tx.hms_stock_ledger.create({
                 data: {
                     tenant_id: session.user.tenantId as string,
                     company_id: session.user.companyId as string,
                     product_id: batch.product_id,
                     movement_type: changeQty > 0 ? 'adjustment-in' : 'adjustment-out',
-                    qty: changeQty, // Store SIGNED value for World Standard reconciliation
+                    qty: Math.abs(changeQty),
                     batch_id: batchId,
                     reference: reason,
                     to_location_id: changeQty > 0 ? warehouse.id : null,
-                    from_location_id: changeQty < 0 ? warehouse.id : null
+                    from_location_id: changeQty < 0 ? warehouse.id : null,
+                    metadata: {
+                        previous_qty: Number(batch.qty_on_hand),
+                        new_qty: Number(updatedBatch.qty_on_hand),
+                        adjusted_by: session.user.name
+                    }
                 }
             });
         });
@@ -2359,104 +2498,292 @@ export async function searchProducts(query: string) {
                     { sku: { contains: query, mode: 'insensitive' } }
                 ]
             },
-            select: { id: true, name: true, sku: true, price: true, uom: true, metadata: true },
+            select: {
+                id: true,
+                name: true,
+                sku: true,
+                price: true,
+                default_cost: true,
+                uom: true,
+                metadata: true
+            },
             take: 10
         });
 
-        return {
-            success: true,
-            data: products.map(p => {
-                const metadata = p.metadata as any || {};
-                const uomData = metadata.uom_data || {};
-                return {
-                    ...p,
-                    mrp: Number(p.price || 0),
-                    // Flatten key UOM fields for the UI
-                    purchase_uom: metadata.purchase_uom || uomData.purchase_uom || metadata.pack_uom || uomData.pack_uom || '',
-                    base_uom: metadata.base_uom || uomData.base_uom || '',
-                    default_cost: metadata.cost || uomData.cost || 0
-                };
-            })
-        };
+        const serializedData = products.map(p => ({
+            ...p,
+            price: Number(p.price || 0), // Override original Decimal
+            mrp: Number(p.price || 0),
+            default_cost: Number(p.default_cost || (p.metadata && typeof p.metadata === 'object' ? (p.metadata as any).cost || 0 : 0))
+        }));
+
+        return { success: true, data: serializedData };
     } catch (e: any) {
         return { error: e.message };
     }
 }
 
-
-export async function recalculateStockLevels() {
+export async function bulkUpdateProducts(productIds: string[], updates: {
+    categoryId?: string;
+    isService?: boolean;
+    isStockable?: boolean;
+    isActive?: boolean;
+    price?: number;
+}) {
     const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
-    const { companyId, tenantId } = session.user as any;
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+
+    if (!companyId || !tenantId) return { error: "Unauthorized" };
+    if (!productIds || productIds.length === 0) return { error: "No products selected" };
 
     try {
         await prisma.$transaction(async (tx) => {
-            // 1. Wipe the cache. This is the only way to kill ghost entries (the "367" bug).
-            await tx.hms_stock_levels.deleteMany({
-                where: { company_id: companyId }
-            });
+            // 1. Update Core Product Fields
+            const data: any = {};
+            if (updates.isService !== undefined) data.is_service = updates.isService;
+            if (updates.isStockable !== undefined) data.is_stockable = updates.isStockable;
+            if (updates.isActive !== undefined) data.is_active = updates.isActive;
+            if (updates.price !== undefined) data.price = updates.price;
+            if (updates.categoryId !== undefined) {
+                // We'll update the relationship below
+            }
 
-            // 2. Locate the Primary Storage
-            const location = await tx.hms_stock_location.findFirst({
-                where: { company_id: companyId, is_active: true }
-            });
-            if (!location) throw new Error("No active stock location found for reconciliation.");
-
-            // 3. Aggregate Pure Truth from Ledger
-            // We group by product AND batch to keep inventory granular
-            const ledgerAggregates = await tx.hms_stock_ledger.groupBy({
-                by: ['product_id', 'batch_id'],
-                where: { company_id: companyId },
-                _sum: { qty: true }
-            });
-
-            // 4. Batch Restore the Stock Levels
-            if (ledgerAggregates.length > 0) {
-                await tx.hms_stock_levels.createMany({
-                    data: ledgerAggregates.map(agg => ({
-                        id: crypto.randomUUID(),
-                        tenant_id: tenantId,
-                        company_id: companyId,
-                        product_id: agg.product_id,
-                        location_id: location.id, // Re-map to primary location for now
-                        batch_id: agg.batch_id,
-                        quantity: Number(agg._sum.qty || 0),
-                        reserved: 0
-                    }))
+            if (Object.keys(data).length > 0) {
+                await tx.hms_product.updateMany({
+                    where: { id: { in: productIds }, company_id: companyId },
+                    data
                 });
             }
 
-            // 5. Heal Product Costs (Landed Cost Recovery)
-            const products = await tx.hms_product.findMany({
-                where: { company_id: companyId },
-                select: { id: true }
-            });
-
-            for (const p of products) {
-                const lastPurchaseLine = await tx.hms_stock_ledger.findFirst({
-                    where: { 
-                        product_id: p.id, 
-                        company_id: companyId, 
-                        movement_type: 'in',
-                        unit_cost: { gt: 0 }
-                    },
-                    orderBy: { created_at: 'desc' },
-                    select: { unit_cost: true }
+            // 2. Update Category Relationships if needed
+            if (updates.categoryId) {
+                // Delete old associations for these products
+                await tx.hms_product_category_rel.deleteMany({
+                    where: { product_id: { in: productIds } }
                 });
 
-                if (lastPurchaseLine?.unit_cost) {
-                    await tx.hms_product.update({
-                        where: { id: p.id },
-                        data: { default_cost: lastPurchaseLine.unit_cost }
+                // Create new associations
+                const rels = productIds.map(pid => ({
+                    product_id: pid,
+                    category_id: updates.categoryId as string
+                }));
+
+                await tx.hms_product_category_rel.createMany({
+                    data: rels
+                });
+            }
+        });
+
+        revalidatePath('/hms/inventory/products');
+        return { success: true, message: `Successfully updated ${productIds.length} items.` };
+    } catch (error: any) {
+        console.error("Bulk update failure:", error);
+        return { error: error.message || "Failed to execute bulk update." };
+    }
+}
+
+export async function rapidStockOnboarding(data: {
+    barcode?: string;
+    productId?: string;
+    productName: string;
+    categoryId?: string;
+    batches: {
+        batchNo: string;
+        expiryDate?: string;
+        mrp: number;
+        cost: number;
+        salePrice?: number;
+        qty: number;
+        uom?: string;
+        conversionFactor?: number;
+    }[]
+}) {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+
+    if (!companyId || !tenantId) return { error: "Session expired. Please re-login." };
+    if (data.batches.length === 0) return { error: "No batch data provided" };
+
+    console.log("MOBILE AUDIT START:", { productName: data.productName, barcode: data.barcode, batchesCount: data.batches.length });
+
+    try {
+        const result = await prisma.$transaction(async (tx) => {
+            let productId = data.productId;
+
+            // 1. Find or Create Product
+            if (!productId) {
+                console.log("CREATING NEW PRODUCT:", data.productName);
+                const prefix = data.productName.substring(0, 3).toUpperCase();
+                const random = Math.floor(Math.random() * 10000);
+                const sku = `${prefix}-${random}`;
+
+                const newProduct = await tx.hms_product.create({
+                    data: {
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        name: data.productName,
+                        sku: sku,
+                        default_barcode: data.barcode,
+                        is_active: true,
+                        is_stockable: true
+                    }
+                });
+                productId = newProduct.id;
+                console.log("PRODUCT CREATED ID:", productId);
+
+                if (data.categoryId) {
+                    await tx.hms_product_category_rel.create({
+                        data: {
+                            product_id: productId,
+                            category_id: data.categoryId
+                        }
                     });
                 }
             }
-        }, { timeout: 30000 }); // Larger timeout for full reconciliation
 
-        revalidatePath('/hms/inventory/reports/stock');
-        return { success: true, message: "Inventory re-synchronized successfully. All ghost entries purged." };
-    } catch (e: any) {
-        console.error("Recalculate Error:", e);
-        return { success: false, error: e.message };
+            // 2. Process Batches
+            for (const b of data.batches) {
+                const factor = Number(b.conversionFactor) || 1;
+                const unitsToSync = Number(b.qty) * factor;
+                const unitMRP = Number(b.mrp) / factor;
+                const incomingCost = Number(b.cost) / factor;
+                const unitSale = (Number(b.salePrice) || Number(b.mrp)) / factor;
+
+                console.log("PROCESSING BATCH:", b.batchNo, "Final Units:", unitsToSync);
+                
+                // 1. Fetch Existing Batch (Priority 1 for Cost Recovery)
+                let batch = await tx.hms_product_batch.findUnique({
+                    where: {
+                        tenant_id_company_id_product_id_batch_no: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: productId as string,
+                            batch_no: b.batchNo
+                        }
+                    }
+                });
+
+                // --- WORLD STANDARD: Intelligent Cost Recovery ---
+                let finalUnitCost = incomingCost;
+                if (finalUnitCost <= 0) {
+                    if (batch && Number(batch.cost) > 0) {
+                        finalUnitCost = Number(batch.cost); // Use existing batch cost
+                        console.log("RECOVERED COST from existing batch:", finalUnitCost);
+                    } else {
+                        // Priority 2: Product Master Default Cost
+                        const masterProd = await tx.hms_product.findUnique({
+                            where: { id: productId as string },
+                            select: { default_cost: true }
+                        });
+                        const masterCost = Number(masterProd?.default_cost) || 0;
+                        if (masterCost > 0) {
+                            finalUnitCost = masterCost;
+                            console.log("RECOVERED COST from product master:", finalUnitCost);
+                        } else {
+                            // Priority 3: Market Margin Fallback (70% of MRP)
+                            finalUnitCost = unitMRP * 0.7; 
+                            console.log("RECOVERED COST via 30% Margin Guess:", finalUnitCost);
+                        }
+                    }
+                }
+
+                if (!batch) {
+                    console.log("CREATING NEW BATCH RECORD:", b.batchNo);
+                    batch = await tx.hms_product_batch.create({
+                        data: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: productId as string,
+                            batch_no: b.batchNo,
+                            expiry_date: b.expiryDate ? new Date(b.expiryDate) : null,
+                            mrp: new Prisma.Decimal(unitMRP),
+                            cost: new Prisma.Decimal(finalUnitCost),
+                            sale_price: new Prisma.Decimal(unitSale),
+                            qty_on_hand: 0
+                        }
+                    });
+                } else {
+                    // Update pricing on existing batch if provided during audit
+                    await tx.hms_product_batch.update({
+                        where: { id: batch.id },
+                        data: {
+                            mrp: new Prisma.Decimal(unitMRP),
+                            cost: new Prisma.Decimal(finalUnitCost),
+                            sale_price: new Prisma.Decimal(unitSale)
+                        }
+                    });
+                }
+
+                // 3. Find/Create Godown
+                let location = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId }
+                });
+
+                if (!location) {
+                    console.log("LOCATION MISSING - AUTO PROVISIONING MAIN GODOWN");
+                    location = await tx.hms_stock_location.create({
+                        data: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            code: 'MAIN',
+                            name: 'Main Godown',
+                            location_type: 'warehouse'
+                        }
+                    });
+                }
+
+                console.log("SYNCING TO LOCATION:", location.name);
+
+                // 4. Update Stock & Ledger
+                await tx.hms_product_batch.update({
+                    where: { id: batch.id },
+                    data: { qty_on_hand: { increment: unitsToSync } }
+                });
+
+                await tx.hms_stock_levels.upsert({
+                    where: {
+                        tenant_id_company_id_product_id_batch_id_location_id: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            location_id: location.id,
+                            product_id: productId as string,
+                            batch_id: batch.id
+                        }
+                    },
+                    update: { quantity: { increment: unitsToSync } },
+                    create: {
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        location_id: location.id,
+                        product_id: productId as string,
+                        batch_id: batch.id,
+                        quantity: unitsToSync
+                    }
+                });
+
+                await tx.hms_stock_ledger.create({
+                    data: {
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        product_id: productId as string,
+                        batch_id: batch.id,
+                        movement_type: 'opening_stock',
+                        qty: b.qty,
+                        to_location_id: location.id,
+                        reference: 'Mobile Godown Audit'
+                    }
+                });
+            }
+
+            return { success: true, productId };
+        });
+
+        console.log("MOBILE AUDIT SUCCESS:", result.productId);
+        return result;
+    } catch (err: any) {
+        console.error("MOBILE AUDIT SERVER ERROR:", err);
+        return { error: err.message || "Operation failed on server. Contact IT." };
     }
 }

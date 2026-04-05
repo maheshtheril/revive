@@ -30,9 +30,10 @@ node configure_ip.js || (
     pause
 )
 
-echo [3/3] Launching WhatsApp Bridge (Auto-Restart Mode)...
-:: Start WhatsApp Bridge in background with a persistent loop
-start /B "ZIONA_BRIDGE" cmd /c "cd whatsapp-bridge && :LOOP && node server.js >> bridge.log 2>&1 && echo [%date% %time%] Bridge exited, restarting... >> bridge.log && timeout /t 2 >nul && goto LOOP"
+echo [3/3] Launching WhatsApp Bridge...
+:: Start WhatsApp Bridge in background
+cd /d "%~dp0whatsapp-bridge"
+start /B "ZIONA_BRIDGE" cmd /c "node server.js > bridge.log 2>&1"
 
 :: Wait 3 seconds for server readiness
 timeout /t 3 /nobreak >nul

@@ -8,7 +8,7 @@ import {
     ArrowUpRight, ArrowDownRight, RefreshCcw,
     Activity, ShieldCheck, Zap, Layers,
     ChevronRight, CreditCard, Banknote, History,
-    FileText, Calendar as CalendarIcon, ChevronLeft
+    FileText
 } from 'lucide-react'
 import { useLocalization } from '@/contexts/localization-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -53,18 +53,12 @@ export function FinancialDashboard({
     currencyCode = 'INR',
     currencySymbol = '₹',
     initialView = 'modern',
-    initialTab = 'pl',
-    hideDashboardHeader = false,
-    hideSecondaryTabs = false,
-    titleOverride = "Financial Intelligence"
+    initialTab = 'pl'
 }: {
     currencyCode?: string,
     currencySymbol?: string,
     initialView?: 'modern' | 'classic',
-    initialTab?: 'pl' | 'bs',
-    hideDashboardHeader?: boolean,
-    hideSecondaryTabs?: boolean,
-    titleOverride?: string
+    initialTab?: 'pl' | 'bs'
 }) {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
@@ -144,7 +138,6 @@ export function FinancialDashboard({
             className="space-y-8 p-4 md:p-8 pb-20 max-w-[1600px] mx-auto"
         >
             {/* Premium Header */}
-            {!hideDashboardHeader && (
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-xl shadow-indigo-500/5 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl font-inter" />
 
@@ -158,7 +151,7 @@ export function FinancialDashboard({
                         </Badge>
                     </div>
                     <h1 className="text-4xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-white">
-                        {titleOverride.split(' ').slice(0, -1).join(' ')} <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">{titleOverride.split(' ').slice(-1)}</span>
+                        Financial <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">Intelligence</span>
                     </h1>
                     <p className="text-slate-500 dark:text-slate-400 mt-2 text-lg">Comprehensive performance control & fiscal oversight</p>
                 </div>
@@ -172,45 +165,17 @@ export function FinancialDashboard({
                         <Landmark className="h-5 w-5" />
                         {viewMode === 'modern' ? 'Switch to Classic View' : 'Back to Dashboard'}
                     </Button>
-                    <div className="flex items-center bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 p-1 shadow-sm overflow-hidden min-w-[280px]">
-                        {/* MONTH SELECTOR */}
-                        <select 
-                            value={date.getMonth()} 
-                            onChange={(e) => setDate(new Date(date.getFullYear(), parseInt(e.target.value), 1))}
-                            className="bg-transparent text-slate-700 dark:text-slate-200 font-bold px-3 py-2 outline-none border-r border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition-colors"
-                        >
-                            {Array.from({ length: 12 }, (_, i) => (
-                                <option key={i} value={i} className="text-slate-900 bg-white">
-                                    {new Date(0, i).toLocaleString('default', { month: 'long' })}
-                                </option>
-                            ))}
-                        </select>
-                        
-                        {/* YEAR SELECTOR */}
-                        <select 
-                            value={date.getFullYear()} 
-                            onChange={(e) => setDate(new Date(parseInt(e.target.value), date.getMonth(), 1))}
-                            className="bg-transparent text-slate-700 dark:text-slate-200 font-bold px-3 py-2 outline-none hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition-colors"
-                        >
-                            {Array.from({ length: 10 }, (_, i) => {
-                                const y = new Date().getFullYear() - 5 + i;
-                                return <option key={y} value={y} className="text-slate-900 bg-white">{y}</option>;
-                            })}
-                        </select>
-                        
-                        <div className="px-4 py-2 flex items-center bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-black">
-                            <Calendar className="h-4 w-4" />
-                        </div>
-                    </div>
+                    <Button variant="outline" className="h-12 px-6 rounded-xl border-slate-200 dark:border-slate-800 gap-2 hover:bg-slate-50 transition-all font-semibold">
+                        <Calendar className="h-5 w-5 text-indigo-500" />
+                        {formatDate(date, 'MMMM yyyy')}
+                    </Button>
                     <Button className="h-12 px-8 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 transition-all gap-2 font-bold shadow-xl shadow-slate-900/10 dark:shadow-white/5">
                         <Download className="h-5 w-5" /> Executive Report
                     </Button>
                 </div>
             </div>
-            )}
 
             {/* Core KPI Strip */}
-            {!hideDashboardHeader && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <motion.div variants={itemVariants}>
                     <Card className="group relative overflow-hidden border-none shadow-2xl shadow-indigo-500/10 bg-gradient-to-br from-indigo-600 to-violet-700 text-white rounded-[2rem] h-full">
@@ -303,10 +268,8 @@ export function FinancialDashboard({
                     </Card>
                 </motion.div>
             </div>
-            )}
 
             {/* Main Content Area: Trends & Quick Actions */}
-            {!hideDashboardHeader && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 {/* Trend Chart */}
                 <Card className="lg:col-span-8 border-none shadow-2xl shadow-indigo-500/5 bg-white dark:bg-slate-900 rounded-[2.5rem] overflow-hidden border border-slate-100 dark:border-slate-800/50">
@@ -529,7 +492,6 @@ export function FinancialDashboard({
                     </CardContent>
                 </Card>
             </div>
-            )}
 
             {viewMode === 'classic' ? (
                 <div className="animate-in fade-in zoom-in duration-500 space-y-4">
@@ -553,21 +515,18 @@ export function FinancialDashboard({
                             data={plData}
                             startDate={new Date(date.getFullYear(), date.getMonth(), 1)}
                             endDate={new Date(date.getFullYear(), date.getMonth() + 1, 0)}
-                            onDateChange={setDate}
                             currencySymbol={currencySymbol}
                         />
                     ) : (
                         <ClassicBalanceSheet
                             data={bsData}
                             date={date}
-                            onDateChange={setDate}
                             currencySymbol={currencySymbol}
                         />
                     )}
                 </div>
             ) : (
-                <Tabs defaultValue={initialTab} className="w-full">
-                {!hideSecondaryTabs && (
+                <Tabs defaultValue="pl" className="w-full">
                 <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-[2rem]">
                     <TabsList className="bg-transparent gap-2 h-auto p-0">
                         <TabsTrigger
@@ -576,6 +535,18 @@ export function FinancialDashboard({
                         >
                             Daily Streams
                         </TabsTrigger>
+                        <TabsTrigger
+                            value="pl"
+                            className="rounded-2xl px-8 h-12 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:shadow-lg font-bold text-xs uppercase tracking-widest"
+                        >
+                            Profit & Loss
+                        </TabsTrigger>
+                        <TabsTrigger
+                            value="bs"
+                            className="rounded-2xl px-8 h-12 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:shadow-lg font-bold text-xs uppercase tracking-widest"
+                        >
+                            Balance Sheet
+                        </TabsTrigger>
                     </TabsList>
 
                     <div className="flex items-center gap-2 px-4">
@@ -583,7 +554,6 @@ export function FinancialDashboard({
                         <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Audited Statement Mode</span>
                     </div>
                 </div>
-                )}
 
                 <AnimatePresence mode="wait">
                     {/* Daily Streams */}
@@ -665,6 +635,209 @@ export function FinancialDashboard({
                                                 <p className="text-slate-400 font-medium italic">Full resource availability - No expenses recorded</p>
                                             </div>
                                         )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </motion.div>
+                    </TabsContent>
+
+                    {/* Profit & Loss Statement */}
+                    <TabsContent value="pl">
+                        <motion.div
+                            key="pl"
+                            initial={{ opacity: 0, scale: 0.98 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden"
+                        >
+                            <div className="p-12 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row justify-between items-center gap-8 bg-slate-50 dark:bg-slate-900/50">
+                                <div className="text-center md:text-left">
+                                    <h2 className="text-3xl font-black text-slate-900 dark:text-white mb-2">Statement of Profit or Loss</h2>
+                                    <div className="flex items-center gap-2 justify-center md:justify-start">
+                                        <Badge variant="outline" className="text-indigo-600 bg-white border-indigo-200 font-bold">ACCRAUAL BASIS</Badge>
+                                        <span className="text-slate-400 text-sm font-medium">Period ending {date.toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                                <div className="bg-white dark:bg-slate-800 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-700 shadow-xl text-center min-w-[280px] relative overflow-hidden group">
+                                    <div className={`absolute top-0 left-0 w-2 h-full ${plData?.netProfit >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Net Corporate Profit</p>
+                                    <p className={`text-4xl font-black ${plData?.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                        {formatCurrency(plData?.netProfit || 0)}
+                                    </p>
+                                    {plData?.netProfit > 0 && <div className="mt-2 text-[10px] font-bold text-emerald-500 animate-pulse">POSITIVE FISCAL FLOW</div>}
+                                </div>
+                            </div>
+
+                            <div className="max-w-4xl mx-auto py-16 px-8 lg:px-0 space-y-16">
+                                {/* Revenue */}
+                                <section>
+                                    <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-slate-900 dark:border-white">
+                                        <h3 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">01. Revenue Streams</h3>
+                                        <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(plData?.totalRevenue || 0)}</span>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {plData?.revenue?.map((item: any) => (
+                                            <div key={item.name} className="flex justify-between items-end pb-3 border-b border-slate-50 dark:border-slate-800/50 group">
+                                                <span className="text-slate-600 dark:text-slate-400 font-medium group-hover:text-indigo-500 transition-colors uppercase tracking-widest text-[11px]">{item.name}</span>
+                                                <div className="flex-1 border-b border-dotted border-slate-200 dark:border-slate-800 mx-4 mb-1" />
+                                                <span className="font-black text-slate-900 dark:text-white">{formatCurrency(item.amount)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+
+                                {/* COGS */}
+                                <section>
+                                    <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-slate-200 dark:border-slate-800">
+                                        <h3 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">02. Direct Operating Costs</h3>
+                                        <span className="font-bold text-rose-500">({formatCurrency(plData?.totalCOGS || 0)})</span>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {plData?.cogs?.map((item: any) => (
+                                            <div key={item.name} className="flex justify-between items-end pb-3 border-b border-slate-50 dark:border-slate-800/50 group">
+                                                <span className="text-slate-600 dark:text-slate-400 font-medium group-hover:text-rose-500 transition-colors uppercase tracking-widest text-[11px]">{item.name}</span>
+                                                <div className="flex-1 border-b border-dotted border-slate-200 dark:border-slate-800 mx-4 mb-1" />
+                                                <span className="font-bold text-slate-700 dark:text-slate-300">({formatCurrency(item.amount)})</span>
+                                            </div>
+                                        ))}
+                                        <div className="flex justify-between items-center py-6 mt-4 bg-emerald-50 dark:bg-emerald-900/10 px-8 rounded-[1.5rem] border border-emerald-100 dark:border-emerald-900/50">
+                                            <span className="font-black text-emerald-900 dark:text-emerald-400 text-sm tracking-widest uppercase">Gross Profit Margin</span>
+                                            <span className="text-2xl font-black text-emerald-600">
+                                                {formatCurrency((plData?.totalRevenue || 0) - (plData?.totalCOGS || 0))}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                {/* Expenses */}
+                                <section>
+                                    <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-slate-200 dark:border-slate-800">
+                                        <h3 className="text-xs font-black uppercase tracking-[0.3em] text-slate-400">03. Indirect / Admin Expenses</h3>
+                                        <span className="font-bold text-rose-500">({formatCurrency(plData?.totalExpenses || 0)})</span>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {plData?.expenses?.map((item: any) => (
+                                            <div key={item.name} className="flex justify-between items-end pb-3 border-b border-slate-50 dark:border-slate-800/50">
+                                                <span className="text-slate-600 dark:text-slate-400 font-medium uppercase tracking-widest text-[11px]">{item.name}</span>
+                                                <div className="flex-1 border-b border-dotted border-slate-200 dark:border-slate-800 mx-4 mb-1" />
+                                                <span className="font-bold text-slate-700 dark:text-slate-300">({formatCurrency(item.amount)})</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+
+                                <div className="py-12 border-t-8 border-slate-900 dark:border-white">
+                                    <div className="flex justify-between items-center px-4">
+                                        <div>
+                                            <h4 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Earnings Before Interest & Tax</h4>
+                                            <p className="text-slate-400 font-bold text-[10px] tracking-[0.3em] mt-1">THE BOTTOM LINE PERFORMANCE</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className={`text-6xl font-black tracking-tighter ${plData?.netProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                                                {formatCurrency(plData?.netProfit || 0)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </TabsContent>
+
+                    {/* Balance Sheet Statement */}
+                    <TabsContent value="bs">
+                        <motion.div
+                            key="bs"
+                            initial={{ opacity: 0, scale: 0.98 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="grid grid-cols-1 lg:grid-cols-2 gap-8"
+                        >
+                            <Card className="rounded-[3rem] border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden bg-white dark:bg-slate-900 h-full">
+                                <CardHeader className="bg-emerald-500 text-white p-10 h-48 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 p-10 opacity-20">
+                                        <Wallet size={120} strokeWidth={1} />
+                                    </div>
+                                    <div className="relative z-10">
+                                        <CardTitle className="text-3xl font-black mb-1">Total Enterprise Assets</CardTitle>
+                                        <CardDescription className="text-emerald-100 font-bold">What the corporation owns</CardDescription>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="p-10 -mt-10 relative z-20">
+                                    <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl p-8 space-y-6">
+                                        {bsData?.assets?.map((item: any) => (
+                                            <div key={item.name} className="flex justify-between items-center py-4 border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                                                <div>
+                                                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{item.type || 'ASSET'}</p>
+                                                    <p className="font-bold text-slate-800 dark:text-slate-200">{item.name}</p>
+                                                </div>
+                                                <span className="font-black text-xl text-slate-900 dark:text-white">{formatCurrency(item.amount)}</span>
+                                            </div>
+                                        ))}
+                                        <div className="pt-6 mt-6 border-t-2 border-emerald-100 dark:border-emerald-900/50 flex justify-between items-center">
+                                            <span className="text-sm font-black uppercase tracking-widest text-emerald-600">Total Liquid Assets</span>
+                                            <span className="text-4xl font-black text-emerald-600">{formatCurrency(bsData?.totalAssets || 0)}</span>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            <Card className="rounded-[3rem] border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden bg-white dark:bg-slate-900 h-full">
+                                <CardHeader className="bg-slate-900 text-white p-10 h-48 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 p-10 opacity-20">
+                                        <Landmark size={120} strokeWidth={1} />
+                                    </div>
+                                    <div className="relative z-10">
+                                        <CardTitle className="text-3xl font-black mb-1">Liabilities & Equity</CardTitle>
+                                        <CardDescription className="text-slate-400 font-bold">Claims against the corporation</CardDescription>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="p-10 -mt-10 relative z-20">
+                                    <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl p-8 space-y-10">
+                                        <section>
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <div className="bg-rose-500/10 p-2 rounded-lg">
+                                                    <History className="h-4 w-4 text-rose-500" />
+                                                </div>
+                                                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Accounts Payable & Liabilities</h4>
+                                            </div>
+                                            <div className="space-y-4">
+                                                {bsData?.liabilities?.map((item: any) => (
+                                                    <div key={item.name} className="flex justify-between py-2 border-b border-slate-50 dark:border-slate-800/20 last:border-0">
+                                                        <span className="font-medium text-slate-600 dark:text-slate-400">{item.name}</span>
+                                                        <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.amount)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </section>
+
+                                        <section>
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <div className="bg-indigo-500/10 p-2 rounded-lg">
+                                                    <ShieldCheck className="h-4 w-4 text-indigo-500" />
+                                                </div>
+                                                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Proprietor's Equity / Reserves</h4>
+                                            </div>
+                                            <div className="space-y-4">
+                                                {bsData?.equity?.map((item: any) => (
+                                                    <div key={item.name} className="flex justify-between py-2 border-b border-slate-50 dark:border-slate-800/20 last:border-0">
+                                                        <span className="font-medium text-slate-600 dark:text-slate-400">{item.name}</span>
+                                                        <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.amount)}</span>
+                                                    </div>
+                                                ))}
+                                                <div className="flex justify-between py-3 border-t border-indigo-100 dark:border-indigo-900/50 italic text-indigo-500 font-black">
+                                                    <span className="text-xs uppercase tracking-widest font-black">Retained Earnings</span>
+                                                    <span>{formatCurrency(bsData?.retainedEarnings || 0)}</span>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <div className="pt-6 mt-6 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center group">
+                                            <div>
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Total Capital Employed</span>
+                                                <div className="w-12 h-1 bg-slate-900 dark:bg-white transition-all group-hover:w-24" />
+                                            </div>
+                                            <span className="text-4xl font-black text-slate-900 dark:text-white">
+                                                {formatCurrency((bsData?.totalLiabilities || 0) + (bsData?.totalEquity || 0))}
+                                            </span>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

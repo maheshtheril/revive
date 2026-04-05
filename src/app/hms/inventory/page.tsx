@@ -12,7 +12,8 @@ import {
     ArrowRight,
     Box,
     DollarSign,
-    RefreshCw
+    RefreshCw,
+    QrCode
 } from "lucide-react"
 import { StockAdjustmentButton } from "./stock-adjustment-button"
 import { SyncHealthIndicator } from "@/components/infra/sync-health"
@@ -150,6 +151,12 @@ export default async function InventoryDashboard() {
                                 </div>
                                 <span className="text-sm font-semibold text-gray-700 group-hover:text-green-700">Receive Stock</span>
                             </Link>
+                            <Link href="/hms/inventory/audit" className="p-4 rounded-xl bg-gray-50 hover:bg-purple-50 border border-gray-100 hover:border-purple-100 transition-all group text-center flex flex-col items-center gap-3">
+                                <div className="p-3 bg-white rounded-full shadow-sm text-gray-600 group-hover:text-purple-600 group-hover:scale-110 transition-all">
+                                    <QrCode className="h-5 w-5" />
+                                </div>
+                                <span className="text-sm font-semibold text-gray-700 group-hover:text-purple-700">Mobile Audit</span>
+                            </Link>
                             <StockAdjustmentButton />
                             {/* Add more quick links */}
                         </div>
@@ -180,7 +187,7 @@ export default async function InventoryDashboard() {
                                         </div>
                                         <div className="text-right">
                                             <p className={`font-bold ${move.type === 'in' ? 'text-green-600' : 'text-orange-600'}`}>
-                                                {move.type === 'in' ? '+' : '-'}{move.qty}
+                                                {move.type === 'in' ? '+' : '-'}{move.friendlyQty || move.qty}
                                             </p>
                                             <p className="text-xs text-gray-400">Qty</p>
                                         </div>

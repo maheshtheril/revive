@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import Link from "next/link"
 import { notFound } from "next/navigation"
-import { ArrowLeft, Printer, Download, CreditCard, Calendar, User, Building2, Pencil, Plus } from "lucide-react"
+import { ArrowLeft, Printer, Download, CreditCard, Calendar, User, Building2, Pencil, Plus, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { InvoiceControlPanel } from "@/components/billing/invoice-control-panel";
 import { InvoiceReturnClient } from "./invoice-return-client";
@@ -35,6 +35,27 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
     const company = await prisma.company.findUnique({
         where: { id: invoice.company_id }
     });
+
+    // [INTEGRITY-CHECK] Check for pending nursing items within 24h window
+    let pendingConsumablesCount = 0;
+    if (invoice.patient_id) {
+        const recentAppts = await prisma.hms_appointments.findMany({
+            where: {
+                patient_id: invoice.patient_id,
+                starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+            },
+            select: { id: true }
+        });
+        const apptIds = recentAppts.map((a: any) => a.id);
+        if (apptIds.length > 0) {
+            pendingConsumablesCount = await prisma.hms_stock_move.count({
+                where: {
+                    source_reference: { in: apptIds },
+                    source: 'Nursing Consumption (Pending)'
+                }
+            });
+        }
+    }
 
     return (
         <div className="max-w-4xl mx-auto space-y-8 p-6">
@@ -74,6 +95,7 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                         outstandingAmount={Number(invoice.outstanding_amount || 0)}
                         patientEmail={(invoice.hms_patient?.contact as any)?.email}
                         invoiceData={JSON.parse(JSON.stringify({ ...invoice, company: company }))} // Pass serialized data
+                        pendingConsumablesCount={pendingConsumablesCount}
                     />
                 </div>
             </div>
@@ -89,7 +111,7 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                         }`} />
                     <span className="font-semibold capitalize">{invoice.status}</span>
                 </div>
-                <div className="font-mono font-medium">
+                <div className="font-mono font-medium text-lg">
                     Outstanding: ₹{Number(invoice.outstanding_amount || 0).toFixed(2)}
                 </div>
             </div>
@@ -106,7 +128,6 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                                 {invoice.hms_patient.first_name} {invoice.hms_patient.last_name}
                             </div>
                             <div className="text-slate-500 text-sm">{invoice.hms_patient.patient_number}</div>
-                            {/* Display address if available in metadata or contact */}
                         </div>
                     ) : (
                         <div className="text-slate-400 italic">Guest Patient</div>
@@ -171,8 +192,8 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                             <td className="px-6 py-3 text-right font-medium text-slate-900">₹{Number(invoice.total_tax).toFixed(2)}</td>
                         </tr>
                         <tr>
-                            <td colSpan={3} className="px-6 py-3 text-right font-bold text-slate-900">Total</td>
-                            <td className="px-6 py-3 text-right font-bold text-slate-900">₹{Number(invoice.total).toFixed(2)}</td>
+                            <td colSpan={3} className="px-6 py-3 text-right font-bold text-slate-900 text-lg">Total</td>
+                            <td className="px-6 py-3 text-right font-bold text-slate-900 text-lg">₹{Number(invoice.total).toFixed(2)}</td>
                         </tr>
                     </tfoot>
                 </table>

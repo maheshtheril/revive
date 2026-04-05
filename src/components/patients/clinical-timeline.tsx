@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { 
-    Calendar, UserPlus, Heart, Stethoscope, 
-    FlaskConical, ArrowUpRight, Activity, 
+import {
+    Calendar, UserPlus, Heart, Stethoscope,
+    FlaskConical, ArrowUpRight, Activity,
     LogOut, CreditCard, ChevronRight, Clock,
     Search, Filter, Download, ExternalLink,
     MapPin, Clipboard, AlertCircle, TrendingUp, TrendingDown,
-    MapPin as BedIcon
+    MapPin as BedIcon, PackageMinus
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getPatientTimeline, TimelineEvent } from '@/app/actions/clinical'
@@ -24,7 +24,8 @@ const EVENT_ICONS: Record<string, any> = {
     'PRESCRIPTION': { icon: Stethoscope, color: 'bg-violet-500', text: 'text-violet-500' },
     'LAB_ORDER': { icon: FlaskConical, color: 'bg-amber-500', text: 'text-amber-500' },
     'DISCHARGE': { icon: LogOut, color: 'bg-teal-500', text: 'text-teal-500' },
-    'BILLING': { icon: CreditCard, color: 'bg-slate-700', text: 'text-slate-700' }
+    'BILLING': { icon: CreditCard, color: 'bg-slate-700', text: 'text-slate-700' },
+    'CONSUMABLES': { icon: PackageMinus, color: 'bg-orange-500', text: 'text-orange-500' }
 }
 
 export function ClinicalTimeline({ patientId }: { patientId: string }) {
@@ -81,20 +82,20 @@ export function ClinicalTimeline({ patientId }: { patientId: string }) {
 
                     {/* Clinical Terminal Quick Actions */}
                     <div className="flex flex-wrap gap-2">
-                        <Button 
+                        <Button
                             className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl h-12 px-6 shadow-lg shadow-indigo-100 dark:shadow-none transition-all hover:scale-105 active:scale-95"
                             asChild
                         >
                             <a href={`/hms/prescriptions/new?patientId=${patientId}`}>+ Prescription</a>
                         </Button>
-                        <Button 
+                        <Button
                             variant="outline"
                             className="bg-white dark:bg-slate-800 border-indigo-100 dark:border-slate-700 text-indigo-600 dark:text-indigo-400 font-black text-[10px] uppercase tracking-widest rounded-2xl h-12 px-6 shadow-sm hover:bg-slate-50 transition-all hover:scale-105 active:scale-95"
                             asChild
                         >
                             <a href={`/hms/appointments/new?patientId=${patientId}`}>+ Appointment</a>
                         </Button>
-                        <Button 
+                        <Button
                             variant="outline"
                             className="bg-white dark:bg-slate-800 border-rose-100 dark:border-slate-700 text-rose-600 dark:text-rose-400 font-black text-[10px] uppercase tracking-widest rounded-2xl h-12 px-6 shadow-sm hover:bg-slate-50 transition-all hover:scale-105 active:scale-95"
                             asChild
@@ -113,8 +114,8 @@ export function ClinicalTimeline({ patientId }: { patientId: string }) {
                         onClick={() => setFilter(type)}
                         className={`
                             px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all
-                            ${filter === type 
-                                ? 'bg-slate-900 text-white shadow-lg shadow-slate-200 dark:shadow-none translate-y-[-2px]' 
+                            ${filter === type
+                                ? 'bg-slate-900 text-white shadow-lg shadow-slate-200 dark:shadow-none translate-y-[-2px]'
                                 : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-100 dark:border-slate-700 hover:bg-slate-50'}
                         `}
                     >
@@ -223,6 +224,24 @@ export function ClinicalTimeline({ patientId }: { patientId: string }) {
                                     {event.type === 'PRESCRIPTION' && (
                                         <div className="mt-2 text-xs font-bold text-slate-600 bg-violet-50/50 p-4 rounded-2xl border border-violet-100 italic">
                                             "{event.metadata.plan || 'Advised rest and follow up'}"
+                                        </div>
+                                    )}
+
+                                    {event.type === 'CONSUMABLES' && (
+                                        <div className="mt-2 p-4 bg-orange-50/50 dark:bg-orange-950/10 rounded-2xl border border-orange-100 dark:border-orange-900/30 flex justify-between items-center">
+                                            <div>
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 dark:text-orange-400 block mb-1">Item Details</span>
+                                                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                                                    {event.metadata.product_name}
+                                                    {event.metadata.notes && <span className="ml-2 italic text-slate-500 font-medium text-xs">- "{event.metadata.notes}"</span>}
+                                                </span>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Quantity/UOM</span>
+                                                <span className="text-sm font-mono font-black text-slate-900 dark:text-white">
+                                                    {event.description.split(' of ')[0]}
+                                                </span>
+                                            </div>
                                         </div>
                                     )}
                                 </div>

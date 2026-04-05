@@ -6,22 +6,32 @@ import { Activity, Clock, User, HeartPulse, CheckCircle2, ChevronRight, Search }
 
 export const dynamic = 'force-dynamic'
 
-export default async function NursingStationPage() {
+import { DashboardDateFilter } from "@/components/hms/dashboard-date-filter"
+
+export default async function NursingStationPage({ 
+    searchParams 
+}: { 
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }> 
+}) {
+    const params = await searchParams
+    const dateStr = params.date as string
+    const targetDate = dateStr ? new Date(dateStr) : new Date()
+
     const session = await auth()
     const tenantId = session?.user?.tenantId
 
-    // Get today's start and end
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
+    // [DYNAMIC TIMELINE] Get target date start/end instead of hardcoded today
+    const selectedDate = new Date(targetDate)
+    selectedDate.setHours(0, 0, 0, 0)
+    const tomorrow = new Date(selectedDate)
     tomorrow.setDate(tomorrow.getDate() + 1)
 
-    // Fetch appointments for today
+    // Fetch appointments for selected date
     const appointments = await prisma.hms_appointments.findMany({
         where: {
             tenant_id: tenantId,
             starts_at: {
-                gte: today,
+                gte: selectedDate,
                 lt: tomorrow
             },
             status: {
@@ -66,13 +76,16 @@ export default async function NursingStationPage() {
                     <p className="text-slate-500 font-medium ml-16 mt-1">Manage patient vitals and triage for today</p>
                 </div>
 
-                <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex items-center w-full md:w-80">
-                    <Search className="h-5 w-5 text-slate-400 ml-2" />
-                    <input
-                        type="text"
-                        placeholder="Search patient..."
-                        className="flex-1 border-none focus:ring-0 text-sm font-medium"
-                    />
+                <div className="flex flex-col md:flex-row items-center gap-4">
+                    <DashboardDateFilter />
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex items-center w-full md:w-80">
+                        <Search className="h-5 w-5 text-slate-400 ml-2" />
+                        <input
+                            type="text"
+                            placeholder="Search patient..."
+                            className="flex-1 border-none focus:ring-0 text-sm font-medium"
+                        />
+                    </div>
                 </div>
             </div>
 

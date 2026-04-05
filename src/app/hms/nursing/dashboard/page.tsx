@@ -2,8 +2,17 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { NursingActionCenter } from "@/components/hms/nursing/nursing-action-center"
 import { redirect } from "next/navigation"
+import { serialize } from "@/lib/utils"
 
-export default async function NursingDashboardPage() {
+export default async function NursingDashboardPage({
+    searchParams
+}: {
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+    const params = await searchParams
+    const dateStr = params.date as string
+    const targetDate = dateStr ? new Date(dateStr) : new Date()
+
     const session = await auth()
 
     if (!session?.user?.email) {
@@ -11,9 +20,11 @@ export default async function NursingDashboardPage() {
     }
 
     const tenantId = session.user.tenantId
-    const todayStart = new Date()
+
+    // [ELITE DATE DYNAMIC RANGE] Adjusted to target specific date from URL
+    const todayStart = new Date(targetDate)
     todayStart.setHours(0, 0, 0, 0)
-    const todayEnd = new Date()
+    const todayEnd = new Date(targetDate)
     todayEnd.setHours(23, 59, 59, 999)
 
     // Parallel Data Fetching
@@ -127,11 +138,11 @@ export default async function NursingDashboardPage() {
     return (
         <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6">
             <NursingActionCenter
-                pendingTriage={formattedPendingTriage}
-                completedTriage={formattedCompletedTriage}
-                activeAdmissions={formattedAdmissions}
-                pendingSamples={formattedSamples}
-                allPatients={appointments.map(formatAppointment)}
+                pendingTriage={serialize(formattedPendingTriage)}
+                completedTriage={serialize(formattedCompletedTriage)}
+                activeAdmissions={serialize(formattedAdmissions)}
+                pendingSamples={serialize(formattedSamples)}
+                allPatients={serialize(appointments.map(formatAppointment))}
             />
         </div>
     )

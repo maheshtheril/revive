@@ -5,7 +5,7 @@ import { ArrowLeft, Calendar, Clock, FileText, CheckCircle, MapPin, Video, Phone
 import Link from "next/link"
 import { PatientDoctorSelectors } from "@/components/appointments/patient-doctor-selectors"
 import { CreatePatientForm } from "@/components/hms/create-patient-form"
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { Maximize2, Minimize2, Mic, MicOff, ShieldAlert, BadgeCheck, Sparkles, Loader2, Minus } from "lucide-react"
@@ -55,24 +55,31 @@ export function AppointmentForm({
     const router = useRouter()
     const { patient_id: initialPatientId, date: initialDate, time: initialTime } = initialData
 
-    // Derived values for initial state
-    const defaultPatientId = editingAppointment?.patient?.id || editingAppointment?.patient_id || initialPatientId || ''
-    const defaultDate = editingAppointment
-        ? new Date(editingAppointment.start_time).toISOString().split('T')[0]
-        : (initialDate || new Date().toISOString().split('T')[0])
-    const defaultTime = editingAppointment
-        ? new Date(editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-        : (initialTime || '')
-    const defaultClinicianId = editingAppointment?.clinician?.id || editingAppointment?.clinician_id || ''
-
-    // State
+    // State initialized as null to prevent server/client hydration mismatches
     const [localPatients, setLocalPatients] = useState(patients)
-    const [selectedPatientId, setSelectedPatientId] = useState(defaultPatientId)
+    const [selectedPatientId, setSelectedPatientId] = useState('')
     const [selectedPatientData, setSelectedPatientData] = useState<any>(null)
     const [showNewPatientModal, setShowNewPatientModal] = useState(false)
-    const [selectedClinicianId, setSelectedClinicianId] = useState(defaultClinicianId)
-    const [selectedDate, setSelectedDate] = useState(defaultDate)
-    const [suggestedTime, setSuggestedTime] = useState(defaultTime)
+    const [selectedClinicianId, setSelectedClinicianId] = useState('')
+    const [selectedDate, setSelectedDate] = useState('')
+    const [suggestedTime, setSuggestedTime] = useState('')
+    const [isMounted, setIsMounted] = useState(false)
+
+    // Sync state on mount and when editingAppointment changes
+    useEffect(() => {
+        setIsMounted(true)
+        if (!editingAppointment) {
+            setSelectedPatientId(initialPatientId || '')
+            setSelectedDate(initialDate || new Date().toISOString().split('T')[0])
+            setSuggestedTime(initialTime || '')
+            return
+        }
+        
+        setSelectedPatientId(editingAppointment.patient?.id || editingAppointment.patient_id || '')
+        setSelectedClinicianId(editingAppointment.clinician?.id || editingAppointment.clinician_id || '')
+        setSelectedDate(new Date(editingAppointment.start_time).toISOString().split('T')[0])
+        setSuggestedTime(new Date(editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+    }, [editingAppointment, initialPatientId, initialDate, initialTime])
     const [isMaximized, setIsMaximized] = useState(true)
     const [isListening, setIsListening] = useState(false)
     const [hmsSettings, setHmsSettings] = useState<any>(null)
@@ -90,6 +97,26 @@ export function AppointmentForm({
     const [isCheckingRegInvoice, setIsCheckingRegInvoice] = useState(false);
     const [isGeneratingReg, setIsGeneratingReg] = useState(false);
     const [companyInfo, setCompanyInfo] = useState<any>(null); // [HOSPITAL INFO] from global settings
+    const lastAutoOpenedId = useRef<string | null>(null);
+
+    // [AUTO-OPEN] Trigger registration fee collection automatically when patient is selected
+    useEffect(() => {
+        if (!selectedPatientId || isCollectingReg) return;
+        
+        // Only trigger once per patient selection change to avoid annoying loops
+        if (lastAutoOpenedId.current === selectedPatientId) return;
+
+        const status = checkRegistrationStatus();
+        if (status.shouldCharge && status.status !== 'loading') {
+            setIsCollectingReg(true);
+            lastAutoOpenedId.current = selectedPatientId;
+            toast({
+                title: "Fee Collection Triggered",
+                description: "Opening payment terminal for mandatory registration fee.",
+                className: "bg-amber-600 text-white"
+            });
+        }
+    }, [selectedPatientId, selectedPatientData, hmsSettings, isCollectingReg]);
 
     // [FETCH COMPANY INFO] for OP Slip letterhead
     useEffect(() => {
@@ -414,15 +441,23 @@ export function AppointmentForm({
             } else {
                 const aptId = editingAppointment?.id || res.data?.id;
 
-
-                // [WORLD CLASS] Show Success Stage
-                setSaveSuccess(editingAppointment ? { ...editingAppointment, id: aptId, patient: res.data?.patient } : res.data);
+                // [WORLD CLASS] Hydrate Success Object with Local Context for UI/Print Hub
+                const hydratedApt = {
+                    ...res.data,
+                    patient: selectedPatientData || patients.find(p => p.id === selectedPatientId),
+                    clinician: doctors.find(d => d.id === selectedClinicianId)
+                };
 
                 toast({
                     title: "Medical Record Finalized",
                     description: editingAppointment ? "Clinical encounter updated." : "Session finalized.",
                     className: "bg-emerald-600 text-white"
                 });
+
+                // [WORLD CLASS] Automated Redirect to Dashboard Hub
+                if (onClose) onClose();
+                router.push('/hms/reception/dashboard');
+                router.refresh();
             }
         } catch (error: any) {
             toast({ title: "Terminal Crash", description: error.message, variant: "destructive" })
@@ -481,23 +516,6 @@ export function AppointmentForm({
     }, [selectedPatientId, localPatients]);
     const activeRegStatus = checkRegistrationStatus();
 
-    // [PRINT HELPER] Uses hidden iframe to bypass popup blockers (window.open is blocked by Chrome on HTTPS)
-    const printHtml = (html: string) => {
-        const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:0;';
-        document.body.appendChild(iframe);
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!doc) { document.body.removeChild(iframe); return; }
-        doc.open();
-        doc.write(html);
-        doc.close();
-        // Wait for fonts/images then print
-        setTimeout(() => {
-            try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch(e) {}
-            setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 1000);
-        }, 500);
-    };
-
     // [NEW] SUCCESS STAGE VIEW (REFACTORED: Moved inside main return to survive billing terminal)
     const renderSuccessView = () => (
         <div className="fixed inset-0 z-[200] bg-slate-950 flex items-center justify-center p-4">
@@ -509,149 +527,57 @@ export function AppointmentForm({
                 <h2 className="text-4xl font-black text-slate-900 dark:text-white uppercase italic tracking-tighter mb-2">Appointment <span className="text-emerald-600">Finalized</span></h2>
                 <p className="text-slate-500 font-bold uppercase tracking-widest text-xs mb-8">Patient flow initiated for OP Consultation</p>
 
-                <div className="mb-10 text-slate-400 font-medium">
-                    The medical record has been securely saved and synchronized with the clinical terminal.
+                <div className="mb-10 text-slate-400 font-medium leading-relaxed">
+                    The medical record has been securely saved. You can now generate the clinical vouchers or identity nodes using the high-speed hubs below.
                 </div>
 
-                {/* CLEAN SUCCESS ACTIONS */}
                 <div className="flex flex-col gap-3">
-                    <div className="grid grid-cols-2 gap-3">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                const appt = {
-                                    ...saveSuccess,
-                                    patient: saveSuccess.patient || selectedPatientData || selectedPatient,
-                                    clinician: saveSuccess.clinician || doctors.find(d => d.id === selectedClinicianId)
-                                };
-                                const patientName = `${appt.patient?.first_name || ''} ${appt.patient?.last_name || ''}`;
-                                const doctorName = `Dr. ${appt.clinician?.first_name || ''} ${appt.clinician?.last_name || ''}`;
-                                const date = new Date(appt.start_time || appt.starts_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-                                const time = new Date(appt.start_time || appt.starts_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                // 3-digit numeric token (001-999) derived from appointment UUID
-                                const tokenRaw = parseInt(appt.id.replace(/-/g, '').slice(0, 8), 16) % 999 + 1;
-                                const tokenNumber = String(tokenRaw).padStart(3, '0');
-                                const logo = companyInfo?.logo_url || '';
-                                const hospName = companyInfo?.name || '';
-                                const hospAddress = (companyInfo?.metadata as any)?.address || '';
-                                const hospPhone = (companyInfo?.metadata as any)?.phone || '';
-                                printHtml(`<!DOCTYPE html><html><head><title>OP Slip - ${patientName}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, sans-serif; background: white; color: #1a202c; padding: 2cm; }
-  @media print { @page { margin: 0; size: A4; } body { padding: 2cm; } }
-  .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 25px; }
-  .header-left { display: flex; align-items: center; gap: 15px; }
-  .header-logo { height: 60px; width: 60px; object-fit: contain; }
-  .header-info h1 { font-size: 18px; font-weight: 700; text-transform: uppercase; color: #1a202c; margin: 0 0 2px 0; }
-  .header-info p { font-size: 10px; color: #64748b; font-weight: 500; margin: 0; }
-  .header-right { text-align: right; }
-  .header-right p { margin: 0; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+                    <div className="grid grid-cols-2 gap-3 w-full">
+                        <OpSlipDialog
+                            appointment={saveSuccess}
+                            defaultPrintMode="standard"
+                            hospitalInfo={hospitalInfo}
+                            autoOpen={true}
+                            trigger={
+                                <button
+                                    type="button"
+                                    className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-3xl shadow-xl shadow-emerald-600/20 font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Printer className="h-4 w-4" /> OP Slip (Standard)
+                                </button>
+                            }
+                        />
 
-  .slip { background: #f8fafc; border-radius: 8px; padding: 15px 20px; border: 1px solid #f1f5f9; }
-  .slip-row { display: flex; justify-content: space-between; align-items: center; }
-  .token-box { text-align: right; }
-  .lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #64748b; display: block; margin-bottom: 2px; }
-  .patient-name { font-size: 14pt; font-weight: 800; color: #1e293b; margin-bottom: 2px; }
-  .patient-meta { font-size: 11px; font-weight: 500; color: #64748b; margin-top: 2px; }
-  .token-num { font-size: 14pt; font-weight: 800; color: #1e293b; line-height: 1; }
-  .divider { border: none; border-top: 1px solid #f1f5f9; margin: 12px 0; }
-  .info-row { display: flex; gap: 30px; }
-  .info-block { flex: 1; }
-  .val-md { font-size: 13px; font-weight: 700; color: #334155; margin-top: 2px; }
-</style></head><body>
-${hmsSettings?.opSlipPreprintedLetterhead ? 
-`<div style="height: ${hmsSettings?.opSlipHeaderHeight || '4.5'}cm;"></div>` : 
-`<div class="header">
-  <div class="header-left">
-      ${logo ? `<img src="${logo}" class="header-logo" />` : ''}
-      <div class="header-info">
-          ${hospName ? `<h1>${hospName}</h1>` : ''}
-          <p>${hospAddress || ''} ${hospPhone ? ' | ' + hospPhone : ''}</p>
-      </div>
-  </div>
-  <div class="header-right">
-      <p>OP VISIT SLIP</p>
-      <p style="margin-top:2px;">${date}</p>
-  </div>
-</div>`
-}
-<div class="slip">
-  <div class="slip-row">
-    <div>
-      <span class="lbl">Patient Details</span>
-      <div class="patient-name">${patientName}</div>
-      <div class="patient-meta">
-        ID: ${appt.patient?.patient_number || 'N/A'} &nbsp;|&nbsp; 
-        ${appt.patient?.gender || ''} &nbsp;|&nbsp; 
-        Age: ${appt.patient?.age || (appt.patient?.dob ? (new Date().getFullYear() - new Date(appt.patient.dob).getFullYear()) : 'N/A')}
-      </div>
-    </div>
-    <div class="token-box">
-      <span class="lbl">TOKEN NO</span>
-      <div class="token-num">#${tokenNumber}</div>
-    </div>
-  </div>
-  <hr class="divider" />
-  <div class="info-row">
-    <div class="info-block">
-      <span class="lbl">Consulting Clinician</span>
-      <div class="val-md">${doctorName}</div>
-    </div>
-    <div class="info-block" style="text-align:right;">
-      <span class="lbl">Encounter Time</span>
-      <div class="val-md">${time}</div>
-    </div>
-  </div>
-</div></div>
-</body></html>`);
-                            }}
-                            className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-3xl shadow-xl shadow-emerald-600/20 font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-2"
-                        >
-                            <Printer className="h-4 w-4" /> OP Slip (A4)
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => {
-                                const appt = {
-                                    ...saveSuccess,
-                                    patient: saveSuccess.patient || selectedPatientData || selectedPatient,
-                                    clinician: saveSuccess.clinician || doctors.find(d => d.id === selectedClinicianId)
-                                };
-                                const patientName = `${appt.patient?.first_name || ''} ${appt.patient?.last_name || ''}`;
-                                const doctorName = `Dr. ${appt.clinician?.first_name || ''} ${appt.clinician?.last_name || ''}`;
-                                const date = new Date(appt.start_time || appt.starts_at).toLocaleDateString();
-                                const tokenNumber = appt.id.split('-')[0].toUpperCase();
-                                printHtml(`<!DOCTYPE html><html><head><title>Label - ${patientName}</title>
-<style>
-  @page { margin: 0; size: 50mm 25mm; }
-  body { font-family: Arial,sans-serif; width: 46mm; margin: 0 auto; padding: 2mm 0; font-size: 8pt; }
-  .name { font-weight: 900; font-size: 10pt; text-transform: uppercase; }
-  .id { font-weight: bold; border-bottom: 1px solid black; padding-bottom: 1px; margin-bottom: 2px; }
-  .meta { font-size: 7pt; display: flex; justify-content: space-between; }
-</style></head><body>
-<div class="name">${patientName}</div>
-<div class="id">ID: ${appt.patient?.patient_number || 'N/A'}</div>
-<div class="meta"><span>${appt.patient?.gender || ''}</span><span>${date}</span></div>
-<div class="meta" style="margin-top:2px;"><span>T:#${tokenNumber}</span><span style="font-weight:bold;">${doctorName.slice(0,15)}</span></div>
-</body></html>`);
-                            }}
-                            className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-3xl shadow-xl shadow-indigo-600/20 font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-2"
-                        >
-                            <Printer className="h-4 w-4" /> Patient Label
-                        </button>
+                        <OpSlipDialog
+                            appointment={saveSuccess}
+                            defaultPrintMode="label"
+                            hospitalInfo={hospitalInfo}
+                            trigger={
+                                <button
+                                    type="button"
+                                    className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-3xl shadow-xl shadow-indigo-600/20 font-black uppercase text-[10px] tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Printer className="h-4 w-4" /> Identity Label
+                                </button>
+                            }
+                        />
                     </div>
 
 
                     {paidInvoiceId && (
-                        <button
-                            type="button"
-                            onClick={() => window.open(`/hms/billing/${paidInvoiceId}/print`, '_blank')}
-                            className="w-full py-5 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-600 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
-                        >
-                            <Receipt className="h-4 w-4" /> Print Registration Receipt
-                        </button>
+                        <OpSlipDialog
+                            appointment={saveSuccess}
+                            defaultPrintMode="standard"
+                            hospitalInfo={hospitalInfo}
+                            trigger={
+                                <button
+                                    type="button"
+                                    className="w-full py-5 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-600 rounded-3xl font-black uppercase text-[10px] tracking-[0.2em] hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Receipt className="h-4 w-4" /> Print Registration Receipt
+                                </button>
+                            }
+                        />
                     )}
 
                     <button
@@ -667,8 +593,14 @@ ${hmsSettings?.opSlipPreprintedLetterhead ?
                     </button>
 
                     <button
-                        onClick={() => router.push('/reception')}
-                        className="w-full py-4 text-slate-400 font-bold uppercase text-[9px] tracking-[0.3em] hover:text-slate-600 transition-all"
+                        onClick={() => {
+                            if (onClose) {
+                                onClose();
+                            } else {
+                                router.push('/hms/reception/dashboard');
+                            }
+                        }}
+                        className="w-full py-4 text-slate-400 font-bold uppercase text-[9px] tracking-[0.3em] hover:text-slate-500 transition-all"
                     >
                         Return to Dashboard
                     </button>
@@ -677,6 +609,8 @@ ${hmsSettings?.opSlipPreprintedLetterhead ?
         </div>
     );
 
+
+    if (!isMounted) return null;
 
     return (
         <div className={`relative bg-slate-900 border border-white/20 shadow-2xl overflow-hidden transition-all duration-500 ease-in-out ${isMaximized ? 'fixed inset-0 z-[100]' : 'w-full h-full relative'}`}>

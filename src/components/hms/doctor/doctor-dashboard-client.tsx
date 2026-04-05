@@ -5,13 +5,14 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
     Activity, Stethoscope, Users, Clock, Calendar,
     ChevronRight, Search, Bell, FileText, Pill,
-    CheckCircle2, AlertCircle, TrendingUp, User, Smartphone
+    CheckCircle2, AlertCircle, TrendingUp, User, Smartphone,
+    Calendar as CalendarIcon
 } from "lucide-react"
 import { ScannerModal } from "./scanner-modal"
 import { useRouter } from "next/navigation"
 import { differenceInYears } from "date-fns"
 import { VisitTypeBadge } from "../visit-type-badge"
-import Link from "next/link"
+import { DashboardDateFilter } from "../dashboard-date-filter"
 
 interface DoctorDashboardProps {
     doctorName: string
@@ -84,11 +85,14 @@ export function DoctorDashboardClient({ doctorName, doctorId, appointments, stat
                         >
                             {new Date().getHours() < 12 ? 'Good Morning' : new Date().getHours() < 18 ? 'Good Afternoon' : 'Good Evening'}, <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">{doctorName}</span>
                         </motion.h1>
-                        <p className="text-slate-500 dark:text-slate-400 font-medium mt-1 flex items-center gap-2">
-                            <Calendar className="h-4 w-4" />
-                            {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Loading Date...'}
-                            <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">v2.0 Live</span>
-                        </p>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-4 mt-2">
+                            <DashboardDateFilter />
+                            <p className="text-slate-500 dark:text-slate-400 font-medium flex items-center gap-2">
+                                <CalendarIcon className="h-4 w-4" />
+                                {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Loading Date...'}
+                                <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-widest">Clinical Session v2.0</span>
+                            </p>
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -370,13 +374,15 @@ export function DoctorDashboardClient({ doctorName, doctorId, appointments, stat
                                                     )}
 
                                                     {apt.lab_status && apt.lab_status.isReady && (
-                                                        <Link
-                                                            href={`/hms/lab/reports/${apt.lab_status.orderId}`}
+                                                        <a
+                                                            href={`/api/lab/report/${apt.lab_status.orderId}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
                                                             className="h-10 w-full rounded-xl bg-violet-50 text-violet-700 font-bold text-xs border border-violet-100 hover:bg-violet-100 hover:border-violet-200 transition-all flex items-center justify-center gap-2"
                                                         >
                                                             <FileText className="h-4 w-4" />
                                                             VIEW LAB REPORT
-                                                        </Link>
+                                                        </a>
                                                     )}
                                                 </div>
                                             </div>

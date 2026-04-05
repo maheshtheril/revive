@@ -9,7 +9,8 @@ import { AccountingService } from "@/lib/services/accounting"
 import { NotificationService } from "@/lib/services/notification";
 import { SYSTEM_DEFAULT_CURRENCY_CODE } from "@/lib/currency-constants";
 import { isUUID, safeNum } from "@/lib/utils/is-uuid";
-import { getWhatsAppConfig } from "./settings";
+import { getWhatsAppConfig, getHMSSettings } from "./settings";
+import { serialize } from "@/lib/utils";
 
 
 export async function getUoms() {
@@ -22,7 +23,7 @@ export async function getUoms() {
             where: { tenant_id: (session?.user as any).tenantId },
             orderBy: { name: 'asc' }
         });
-        
+
         // Serialize Decimal fields for Client Components
         const serializedUoms = uoms.map((u: any) => ({
             ...u,
@@ -175,7 +176,7 @@ export async function getBillableItems() {
         const companyTaxRates = taxMaps.map(m => m.tax_rates).filter(Boolean);
         const rateToIdMap = new Map(companyTaxRates.map(tr => [Number(tr.rate), tr.id]));
         const idToRateObjMap = new Map(companyTaxRates.map(tr => [tr.id, tr]));
-        
+
         const defaultTaxId = taxMaps.find(m => m.is_default)?.tax_rate_id || null;
 
         const flatItems = items.map((item) => {
@@ -266,21 +267,6 @@ export async function getBillableItems() {
             const uomData = metadata.uom_data || {};
             const pricingStrategy = metadata.pricing_strategy || 'manual';
 
-            // Standardize conversion factor
-            const soldUom = (item.uom || '').toUpperCase();
-            const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
-            let effectiveCF = 1;
-            
-            // Only apply conversion factor if we are NOT selling the base unit
-            if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
-                effectiveCF = Number(uomData.conversion_factor || uomData.conversionFactor || (
-                    soldUom === 'BOX' ? 10 : 
-                    soldUom === 'STRIP' ? 10 : 
-                    soldUom === 'PKT' ? 10 : 1
-                ));
-            }
-            const packUomName = uomData.pack_uom || uomData.packUom || (effectiveCF > 1 ? item.uom || 'PACK' : (item.uom || 'PCS'));
-
             // PRIORITY: Strategy-based Choice > Last Sale Price > History > Base Price
             let finalPrice = priceHistory?.price?.toNumber() || Number(item.price) || 0;
 
@@ -303,13 +289,13 @@ export async function getBillableItems() {
                 type: item.is_service ? 'service' : 'item',
                 metadata: {
                     ...metadata,
-                    // UOM Pricing (Industry Standard) - Support both snake_case and camelCase
-                    baseUom: uomData.base_uom || uomData.baseUom || 'PCS',
+                    // UOM Pricing (Industry Standard)
+                    baseUom: uomData.base_uom || item.uom || 'PCS',
                     basePrice: finalPrice,
-                    conversionFactor: effectiveCF,
-                    packUom: packUomName,
-                    packPrice: uomData.pack_price || uomData.packPrice || (finalPrice * effectiveCF),
-                    packSize: uomData.pack_size || uomData.packSize || effectiveCF,
+                    conversionFactor: uomData.conversion_factor || 1,
+                    packUom: uomData.pack_uom || (uomData.conversion_factor > 1 ? `PACK-${uomData.conversion_factor}` : (item.uom || 'PCS')),
+                    packPrice: uomData.pack_price || (finalPrice * (uomData.conversion_factor || 1)),
+                    packSize: uomData.pack_size || uomData.conversion_factor || 1,
                     lastMrp: metadata.last_mrp,
                     lastSalePrice: metadata.last_sale_price,
                     pricingStrategy: pricingStrategy
@@ -320,7 +306,7 @@ export async function getBillableItems() {
             };
         });
 
-        return { success: true, data: flatItems };
+        return { success: true, data: serialize(flatItems) };
     } catch (error) {
         console.error("Failed to fetch billable items:", error);
         return { error: "Failed to fetch items" };
@@ -391,6 +377,21 @@ export async function createInvoice(data: {
 
 
     console.log(`${LOG_PREFIX} [EXECUTION-TRACE] createInvoice PID: ${data.patient_id}, APT: ${data.appointment_id || 'N/A'}, Status: ${data.status || 'draft'}`);
+
+    // [INTEGRITY-GUARD] Prevent posting if nursing items are pending confirmation
+    if (data.status === 'posted' || data.status === 'paid') {
+        if (data.appointment_id && isUUID(data.appointment_id)) {
+            const pendingMoves = await prisma.hms_stock_move.count({
+                where: {
+                    source_reference: data.appointment_id,
+                    source: 'Nursing Consumption (Pending)'
+                }
+            });
+            if (pendingMoves > 0) {
+                return { error: `Clinical Integrity Violation: ${pendingMoves} nursing consumables are pending confirmation. Verify and confirm items in Nursing Action Center before finalizing this bill.` };
+            }
+        }
+    }
 
     try {
         const result = await prisma.$transaction(async (tx) => {
@@ -546,75 +547,66 @@ export async function createInvoice(data: {
                 }
             });
 
-            // --- WORLD CLASS LAB INTEGRATION ---
-            // Automatically trigger Lab Orders for any service identified as Laboratory Test
-            const labItems = processedLineItems.filter(l => {
-                const desc = (l.description || "").toLowerCase();
-                const isLab = desc.includes('lab') || desc.includes('test') || desc.includes('blood') || desc.includes('profile') || desc.includes('diagnostic');
-                return isLab && safeNum(l.unit_price) > 0;
+            // --- WORLD CLASS STOCK SYNC (SALES) ---
+            // [UOM-FIX] Fetch all products with conversions to ensure accurate deduction
+            const pIds = processedLineItems.map(l => l.product_id).filter(isUUID);
+            const productsWithUoms = await tx.hms_product.findMany({
+                where: { id: { in: pIds } },
+                include: { hms_product_uom_conversion: true }
             });
+            const pLookup = new Map(productsWithUoms.map(p => [p.id, p]));
 
-            if (labItems.length > 0 && resolvedPatientId) {
-                const orderNo = `LAB-${Date.now().toString().slice(-6)}`;
-                await tx.hms_lab_order.create({
-                    data: {
-                        id: crypto.randomUUID(),
-                        tenant_id: tenantId as string,
-                        company_id: companyId as string,
-                        patient_id: resolvedPatientId as string,
-                        encounter_id: isUUID(data.appointment_id) ? data.appointment_id : null,
-                        order_number: orderNo,
-                        status: 'requested',
-                        priority: 'normal',
-                        hms_lab_order_lines: {
-                            create: labItems.map(item => ({
-                                id: crypto.randomUUID(),
-                                tenant_id: tenantId as string,
-                                company_id: companyId as string,
-                                test_id: isUUID(item.product_id) ? item.product_id : undefined,
-                                requested_name: item.description,
-                                status: 'pending',
-                                price: safeNum(item.unit_price)
-                            }))
+            // Deduct stock for all physical items in the invoice
+            for (const item of processedLineItems) {
+                if (!item.product_id) continue;
+                const product = pLookup.get(item.product_id);
+                if (!product) continue;
+
+                // --- INTELLIGENT UOM CONVERSION v2 (Table-Driven) ---
+                const normalizeUnit = (u: string) => {
+                    let n = (u || 'Unit').toUpperCase().trim().replace(/S$/, ''); 
+                    if (n === 'PC') return 'PCS'; // Map PC to PCS
+                    return n;
+                }
+                const lineUomNorm = normalizeUnit(item.uom);
+                const baseUomStrRaw = (product.uom || (product.metadata as any)?.base_uom || (product.metadata as any)?.uomData?.base_uom || 'PCS');
+                const baseUomNorm = normalizeUnit(baseUomStrRaw);
+                const prodMeta = (product.metadata as any) || {};
+                
+                let conversionFactor = 1;
+                let usedMethod = "default_unit";
+
+                if (lineUomNorm === baseUomNorm) {
+                    conversionFactor = 1; 
+                    usedMethod = "exact_match_normalized";
+                } else {
+                    // 1. Try UOM Conversion Table
+                    const conversion = product.hms_product_uom_conversion.find(
+                        (c: any) => normalizeUnit(c.from_uom) === lineUomNorm && normalizeUnit(c.to_uom) === baseUomNorm
+                    );
+                    
+                    if (conversion) {
+                        conversionFactor = Number(conversion.factor) || 1;
+                        usedMethod = "conversion_table";
+                    } else {
+                        // 2. Try Legacy Metadata (packUom + packingQty)
+                        const packUom = (prodMeta.packUom || prodMeta.pack_uom || (product.metadata as any)?.packUom || (product.metadata as any)?.pack_uom || '');
+                        if (normalizeUnit(packUom) === lineUomNorm) {
+                            conversionFactor = safeNum(prodMeta.packingQty || prodMeta.packing_qty || (product.metadata as any)?.packingQty || (product.metadata as any)?.packing_qty) || 1;
+                            usedMethod = "legacy_meta_pack";
+                        } else {
+                            // 3. Try uomData inside metadata (Standardized Pharma metadata)
+                            const uomData = prodMeta.uomData || prodMeta.uom_data || (product.metadata as any)?.uomData || (product.metadata as any)?.uom_data;
+                            if (uomData && normalizeUnit(uomData.pack_uom || uomData.packUom) === lineUomNorm) {
+                                conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor) || 1;
+                                usedMethod = "standard_uom_data";
+                            }
                         }
                     }
-                });
-                console.log(`${LOG_PREFIX} [LAB-AUTO-SYNC] Created Order ${orderNo} with ${labItems.length} investigations.`);
-            }
+                }
 
-                // --- WORLD CLASS STOCK SYNC (SALES) ---
-                // Deduct stock for all physical items in the invoice
-                // Batch-resolve products for conversion factors if needed
-                const physicalItemIds = data.line_items?.filter(l => l.product_id).map(l => l.product_id) || [];
-                const productsForSync = await tx.hms_product.findMany({
-                    where: { id: { in: physicalItemIds } },
-                    select: { id: true, uom: true, metadata: true }
-                });
-                const productSyncMap = new Map(productsForSync.map(p => [p.id, p]));
+                const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
 
-                for (const item of processedLineItems) {
-                    if (!item.product_id) continue;
-
-                    const product = productSyncMap.get(item.product_id);
-                    const metadata = product?.metadata as any || {};
-                    const uomData = metadata.uom_data || {};
-                    
-                    // Standardize conversion factor (SALES)
-                    const soldUom = (item.uom || '').toUpperCase();
-                    const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
-                    
-                    let conversionFactor = 1;
-                    // Only apply conversion factor if we are selling a PACK (not the base unit)
-                    if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
-                        conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor || (
-                            soldUom === 'BOX' ? 10 : 
-                            soldUom === 'STRIP' ? 10 : 
-                            soldUom === 'PKT' ? 10 : 1
-                        ));
-                    }
-                    
-                    const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
-                
                 // 0. Resolve Location (Default to Main Warehouse for now)
                 let location = await tx.hms_stock_location.findFirst({
                     where: { company_id: companyId, name: 'Main Warehouse' }
@@ -643,7 +635,6 @@ export async function createInvoice(data: {
                             data: { quantity: { decrement: qtyToDeduct } }
                         });
                     } else {
-                        // Create negative stock level if not exists (allow for overselling if enabled, or just create record)
                         await tx.hms_stock_levels.create({
                             data: {
                                 id: crypto.randomUUID(),
@@ -651,10 +642,62 @@ export async function createInvoice(data: {
                                 company_id: companyId,
                                 product_id: item.product_id,
                                 location_id: location.id,
-                                quantity: -qtyToDeduct,
-                                reserved: 0
+                                quantity: -qtyToDeduct
                             }
                         });
+                    }
+
+                    // --- [BATCH DEDUCTION: Priority Specific -> Fallback FIFO] ---
+                    let remainingToDeduct = qtyToDeduct;
+                    
+                    // 1. If a specific batch was selected in the UI, deduct from it first
+                    const explicitBatchId = item.batch_id || item.batchId;
+                    if (isUUID(explicitBatchId)) {
+                        const targetBatch = await tx.hms_product_batch.findFirst({
+                            where: { id: explicitBatchId, company_id: companyId }
+                        });
+                        if (targetBatch) {
+                            const deduction = Math.min(Number(targetBatch.qty_on_hand), remainingToDeduct);
+                            await tx.hms_product_batch.update({
+                                where: { id: targetBatch.id },
+                                data: { qty_on_hand: { decrement: deduction } }
+                            });
+                            remainingToDeduct -= deduction;
+                        }
+                    }
+
+                    // 2. If remaining (FIFO)
+                    if (remainingToDeduct > 0) {
+                        const batches = await tx.hms_product_batch.findMany({
+                            where: { product_id: item.product_id, company_id: companyId, qty_on_hand: { gt: 0 } },
+                            orderBy: { expiry_date: 'asc' } // FEFO approach
+                        });
+
+                        for (const batch of batches) {
+                            if (remainingToDeduct <= 0) break;
+                            const batchQty = Number(batch.qty_on_hand);
+                            const deduction = Math.min(batchQty, remainingToDeduct);
+                            
+                            await tx.hms_product_batch.update({
+                                where: { id: batch.id },
+                                data: { qty_on_hand: { decrement: deduction } }
+                            });
+                            remainingToDeduct -= deduction;
+                        }
+                    }
+
+                    // 3. Fallback: If still remaining (oversold), deduct from the newest batch even if it goes negative
+                    if (remainingToDeduct > 0) {
+                        const lastBatch = await tx.hms_product_batch.findFirst({
+                            where: { product_id: item.product_id, company_id: companyId },
+                            orderBy: { created_at: 'desc' }
+                        });
+                        if (lastBatch) {
+                            await tx.hms_product_batch.update({
+                                where: { id: lastBatch.id },
+                                data: { qty_on_hand: { decrement: remainingToDeduct } }
+                            });
+                        }
                     }
 
                     // 2. Log Outward Movement in Ledger
@@ -667,31 +710,17 @@ export async function createInvoice(data: {
                             movement_type: 'out',
                             qty: -qtyToDeduct,
                             uom: item.uom || 'Unit',
-                            unit_cost: 0, // Sale doesn't have cost in this context
+                            unit_cost: 0,
                             total_cost: 0,
                             from_location_id: location.id,
+                            batch_id: item.batch_id || item.batchId || null,
                             reference: invoiceNo,
                             related_type: 'hms_invoice',
                             related_id: invoiceId
                         }
                     });
 
-                    // 3. Audit Move
-                    await tx.hms_stock_move.create({
-                        data: {
-                            id: crypto.randomUUID(),
-                            tenant_id: tenantId,
-                            company_id: companyId,
-                            product_id: item.product_id,
-                            location_from: location.id,
-                            qty: -qtyToDeduct,
-                            uom: item.uom || 'Unit',
-                            move_type: 'out' as any,
-                            source: 'Counter Sale',
-                            source_reference: invoiceId,
-                            created_by: userId
-                        }
-                    });
+                    // Stock deduction and ledger logging completed above.
                 }
             }
 
@@ -713,10 +742,10 @@ export async function createInvoice(data: {
         }
 
         const invoiceId = (result as any).id;
-        const status = (result as any).status;
+        const currentStatus = (result as any).status;
 
         // Trigger Accounting & Notification (Outside transaction for performance and robustness)
-        if ((status === 'posted' || status === 'paid') && invoiceId) {
+        if ((currentStatus === 'posted' || currentStatus === 'paid') && invoiceId) {
             try {
                 const accountingRes = await AccountingService.postSalesInvoice(invoiceId, userId);
                 if (!accountingRes.success) {
@@ -728,16 +757,13 @@ export async function createInvoice(data: {
         }
 
         revalidatePath('/hms/billing');
-        revalidatePath('/hms/inventory/reports/stock');
-        revalidatePath('/hms/inventory/products');
-        
+
         let whatsappFeedback = {};
-        if ((status === 'paid' || status === 'posted') && (invoiceId || (result as any)?.id)) {
+        if ((currentStatus === 'paid' || currentStatus === 'posted') && invoiceId) {
             try {
-                const finalId = invoiceId || (result as any)?.id;
                 const config = await getWhatsAppConfig(companyId, tenantId);
                 if (config?.autoSendBill) {
-                    const wsRes = await NotificationService.sendInvoiceWhatsapp(finalId, tenantId);
+                    const wsRes = await NotificationService.sendInvoiceWhatsapp(invoiceId, tenantId);
                     whatsappFeedback = {
                         whatsapp_sent: wsRes.success,
                         whatsapp_error: wsRes.success ? null : wsRes.error
@@ -748,10 +774,7 @@ export async function createInvoice(data: {
             }
         }
 
-        // [SERIALIZATION-MASTER-GUARD] Ensure no non-serializable Prisma types reach the client
-        const serializedResult = JSON.parse(JSON.stringify(result));
-
-        return { success: true, data: serializedResult, ...whatsappFeedback };
+        return { success: true, data: serialize(result), ...whatsappFeedback };
 
     } catch (err: any) {
         console.error(`${LOG_PREFIX} [CRITICAL-FAIL] createInvoice:`, err);
@@ -763,7 +786,7 @@ export async function createInvoice(data: {
 async function checkTransactionLock(invoiceId: string, company_id: string, session: any) {
     const existing = await prisma.hms_invoice.findUnique({
         where: { id: invoiceId },
-        select: { status: true, invoice_date: true, issued_at: true }
+        select: { status: true, invoice_date: true, issued_at: true, appointment_id: true }
     });
 
     if (!existing) throw new Error("Transaction node not found.");
@@ -826,6 +849,32 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
         return { error: "At least one line item is required" };
     }
 
+    // [INTEGRITY-GUARD] Prevent posting if nursing items are pending confirmation
+    if (status === 'posted' || status === 'paid') {
+        const patientId = patient_id;
+        if (patientId) {
+            const recentAppts = await prisma.hms_appointments.findMany({
+                where: {
+                    patient_id: patientId,
+                    starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                },
+                select: { id: true }
+            });
+            const apptIds = recentAppts.map((a: any) => a.id);
+            if (apptIds.length > 0) {
+                const pendingMoves = await prisma.hms_stock_move.count({
+                    where: {
+                        source_reference: { in: apptIds },
+                        source: 'Nursing Consumption (Pending)'
+                    }
+                });
+                if (pendingMoves > 0) {
+                    return { error: `Clinical Integrity Violation: ${pendingMoves} unconfirmed nursing items found for this patient's visits today. Advise nursing station to verify consumption before billing.` };
+                }
+            }
+        }
+    }
+
     try {
         // Calculate totals
         // Subtotal (Sum of [Qty * Price - Discount])
@@ -878,6 +927,12 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
         const finalOutstanding = (status === 'paid') ? 0 : Math.max(0, finalGrandTotal - totalPaid);
 
         const result = await prisma.$transaction(async (tx) => {
+            // 0. Resolve Old State (to prevent double-deduction)
+            const oldInvoice = await tx.hms_invoice.findUnique({
+                where: { id: invoiceId },
+                select: { status: true }
+            });
+
             // 1. Update Invoice Header
             const updatedInvoice = await tx.hms_invoice.update({
                 where: { id: invoiceId },
@@ -895,6 +950,138 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                     billing_metadata: billing_metadata,
                 }
             });
+
+            // --- WORLD CLASS STOCK SYNC (SALES TRANSITION) ---
+            // If we are moving from Draft -> Posted/Paid, we MUST deduct stock.
+            // If already posted/paid, we assume stock was already deducted (or managed via manual reconciliation if items changed)
+            const wasDraft = !oldInvoice || oldInvoice.status === 'draft';
+            const isNowFinalized = status === 'posted' || status === 'paid';
+
+            if (wasDraft && isNowFinalized) {
+                console.log(`[STOCKS-UPDATE] Transitional deduction for ${updatedInvoice.invoice_number}`);
+                const upIds = processedLineItems.map(l => l.product_id).filter(isUUID);
+                const upProds = await tx.hms_product.findMany({
+                    where: { id: { in: upIds } },
+                    include: { hms_product_uom_conversion: true }
+                });
+                const upLookup = new Map(upProds.map(p => [p.id, p]));
+
+                for (const item of processedLineItems) {
+                    if (!item.product_id) continue;
+                    const product = upLookup.get(item.product_id);
+                    if (!product) continue;
+
+                    // --- INTELLIGENT UOM CONVERSION v2 (Table-Driven) ---
+                    const meta = (item.metadata || {}) as any;
+                    const normalizeUnit = (u: string) => {
+                        let n = (u || 'Unit').toUpperCase().trim().replace(/S$/, ''); 
+                        if (n === 'PC') return 'PCS'; // Map PC to PCS
+                        return n;
+                    }
+                    const lineUomNorm = normalizeUnit(item.uom);
+                    const baseUomStrRaw = (product.uom || (product.metadata as any)?.base_uom || (product.metadata as any)?.uomData?.base_uom || 'PCS');
+                    const baseUomNorm = normalizeUnit(baseUomStrRaw);
+                    const prodMeta = (product.metadata as any) || {};
+                    
+                    let conversionFactor = 1;
+                    let usedMethod = "default_unit";
+
+                    if (lineUomNorm === baseUomNorm) {
+                        conversionFactor = 1; 
+                        usedMethod = "exact_match_normalized";
+                    } else {
+                        const conversion = product.hms_product_uom_conversion.find(
+                            (c: any) => normalizeUnit(c.from_uom) === lineUomNorm && normalizeUnit(c.to_uom) === baseUomNorm
+                        );
+                        if (conversion) {
+                            conversionFactor = Number(conversion.factor) || 1;
+                            usedMethod = "conversion_table";
+                        } else {
+                            const packUom = (prodMeta.packUom || prodMeta.pack_uom || (product.metadata as any)?.packUom || (product.metadata as any)?.pack_uom || '');
+                            if (normalizeUnit(packUom) === lineUomNorm) {
+                                conversionFactor = safeNum(prodMeta.packingQty || prodMeta.packing_qty || (product.metadata as any)?.packingQty || (product.metadata as any)?.packing_qty) || 1;
+                                usedMethod = "legacy_meta_pack";
+                            } else {
+                                const uomData = prodMeta.uomData || prodMeta.uom_data || (product.metadata as any)?.uomData || (product.metadata as any)?.uom_data;
+                                if (uomData && normalizeUnit(uomData.pack_uom || uomData.packUom) === lineUomNorm) {
+                                    conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor) || 1;
+                                    usedMethod = "standard_uom_data";
+                                }
+                            }
+                        }
+                    }
+
+                    const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
+
+                    // A. Resolve Location
+                    let location = await tx.hms_stock_location.findFirst({
+                        where: { company_id: companyId, name: 'Main Warehouse' }
+                    });
+                    if (!location) location = await tx.hms_stock_location.findFirst({ where: { company_id: companyId } });
+
+                    if (location) {
+                        // B. Deduct Stock Level
+                        const level = await tx.hms_stock_levels.findFirst({
+                            where: { company_id: companyId, product_id: item.product_id, location_id: location.id }
+                        });
+
+                        if (level) {
+                            await tx.hms_stock_levels.update({
+                                where: { id: level.id },
+                                data: { quantity: { decrement: qtyToDeduct } }
+                            });
+                        } else {
+                            await tx.hms_stock_levels.create({
+                                data: {
+                                    id: crypto.randomUUID(),
+                                    tenant_id: tenantId,
+                                    company_id: companyId,
+                                    product_id: item.product_id,
+                                    location_id: location.id,
+                                    quantity: -qtyToDeduct,
+                                    reserved: 0
+                                }
+                            });
+                        }
+
+                        // C. Decouple Batch Qty (if batch linked)
+                        const bId = item.batch_id || item.batchId || (item.metadata as any)?.batch_id;
+                        if (isUUID(bId)) {
+                            await tx.hms_product_batch.update({
+                                where: { id: bId },
+                                data: { qty_on_hand: { decrement: qtyToDeduct } }
+                            });
+                        }
+
+                        // D. Log Ledger Entry
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantId,
+                                company_id: companyId,
+                                product_id: item.product_id,
+                                movement_type: 'out',
+                                qty: -qtyToDeduct,
+                                uom: item.uom || 'Unit',
+                                unit_cost: 0,
+                                total_cost: 0,
+                                reference: updatedInvoice.invoice_number,
+                                created_by: userId,
+                                metadata: { 
+                                    source: 'Sales/Update',
+                                    sold_uom: item.uom,
+                                    base_uom: baseUomStrRaw,
+                                    factor: conversionFactor,
+                                    original_qty: item.quantity,
+                                    deduction_qty: qtyToDeduct,
+                                    method: usedMethod,
+                                    invoice_id: invoiceId 
+                                }
+                            }
+                        });
+                    }
+                }
+            }
 
             // 2. Delete existing lines (Simple approach for MVP)
             await tx.hms_invoice_lines.deleteMany({
@@ -1005,90 +1192,6 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                 await trackRegistrationPayment(tx, patient_id as string, session.user.tenantId, companyId);
             }
 
-            // [WORLD CLASS STOCK SYNC (SALES UPDATE)]
-            // Deduct stock for all physical items in the invoice
-            if (status === 'posted' || status === 'paid') {
-                const physicalItemIds = processedLineItems?.filter(l => l.product_id).map(l => l.product_id) || [];
-                const productsForSync = await tx.hms_product.findMany({
-                    where: { id: { in: physicalItemIds } },
-                    select: { id: true, uom: true, metadata: true }
-                });
-                const productSyncMap = new Map(productsForSync.map(p => [p.id, p]));
-
-                for (const item of processedLineItems) {
-                    if (!item.product_id) continue;
-
-                    const product = productSyncMap.get(item.product_id);
-                    const metadata = product?.metadata as any || {};
-                    const uomData = metadata.uom_data || {};
-                    
-                    const soldUom = (item.uom || '').toUpperCase();
-                    const baseUom = (uomData.base_uom || 'PCS').toUpperCase();
-                    let conversionFactor = 1;
-                    
-                    // Standardize conversion factor (SALES)
-                    if (soldUom !== baseUom && soldUom !== 'PCS' && soldUom !== 'PIECE') {
-                        conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor || (
-                            soldUom === 'BOX' ? 10 : 
-                            soldUom === 'STRIP' ? 10 : 
-                            soldUom === 'PKT' ? 10 : 1
-                        ));
-                    }
-                    const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
-                
-                    // Resolve Location (Default to Main Warehouse)
-                    let location = await tx.hms_stock_location.findFirst({
-                        where: { company_id: companyId, name: 'Main Warehouse' }
-                    });
-
-                    if (!location) {
-                        location = await tx.hms_stock_location.findFirst({
-                            where: { company_id: companyId }
-                        });
-                    }
-
-                    if (location) {
-                        const level = await tx.hms_stock_levels.findFirst({
-                            where: { product_id: item.product_id, location_id: location.id }
-                        });
-
-                        if (level) {
-                            await tx.hms_stock_levels.update({
-                                where: { id: level.id },
-                                data: { quantity: { decrement: qtyToDeduct } }
-                            });
-                        } else {
-                            await tx.hms_stock_levels.create({
-                                data: {
-                                    id: crypto.randomUUID(),
-                                    tenant_id: tenantId,
-                                    company_id: (companyId as string),
-                                    product_id: item.product_id,
-                                    location_id: location.id,
-                                    quantity: -qtyToDeduct
-                                }
-                            });
-                        }
-
-                        // Stock Ledger Entry
-                        await tx.hms_stock_ledger.create({
-                            data: {
-                                id: crypto.randomUUID(),
-                                tenant_id: tenantId,
-                                company_id: (companyId as string),
-                                product_id: item.product_id,
-                                from_location_id: location.id,
-                                qty: -qtyToDeduct,
-                                movement_type: 'out',
-                                reference: updatedInvoice.invoice_number,
-                                related_type: 'hms_invoice',
-                                related_id: invoiceId
-                            }
-                        });
-                    }
-                }
-            }
-
             // FORCE UPDATE TOTAL: Ensure DB triggers didn't override the total to 0
             // This happens if a trigger calculates total from lines before lines are fully visible/committed
             await tx.hms_invoice.update({
@@ -1135,7 +1238,7 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
 
         revalidatePath('/hms/billing');
         revalidatePath(`/hms/billing/${invoiceId}`);
-        return { success: true, data: JSON.parse(JSON.stringify(result)) };
+        return { success: true, data: serialize(result) };
 
     } catch (error: any) {
         console.error("Failed to update invoice:", error);
@@ -1152,6 +1255,31 @@ export async function updateInvoiceStatus(invoiceId: string, status: any) {
         const invoice = await prisma.hms_invoice.findUnique({ where: { id: invoiceId } });
         if (!invoice) return { error: "Invoice not found" };
 
+        // [INTEGRITY-GUARD] Prevent posting if nursing items are pending confirmation
+        if (status === 'posted' || status === 'paid') {
+            if (invoice.patient_id) {
+                const recentAppts = await prisma.hms_appointments.findMany({
+                    where: {
+                        patient_id: invoice.patient_id,
+                        starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                    },
+                    select: { id: true }
+                });
+                const apptIds = recentAppts.map((a: any) => a.id);
+                if (apptIds.length > 0) {
+                    const pendingMoves = await prisma.hms_stock_move.count({
+                        where: {
+                            source_reference: { in: apptIds },
+                            source: 'Nursing Consumption (Pending)'
+                        }
+                    });
+                    if (pendingMoves > 0) {
+                        return { error: `Clinical Integrity Violation: ${pendingMoves} unconfirmed nursing items found for this patient's visits today. Advise nursing station to verify consumption before billing.` };
+                    }
+                }
+            }
+        }
+
         const result = await prisma.$transaction(async (tx) => {
             const updated = await tx.hms_invoice.update({
                 where: { id: invoiceId },
@@ -1159,8 +1287,85 @@ export async function updateInvoiceStatus(invoiceId: string, status: any) {
                     status: status,
                     outstanding_amount: status === 'paid' ? 0 : (status === 'posted' ? invoice.total : invoice.outstanding_amount),
                     updated_at: new Date()
-                }
+                },
+                include: { hms_invoice_lines: true }
             });
+
+            // --- WORLD CLASS STOCK SYNC (STATUS TRANSITION) ---
+            const wasDraft = invoice.status === 'draft';
+            const isNowFinalized = status === 'posted' || status === 'paid';
+
+            if (wasDraft && isNowFinalized) {
+                console.log(`[STOCKS-STATUS-UPDATE] Transitional deduction for ${updated.invoice_number}`);
+                const companyIdRaw = (session?.user as any).companyId || session?.user?.tenantId;
+                const tenantIdRaw = session?.user?.tenantId;
+
+                for (const item of updated.hms_invoice_lines) {
+                    if (!item.product_id) continue;
+
+                    const qtyToDeduct = safeNum(item.quantity) || 1;
+
+                    // A. Resolve Location
+                    let location = await tx.hms_stock_location.findFirst({
+                        where: { company_id: companyIdRaw, name: 'Main Warehouse' }
+                    });
+                    if (!location) location = await tx.hms_stock_location.findFirst({ where: { company_id: companyIdRaw } });
+
+                    if (location) {
+                        // B. Deduct Stock Level
+                        const level = await tx.hms_stock_levels.findFirst({
+                            where: { company_id: companyIdRaw, product_id: item.product_id, location_id: location.id }
+                        });
+
+                        if (level) {
+                            await tx.hms_stock_levels.update({
+                                where: { id: level.id },
+                                data: { quantity: { decrement: qtyToDeduct } }
+                            });
+                        } else {
+                            await tx.hms_stock_levels.create({
+                                data: {
+                                    id: crypto.randomUUID(),
+                                    tenant_id: tenantIdRaw!,
+                                    company_id: companyIdRaw,
+                                    product_id: item.product_id,
+                                    location_id: location.id,
+                                    quantity: -qtyToDeduct,
+                                    reserved: 0
+                                }
+                            });
+                        }
+
+                        // C. Decouple Batch Qty (if batch linked in metadata)
+                        const bId = (item.metadata as any)?.batch_id || (item.metadata as any)?.batchId;
+                        if (isUUID(bId)) {
+                            await tx.hms_product_batch.update({
+                                where: { id: bId },
+                                data: { qty_on_hand: { decrement: qtyToDeduct } }
+                            });
+                        }
+
+                        // D. Log Ledger Entry
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantIdRaw!,
+                                company_id: companyIdRaw,
+                                product_id: item.product_id,
+                                movement_type: 'out',
+                                qty: -qtyToDeduct,
+                                uom: item.uom || 'Unit',
+                                unit_cost: 0,
+                                total_cost: 0,
+                                from_location_id: location.id,
+                                reference: updated.invoice_number!,
+                                created_by: session.user.id,
+                                metadata: { source: 'Sales/StatusUpdate', invoice_id: invoiceId }
+                            }
+                        });
+                    }
+                }
+            }
 
             // If paid, close appointment
             if (status === 'paid' && updated.appointment_id) {
@@ -1206,6 +1411,30 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
             }
         });
         if (!invoice) return { error: "Invoice not found" };
+
+        // [INTEGRITY-GUARD] Prevent posting if nursing items are pending confirmation
+        // recordPayment often results in status change to 'paid'
+        if (invoice.patient_id) {
+            const recentAppts = await prisma.hms_appointments.findMany({
+                where: {
+                    patient_id: invoice.patient_id,
+                    starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                },
+                select: { id: true }
+            });
+            const apptIds = recentAppts.map((a: any) => a.id);
+            if (apptIds.length > 0) {
+                const pendingMoves = await prisma.hms_stock_move.count({
+                    where: {
+                        source_reference: { in: apptIds },
+                        source: 'Nursing Consumption (Pending)'
+                    }
+                });
+                if (pendingMoves > 0) {
+                    return { error: `Clinical Integrity Violation: ${pendingMoves} unconfirmed nursing items found for this patient's visits today. Advise nursing station to verify consumption before billing.` };
+                }
+            }
+        }
 
         const result = await prisma.$transaction(async (tx) => {
             // 1. Create Payment Record
@@ -1256,6 +1485,82 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
                 }
             });
 
+            // --- WORLD CLASS STOCK SYNC (PAYMENT TRANSITION) ---
+            const wasDraft = invoice.status === 'draft';
+            const isNowFinalized = finalStatus === 'posted' || finalStatus === 'paid';
+
+            if (wasDraft && isNowFinalized) {
+                console.log(`[STOCKS-PAYMENT-UPDATE] Transitional deduction for ${invoice.invoice_number}`);
+                const companyIdRaw = (session?.user as any).companyId || session?.user?.tenantId;
+                const tenantIdRaw = session?.user?.tenantId;
+
+                for (const item of (invoice as any).hms_invoice_lines || []) {
+                    if (!item.product_id) continue;
+
+                    const qtyToDeduct = safeNum(item.quantity) || 1;
+
+                    // A. Resolve Location
+                    let location = await tx.hms_stock_location.findFirst({
+                        where: { company_id: companyIdRaw, name: 'Main Warehouse' }
+                    });
+                    if (!location) location = await tx.hms_stock_location.findFirst({ where: { company_id: companyIdRaw } });
+
+                    if (location) {
+                        // B. Deduct Stock Level
+                        const level = await tx.hms_stock_levels.findFirst({
+                            where: { company_id: companyIdRaw, product_id: item.product_id, location_id: location.id }
+                        });
+
+                        if (level) {
+                            await tx.hms_stock_levels.update({
+                                where: { id: level.id },
+                                data: { quantity: { decrement: qtyToDeduct } }
+                            });
+                        } else {
+                            await tx.hms_stock_levels.create({
+                                data: {
+                                    id: crypto.randomUUID(),
+                                    tenant_id: tenantIdRaw!,
+                                    company_id: companyIdRaw,
+                                    product_id: item.product_id,
+                                    location_id: location.id,
+                                    quantity: -qtyToDeduct,
+                                    reserved: 0
+                                }
+                            });
+                        }
+
+                        // C. Decouple Batch Qty
+                        const bId = (item.metadata as any)?.batch_id || (item.metadata as any)?.batchId;
+                        if (isUUID(bId)) {
+                            await tx.hms_product_batch.update({
+                                where: { id: bId },
+                                data: { qty_on_hand: { decrement: qtyToDeduct } }
+                            });
+                        }
+
+                        // D. Log Ledger Entry
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(),
+                                tenant_id: tenantIdRaw!,
+                                company_id: companyIdRaw,
+                                product_id: item.product_id,
+                                movement_type: 'out',
+                                qty: -qtyToDeduct,
+                                uom: item.uom || 'Unit',
+                                unit_cost: 0,
+                                total_cost: 0,
+                                from_location_id: location.id,
+                                reference: invoice.invoice_number!,
+                                created_by: session.user.id,
+                                metadata: { source: 'Sales/PaymentUpdate', invoice_id: invoiceId }
+                            }
+                        });
+                    }
+                }
+            }
+
             // If paid, close appointment
             if (finalStatus === 'paid' && updated.appointment_id) {
                 await tx.hms_appointments.update({
@@ -1266,7 +1571,7 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
 
             // [WORLD CLASS] Registration Fee Audit Trigger
             // If this invoice contains a Registration Fee, update the patient's expiry date
-            const regLine = invoice.hms_invoice_lines.find(l =>
+            const regLine = (invoice as any).hms_invoice_lines.find((l: any) =>
                 l.description?.toLowerCase().includes('registration fee') ||
                 l.description?.toLowerCase().includes('identity service')
             );
@@ -1326,7 +1631,7 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
         revalidatePath('/hms/billing');
         revalidatePath('/hms/lab/dashboard'); // Refresh lab dashboard to show updated invoice status
         revalidatePath('/hms/reception/dashboard'); // Refresh reception dashboard
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
 
     } catch (error: any) {
         console.error("Failed to record payment:", error);
@@ -1675,7 +1980,7 @@ export async function createQuickPatient(name: string, phone: string) {
             }
         });
 
-        return { success: true, data: JSON.parse(JSON.stringify(newPatient)) };
+        return { success: true, data: serialize(newPatient) };
     } catch (error: any) {
         console.error("Failed to create quick patient:", error);
         if (error.code === 'P2002') {
@@ -1852,7 +2157,7 @@ export async function getPatientLedger(patientId: string) {
             }
         });
 
-        return { success: true, data: lines };
+        return { success: true, data: serialize(lines) };
     } catch (error: any) {
         console.error("Patient Ledger Fetch Failed:", error);
         return { error: "Could not fetch patient ledger" };
@@ -2014,7 +2319,7 @@ export async function generateRegistrationInvoice(patientId: string, appointment
             });
         }, { timeout: 15000 });
 
-        return { success: true, data: invoice };
+        return { success: true, data: serialize(invoice) };
     } catch (err: any) {
         console.error("FAILED_TO_GENERATE_REG_INVOICE:", err);
         return { error: err.message || "RCM_FAILURE: Could not generate auto-billing record." };
@@ -2057,7 +2362,7 @@ export async function getOpenRegistrationInvoice(patientId: string) {
             orderBy: { created_at: 'desc' }
         });
 
-        return { success: true, data: invoice };
+        return { success: true, data: serialize(invoice) };
     } catch (err: any) {
         return { error: err.message };
     }
@@ -2090,7 +2395,10 @@ export async function generateConsultationInvoice(appointmentId: string) {
         // [IDEMPOTENCY-FIX] Enhanced check with tenant scoping
         const existing = await prisma.hms_invoice.findFirst({
             where: {
-                appointment_id: appointmentId,
+                OR: [
+                    { appointment_id: appointmentId },
+                    { encounter_id: appointmentId }
+                ],
                 tenant_id: tenantId,
                 status: { not: 'cancelled' }
             }
@@ -2098,7 +2406,7 @@ export async function generateConsultationInvoice(appointmentId: string) {
 
         if (existing) {
             console.log(`[RCM] Duplicate consultation invoice blocked for appointment ${appointmentId}. Reusing ${existing.invoice_number}`);
-            return { success: true, data: existing };
+            return { success: true, data: serialize(existing) };
         }
 
         // 2. Generate Number
@@ -2140,9 +2448,9 @@ export async function generateConsultationInvoice(appointmentId: string) {
             }
         });
 
-        return { success: true, data: invoice };
+        return { success: true, data: serialize(invoice) };
     } catch (err: any) {
-        console.error("FAILED_TO_GENERATE_CONS_INVOICE:", err);
+        console.error("Failed to generate reg invoice:", err);
         return { error: err.message || "RCM_FAILURE: Could not generate consultation bill." };
     }
 }
@@ -2166,16 +2474,20 @@ export async function linkInvoiceToAppointment(invoiceId: string, appointmentId:
     }
 }
 
-export async function getInitialInvoiceData(appointmentId: string) {
+export async function getInitialInvoiceData(rawAppointmentId: string) {
     const session = await auth();
     if (!session?.user?.tenantId) return { error: "Unauthorized" };
     const tenantId = session.user.tenantId;
 
-    try {
-        if (!appointmentId || appointmentId === 'undefined' || appointmentId === 'null' || appointmentId.length < 5) {
-            return { error: "Invalid appointment context." };
-        }
+    if (!rawAppointmentId || typeof rawAppointmentId !== 'string') {
+        console.log("[DEBUG-BILLING] Invalid appointmentId provided:", rawAppointmentId);
+        return { error: "Invalid appointment reference." };
+    }
 
+    const appointmentId = rawAppointmentId.trim();
+    if (!appointmentId) return { error: "Appointment ID cannot be empty." };
+
+    try {
         const appointment = await prisma.hms_appointments.findUnique({
             where: { id: appointmentId },
             include: {
@@ -2184,15 +2496,16 @@ export async function getInitialInvoiceData(appointmentId: string) {
             }
         });
 
-        if (!appointment) return { error: "Appointment not found" };
+        if (!appointment || String(appointment.tenant_id) !== String(tenantId)) {
+            return { error: "Appointment not found or access denied" };
+        }
 
-        let initialItems: any[] = [];
-        let initialInvoice = null;
-
-        // 0. Check for EXISTING DRAFT INVOICE
-        const draftInvoice = await prisma.hms_invoice.findFirst({
+        let draftInvoice = await prisma.hms_invoice.findFirst({
             where: {
-                appointment_id: appointmentId,
+                OR: [
+                    { appointment_id: appointmentId },
+                    { encounter_id: appointmentId }
+                ],
                 status: { in: ['draft', 'posted'] as any[] }
             },
             include: {
@@ -2203,141 +2516,173 @@ export async function getInitialInvoiceData(appointmentId: string) {
             }
         });
 
-        const hmsConfigRecord = await prisma.hms_settings.findFirst({
-            where: {
-                tenant_id: tenantId,
-                company_id: session.user.companyId || tenantId,
-                key: 'registration_config'
-            }
-        });
+        // 1. Consultation Hub
+        const configRes = await getHMSSettings();
+        const configData = configRes.success ? configRes.settings : {};
+        const consultationBillingMode = (configData as any).consultationBillingMode || 'post_visit';
 
-        const configData = (hmsConfigRecord?.value as any) || {};
-        const consultationBillingMode = configData.consultationBillingMode || 'post_visit';
+        const consultationFee = Number(appointment.hms_clinician?.consultation_fee || 0);
+        let shouldAddConsultation = (consultationBillingMode === 'at_booking') || !['scheduled', 'arrived'].includes(appointment.status);
 
-        if (draftInvoice) {
-            initialInvoice = draftInvoice;
-        }
-
-        // 1. Add Consultation Fee (Respect Mode)
-        const consultationFee = Number(appointment.hms_clinician?.consultation_fee) || 0;
-
-        let shouldAddConsultation = false;
-        if (consultationBillingMode === 'at_booking') {
-            shouldAddConsultation = true;
-        } else if (consultationBillingMode === 'post_visit') {
-            // Only add if NOT in booking/scheduled/arrived phase
-            shouldAddConsultation = !['scheduled', 'arrived'].includes(appointment.status);
-        }
-
+        const consultationItems: any[] = [];
         if (consultationFee > 0 && shouldAddConsultation) {
             const hasConsultation = draftInvoice?.hms_invoice_lines.some(l => l.description?.includes('Consultation Fee'));
             if (!hasConsultation) {
-                initialItems.push({
+                consultationItems.push({
                     id: appointment.clinician_id,
-                    name: `Consultation Fee - Dr. ${appointment.hms_clinician?.first_name} ${appointment.hms_clinician?.last_name}`,
+                    name: `Consultation Fee - Dr. ${appointment.hms_clinician?.first_name}`,
                     price: consultationFee,
                     quantity: 1,
-                    type: 'service'
+                    type: 'service',
+                    source: 'consultation',
+                    sourceId: appointmentId
                 });
             }
         }
 
-        // 2. Add Registration Fee (Fuzzy Logic)
-        const registrationPaid = (appointment.hms_patient?.metadata as any)?.registration_fees_paid;
-        if (!registrationPaid) {
-            const isRegFuzzy = (desc: string) => {
-                const d = desc?.toLowerCase() || "";
-                return d.includes('registration fee') || d.includes('identity service') || (d.includes('registration') && d.includes('fee'));
+        // 2. Nursing Hub (Confirmed Consumables)
+        const nursingMoves = await prisma.hms_stock_move.findMany({
+            where: {
+                source_reference: appointmentId,
+                tenant_id: tenantId as any,
+                source: { in: ['Nursing Consumption', 'Nursing Consumption (Confirmed)', 'confirmed'] }
             }
+        });
 
-            const hasRegFee = draftInvoice?.hms_invoice_lines.some(l => isRegFuzzy(l.description || '')) ||
-                initialItems.some((i: any) => isRegFuzzy(i.name));
+        const nursingProductIds = [...new Set(nursingMoves.map(m => m.product_id))];
+        const nursingProducts = await prisma.hms_product.findMany({
+            where: { id: { in: nursingProductIds } }
+        });
+        const productMap = new Map(nursingProducts.map(p => [p.id, p]));
 
-            if (!hasRegFee) {
-                const regFeeRecord = await prisma.hms_patient_registration_fees.findFirst({
-                    where: { tenant_id: tenantId, is_active: true }
+        const nursingItems = nursingMoves.map(m => {
+            const product = productMap.get(m.product_id);
+            const finalPrice = Number(m.cost || product?.price || 0);
+            return {
+                id: m.product_id,
+                name: product?.name || 'Consumable',
+                quantity: Math.abs(Number(m.qty || 1)),
+                unit_price: finalPrice,
+                price: finalPrice,
+                type: 'item',
+                source: 'nursing',
+                sourceId: m.id
+            };
+        });
+
+        // 3. Doctor Hub (Prescriptions)
+        const prescriptions = await (prisma as any).prescription.findMany({
+            where: {
+                OR: [{ appointment_id: appointmentId }, { patient_id: appointment.patient_id }],
+                tenant_id: tenantId as any
+            },
+            take: 5,
+            orderBy: { created_at: 'desc' }
+        });
+
+        const prescriptionItems: any[] = [];
+        for (const p of prescriptions) {
+            const itemsRaw = await (prisma as any).prescription_items.findMany({
+                where: { prescription_id: p.id }
+            });
+            const pIds = [...new Set(itemsRaw.map((i: any) => i.medicine_id))].filter(Boolean);
+            const prods = pIds.length > 0 ? await (prisma as any).hms_product.findMany({ where: { id: { in: pIds as string[] } } }) : [];
+            const pMap = new Map(prods.map((pr: any) => [pr.id, pr]));
+
+            (itemsRaw as any[]).forEach((item: any) => {
+                const product = (pMap.get(item.medicine_id) as any) || {};
+                const totalQty = (Number(item.morning || 0) + Number(item.afternoon || 0) + Number(item.evening || 0) + Number(item.night || 0)) * Number(item.days || 1);
+                prescriptionItems.push({
+                    id: item.medicine_id || `rx-${item.id}`,
+                    name: (product as any).name || item.medicine_name || `Prescribed Medicine`,
+                    quantity: totalQty || 1,
+                    unit_price: Number((product as any).price || 0),
+                    price: Number((product as any).price || 0),
+                    type: 'item',
+                    source: 'doctor',
+                    sourceId: item.id
                 });
-                if (regFeeRecord) {
-                    initialItems.push({
-                        id: 'reg-fee',
-                        name: REG_FEE_DESCRIPTION,
-                        price: Number(regFeeRecord.fee_amount),
-                        quantity: 1,
-                        type: 'service'
-                    });
-                }
-            }
-        }
-
-        // 3. Nurse Consumables
-        const stockMoves = await prisma.hms_stock_move.findMany({
-            where: { source_reference: appointmentId, source: 'Nursing Consumption' }
-        });
-
-        for (const move of stockMoves) {
-            const alreadyInDraft = draftInvoice?.hms_invoice_lines.some(l => l.product_id === move.product_id);
-            if (!alreadyInDraft) {
-                const product = await prisma.hms_product.findUnique({ where: { id: move.product_id } });
-                if (product) {
-                    initialItems.push({
-                        id: move.product_id,
-                        name: `(Nurse) ${product.name}`,
-                        price: Number(product.price) || 0,
-                        quantity: Number(move.qty),
-                        type: 'item'
-                    });
-                }
-            }
-        }
-
-        // 4. Prescriptions
-        const doctorPrescription: any = await (prisma as any).prescription.findFirst({
-            where: { appointment_id: appointmentId },
-            include: {
-                prescription_items: {
-                    include: {
-                        hms_product: {
-                            include: {
-                                hms_product_price_history: {
-                                    orderBy: { valid_from: 'desc' },
-                                    take: 1
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        if (doctorPrescription) {
-            doctorPrescription.prescription_items.forEach((item: any) => {
-                const alreadyInDraft = draftInvoice?.hms_invoice_lines.some(l => l.product_id === item.medicine_id);
-                if (!alreadyInDraft && item.hms_product) {
-                    const days = Number(item.days || 1);
-                    const dailyQty = Number(item.morning || 0) + Number(item.afternoon || 0) + Number(item.evening || 0) + Number(item.night || 0);
-                    const totalQty = (dailyQty > 0 ? dailyQty : 1) * days;
-                    const price = item.hms_product.hms_product_price_history?.[0]?.price ? Number(item.hms_product.hms_product_price_history[0].price) : (Number(item.hms_product.price) || 0);
-
-                    if (totalQty > 0) {
-                        initialItems.push({
-                            id: item.medicine_id,
-                            name: item.hms_product.name,
-                            price: price,
-                            quantity: totalQty,
-                            type: 'item'
-                        });
-                    }
-                }
             });
         }
 
+        // 4. Lab Hub (Investigations)
+        const labOrders = await (prisma as any).hms_lab_order.findMany({
+            where: {
+                OR: [{ encounter_id: appointmentId }, { patient_id: appointment.patient_id }],
+                tenant_id: tenantId,
+                status: { not: 'cancelled' }
+            },
+            include: {
+                hms_lab_order_line: { include: { hms_lab_test: true } },
+                hms_lab_order_lines: { include: { hms_lab_test: true } }
+            }
+        });
+
+        const labItems = labOrders.flatMap((order: any) => {
+            const singular = order.hms_lab_order_line || [];
+            const plural = order.hms_lab_order_lines || [];
+            const allLines = [...singular, ...plural];
+
+            return allLines.map((line: any) => {
+                const finalPrice = Number(line.price || (line.hms_lab_test as any)?.price || 0);
+                return {
+                    id: line.test_id || line.id,
+                    name: (line.hms_lab_test as any)?.name || 'Lab Test',
+                    quantity: 1,
+                    unit_price: finalPrice,
+                    price: finalPrice,
+                    type: 'service',
+                    source: 'lab',
+                    sourceId: line.id
+                };
+            });
+        });
+
+        // 5. Registration Hub
+        const regItems: any[] = [];
+        const registrationPaid = (appointment.hms_patient?.metadata as any)?.registration_fees_paid;
+        if (!registrationPaid) {
+            const regFeeRecord = await prisma.hms_patient_registration_fees.findFirst({
+                where: { tenant_id: tenantId, is_active: true }
+            });
+            if (regFeeRecord && !draftInvoice?.hms_invoice_lines.some(l => l.description?.toLowerCase().includes('registration'))) {
+                regItems.push({
+                    id: 'reg-fee',
+                    name: 'Patient Registration Fee',
+                    price: Number(regFeeRecord.fee_amount),
+                    quantity: 1,
+                    type: 'service',
+                    source: 'registration',
+                    sourceId: 'fixed'
+                });
+            }
+        }
+
+        // Deduplicate and Prepare Hubs for Sidebar
+        const hubs = [
+            { id: 'consult', label: 'Consultations', items: consultationItems, icon: 'User' },
+            { id: 'doctor', label: 'Doctor Hub', items: prescriptionItems, icon: 'Package' },
+            { id: 'lab', label: 'Lab Hub', items: labItems, icon: 'Activity' },
+            { id: 'nurse', label: 'Nursing Hub', items: nursingItems, icon: 'Zap' },
+            { id: 'reg', label: 'Registration Hub', items: regItems, icon: 'ShieldCheck' }
+        ].filter(h => h.items.length > 0);
+
+        // Prepare flat list for auto-inject (Legacy support)
+        const allItems = [...consultationItems, ...nursingItems, ...prescriptionItems, ...labItems, ...regItems];
+
+        const pendingCount = await prisma.hms_stock_move.count({
+            where: { source_reference: appointmentId, tenant_id: tenantId as any, source: 'Nursing Consumption (Pending)' }
+        });
+
         return {
             success: true,
-            data: {
-                initialItems,
-                initialInvoice,
-                patientId: appointment.patient_id
-            }
+            data: serialize({
+                hubs,
+                initialItems: allItems,
+                initialInvoice: draftInvoice,
+                patientId: appointment.patient_id,
+                pendingConsumablesCount: pendingCount
+            })
         };
 
     } catch (error: any) {
@@ -2478,5 +2823,102 @@ async function trackRegistrationPayment(tx: any, patientId: string, tenantId: st
         console.log(`[REG-TRACK] Updated patient ${patientId} registration. Expiry: ${expiryDate.toISOString()}`);
     } catch (err) {
         console.error("[REG-TRACK] Failed to update patient registration status", err);
+    }
+}
+
+export async function getAppointmentBillingStatus(appointmentId: string) {
+    const session = await auth();
+    if (!session?.user?.tenantId) return { error: "Unauthorized" };
+    const tenantId = session.user.tenantId;
+
+    try {
+        const appointment = await prisma.hms_appointments.findUnique({
+            where: { id: appointmentId },
+            include: {
+                hms_clinician: true,
+                hms_patient: true,
+                hms_invoice: {
+                    include: {
+                        hms_invoice_lines: true
+                    }
+                }
+            }
+        });
+
+        if (!appointment) return { error: "Appointment not found" };
+
+        const invoice = appointment.hms_invoice?.[0] || null;
+
+        return {
+            success: true,
+            data: serialize({
+                appointment,
+                invoice,
+                status: invoice?.status || 'unbilled'
+            })
+        };
+    } catch (err: any) {
+        return { success: false, error: err.message };
+    }
+}
+
+export async function getPatientActiveAppointmentForBilling(patientId: string) {
+    const session = await auth();
+    if (!session?.user?.id) return { error: "Unauthorized" };
+    const tenantId = session.user.tenantId;
+
+    try {
+        if (!patientId || patientId === 'undefined') return { success: true, appointmentId: null, pendingCount: 0 };
+
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const recentAppointments = await (prisma as any).hms_appointments.findMany({
+            where: {
+                patient_id: patientId,
+                tenant_id: tenantId,
+                starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+            },
+            select: { id: true }
+        });
+
+        const apptIds = recentAppointments.map((a: any) => a.id);
+        if (apptIds.length === 0) return { success: true, appointmentId: null, pendingCount: 0 };
+
+        const pendingMoves = await (prisma as any).hms_stock_move.findMany({
+            where: {
+                source_reference: { in: apptIds },
+                source: 'Nursing Consumption (Pending)'
+            },
+            select: { id: true, qty: true, uom: true, product_id: true, created_at: true }
+        });
+
+        // Resolve product names
+        const productIds = pendingMoves.map((m: any) => m.product_id);
+        const products = await (prisma as any).hms_product.findMany({
+            where: { id: { in: productIds } },
+            select: { id: true, name: true }
+        });
+        const productMap = new Map(products.map((p: any) => [p.id, p.name]));
+
+        const itemsWithNames = pendingMoves.map((m: any) => ({
+            id: m.id,
+            name: productMap.get(m.product_id) || `Item ID: ${m.product_id.slice(0, 8)}`,
+            qty: Number(m.qty),
+            uom: m.uom,
+            timestamp: m.created_at
+        }));
+
+        return {
+            success: true,
+            appointmentId: apptIds[0],
+            pendingCount: pendingMoves.length,
+            pendingItems: itemsWithNames
+        };
+    } catch (err: any) {
+        console.error("[BILLING-ACTION] Failed to fetch active context:", err);
+        return { error: err.message };
     }
 }

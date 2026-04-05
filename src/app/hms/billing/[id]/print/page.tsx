@@ -25,21 +25,21 @@ export default async function PrintPage({ params, searchParams }: {
 
     const hmsSettingsRes = await getHMSSettings();
     const hmsSettings = hmsSettingsRes.success ? hmsSettingsRes.settings : null;
-    
+
     // Support manual override 'mode' from URL, otherwise fallback to decoupled settings
     const isPrescription = type === 'prescription';
-    
+
     let printMode: 'standard' | 'letterhead' = 'standard';
     if (mode === 'letterhead' || mode === 'standard') {
         printMode = mode as 'standard' | 'letterhead';
     } else {
         // Fallback to settings
-        printMode = isPrescription 
+        printMode = isPrescription
             ? (hmsSettings?.opSlipPreprintedLetterhead ? 'letterhead' : 'standard')
             : (hmsSettings?.billPreprintedLetterhead ? 'letterhead' : 'standard');
     }
 
-    const headerHeight = isPrescription 
+    const headerHeight = isPrescription
         ? (hmsSettings?.opSlipHeaderHeight || '4.5')
         : (hmsSettings?.billHeaderHeight || '4.5');
 
@@ -263,8 +263,8 @@ export default async function PrintPage({ params, searchParams }: {
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-tighter mt-1">{item.uom || 'Unit'}</p>
                                     </td>
                                     <td className="px-6 py-5 text-right font-bold">{Number(item.quantity)}</td>
-                                    <td className="px-6 py-5 text-right font-medium text-slate-500">₹{Number(item.unit_price).toFixed(2)}</td>
-                                    <td className="px-6 py-5 text-right font-bold text-slate-800 text-base">₹{Number(item.net_amount).toFixed(2)}</td>
+                                    <td className="px-6 py-5 text-right font-bold text-slate-800 text-base">₹{parseFloat(String(item.unit_price || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-6 py-5 text-right font-bold text-slate-800 text-base">₹{parseFloat(String(item.net_amount || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -273,38 +273,56 @@ export default async function PrintPage({ params, searchParams }: {
 
                 {/* Totals Section */}
                 <div className="flex justify-end mt-12 mb-16 font-sans">
-                    <div className="w-80 space-y-4">
-                        <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
-                            <span className="text-left">Subtotal</span>
-                            <span className="text-slate-800 font-bold text-right">₹{Number(invoice.subtotal).toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
-                            <span className="text-left">Tax Assessment</span>
-                            <span className="text-indigo-600 font-bold text-right">₹{Number(invoice.total_tax).toFixed(2)}</span>
-                        </div>
+                    <div className="w-96 space-y-3">
+                        {(() => {
+                            const safeNum = (val: any) => {
+                                if (val === null || val === undefined) return 0;
+                                const n = parseFloat(String(val));
+                                return isNaN(n) ? 0 : n;
+                            };
 
-                        <div className="pt-4 border-t border-slate-300">
-                            <div className="flex justify-between items-center">
-                                <span className="text-lg font-bold text-slate-800 uppercase tracking-tighter text-left">Grand Total</span>
-                                <span className="text-3xl font-bold text-slate-800 tracking-tighter text-right">₹{Number(invoice.total).toFixed(2)}</span>
-                            </div>
-                        </div>
+                            return (
+                                <>
+                                    <div className="grid grid-cols-2 gap-4 items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                        <span className="text-left">Subtotal</span>
+                                        <span className="text-slate-800 font-black text-right pr-4">₹{safeNum(invoice.subtotal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4 items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                        <span className="text-left text-indigo-500/70">Tax Assessment</span>
+                                        <span className="text-indigo-600 font-black text-right pr-4">₹{safeNum(invoice.total_tax).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                    {safeNum(invoice.total_discount) > 0 && (
+                                        <div className="grid grid-cols-2 gap-4 items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                            <span className="text-left text-rose-500/70">Discount</span>
+                                            <span className="text-rose-600 font-black text-right pr-4">- ₹{safeNum(invoice.total_discount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                    )}
 
-                        <div className="pt-8 text-left">
-                            <div className="rounded-2xl p-6 border-2 border-slate-300 relative overflow-hidden">
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-left">Institutional Paid</span>
-                                        <span className="text-xl font-bold text-emerald-600 tracking-tighter text-right">₹{Number(invoice.total_paid).toFixed(2)}</span>
+                                    <div className="pt-4 mt-2 border-t-2 border-slate-900/10">
+                                        <div className="grid grid-cols-2 gap-4 items-center">
+                                            <span className="text-sm font-black text-slate-900 uppercase tracking-tighter text-left">Grand Total</span>
+                                            <span className="text-3xl font-black text-slate-900 tracking-tighter text-right pr-4 italic">₹{safeNum(invoice.total).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
                                     </div>
-                                    <div className="h-px bg-slate-200 my-4"></div>
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest text-left">Outstanding</span>
-                                        <span className="text-lg font-bold text-slate-800 tracking-tighter text-right">₹{Number(invoice.outstanding_amount).toFixed(2)}</span>
+
+                                    <div className="pt-8 text-left">
+                                        <div className="rounded-[2rem] p-8 border-2 border-slate-900/5 bg-slate-50/50 relative overflow-hidden">
+                                            <div className="relative z-10 space-y-4">
+                                                <div className="grid grid-cols-2 gap-4 items-center">
+                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-left">Cash / Bank Paid</span>
+                                                    <span className="text-xl font-black text-emerald-600 tracking-tighter text-right italic">₹{safeNum(invoice.total_paid).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                </div>
+                                                <div className="h-px bg-slate-200/50"></div>
+                                                <div className="grid grid-cols-2 gap-4 items-center">
+                                                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] text-left">Net Outstanding</span>
+                                                    <span className="text-2xl font-black text-slate-900 tracking-tighter text-right italic">₹{safeNum(invoice.outstanding_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
-                        </div>
+                                </>
+                            );
+                        })()}
                     </div>
                 </div>
             </div>

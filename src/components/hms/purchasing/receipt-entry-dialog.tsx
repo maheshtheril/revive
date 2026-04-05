@@ -42,7 +42,6 @@ type ReceiptItem = {
     unitPrice: number;
     batch: string;
     expiry: string;
-    expiryDisplay?: string; // Raw input for better typing experience
     mrp: number;
     salePrice: number;
     marginPct: number;
@@ -55,8 +54,6 @@ type ReceiptItem = {
     packing: string;
     uom?: string;
     conversionFactor?: number;
-    baseUom?: string;
-    purchaseUom?: string;
     schemeDiscount?: number;
     discountPct?: number;
     discountAmt?: number;
@@ -76,7 +73,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
     const { toast } = useToast();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isProductCreationOpen, setProductCreationOpen] = useState(false);
-    const [globalMargin, setGlobalMargin] = useState<number>(100); // Default to 100% (MRP match)
+    const [globalMargin, setGlobalMargin] = useState<number>(20); // Default to 20%
     const [isSupplierCreateOpen, setSupplierCreateOpen] = useState(false);
 
     // Mode: 'po' (Linked to PO) | 'direct' (Ad-hoc)
@@ -88,8 +85,6 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
     const [supplierName, setSupplierName] = useState('');
     const [supplierMeta, setSupplierMeta] = useState<any>(null);
     const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0]);
-    const [entryDate] = useState(new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }));
-    const [nextGrn, setNextGrn] = useState('GRN-LOADING...');
     const [reference, setReference] = useState('');
     const [notes, setNotes] = useState('');
     const [attachmentUrl, setAttachmentUrl] = useState('');
@@ -117,13 +112,6 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
     const [companyDetails, setCompanyDetails] = useState<{ gstin?: string, state?: string } | null>(null);
     const [taxType, setTaxType] = useState<'INTRA' | 'INTER'>('INTRA');
 
-    // Force global margin to 100% on mount to satisfy high-speed pharmacy workflow
-    useEffect(() => {
-        if (isOpen && !viewReceiptId) {
-            setGlobalMargin(100);
-        }
-    }, [isOpen, viewReceiptId]);
-
     // Load Company Details
     useEffect(() => {
         if (!isOpen) return;
@@ -135,36 +123,19 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
             const res = await getUOMs();
             if (res) setUomMaster(res);
         }
-        async function loadGrn() {
-            const { getNextReceiptNumber } = await import("@/app/actions/receipt");
-            const grn = await getNextReceiptNumber();
-            setNextGrn(grn);
-        }
         loadCompany();
         loadUoms();
-        loadGrn();
     }, [isOpen]);
 
     // Determine Tax Type
     useEffect(() => {
-        const sGstin = (supplierMeta?.gstin || '').trim();
-        const cGstin = (companyDetails?.gstin || '').trim();
-
-        if (!sGstin || !cGstin) {
-            // Default to INTRA if one side is missing, but with a warning in production
+        if (!supplierMeta?.gstin || !companyDetails?.gstin) {
             setTaxType('INTRA');
             return;
         }
-
-        const supplierStateCode = sGstin.substring(0, 2);
-        const companyStateCode = cGstin.substring(0, 2);
-
-        // Standard GST logic: Same state code = Intra, different = Inter
-        if (supplierStateCode === companyStateCode) {
-            setTaxType('INTRA');
-        } else {
-            setTaxType('INTER');
-        }
+        const supplierStateCode = supplierMeta.gstin.substring(0, 2);
+        const companyStateCode = companyDetails.gstin.substring(0, 2);
+        setTaxType(supplierStateCode === companyStateCode ? 'INTRA' : 'INTER');
     }, [supplierMeta, companyDetails]);
 
     // Auto-calculate Round Off
@@ -322,25 +293,12 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
     };
 
     const updateLineItemCalcs = (item: ReceiptItem): ReceiptItem => {
-        const baseTotal = item.unitPrice * (item.receivedQty || 0);
+        const baseTotal = item.unitPrice * item.receivedQty;
         const deductions = (item.discountAmt || 0) + (item.schemeDiscount || 0);
         const taxable = Math.max(0, baseTotal - deductions);
         const taxAmt = taxable * ((item.taxRate || 0) / 100);
-        
-        // Final fallback: If salePrice is 0, default to MRP
-        let finalSalePrice = item.salePrice;
-        let finalMargin = item.marginPct;
-        if ((!finalSalePrice || finalSalePrice === 0) && item.mrp && item.mrp > 0) {
-            finalSalePrice = item.mrp;
-            if (item.unitPrice > 0) {
-                finalMargin = Number(calculateMargin(finalSalePrice, item.unitPrice).toFixed(2));
-            }
-        }
-
         return {
             ...item,
-            salePrice: finalSalePrice,
-            marginPct: finalMargin,
             taxAmount: taxAmt
         };
     };
@@ -373,32 +331,18 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
         if (id) {
             const p = await getProduct(id);
             if (p) {
+                n[index].mrp = p.mrp || 0;
+                n[index].salePrice = p.price || 0;
+                n[index].hsn = p.hsn || "";
+                n[index].packing = p.packing || "";
                 n[index].uom = p.uom || "PCS";
-                
-                // CRITICAL FIX: Load conversion metadata from product master to avoid resetting to 1 PCS
-                const productMeta = p.metadata as any || {};
-                const uomData = productMeta.uom_data || {};
-                const effectiveCF = Number(uomData.conversion_factor || uomData.conversionFactor || 
-                                           (p.uom?.toUpperCase() === 'BOX' ? 10 : 
-                                            p.uom?.toUpperCase() === 'STRIP' ? 10 : 
-                                            p.uom?.toUpperCase() === 'PKT' ? 10 : 1));
-                
-                n[index].conversionFactor = effectiveCF;
-                n[index].baseUom = uomData.base_uom || uomData.baseUom || "PCS";
-                n[index].purchaseUom = uomData.purchase_uom || uomData.purchaseUom || p.uom || "PCS";
+                n[index].taxRate = p.taxRate || 0;
 
-                // Memory Recall: If search results provided a last known sale price, use it!
-                const lastPrice = Number((opt?.metadata as any)?.lastSellingPrice || 0);
-                const lastMrp = Number((opt?.metadata as any)?.mrp || 0);
+                if (n[index].salePrice > 0 && n[index].unitPrice > 0) {
+                    n[index].marginPct = Number(calculateMargin(n[index].salePrice, n[index].unitPrice).toFixed(2));
+                }
 
-                const basePrice = Number(p.price || 0);
-                n[index].mrp = lastMrp || Number(p.mrp || (basePrice * effectiveCF) || 0);
-                n[index].salePrice = lastPrice || n[index].mrp || 0; 
-                n[index].marginPct = lastPrice > 0 && n[index].unitPrice > 0 ? Number(calculateMargin(lastPrice, n[index].unitPrice).toFixed(2)) : 100;
-                n[index].hsn = opt?.metadata?.hsn || p.hsn || "";
-                n[index].packing = opt?.metadata?.packing || p.packing || "";
-                n[index].taxRate = opt?.metadata?.taxRate || p.taxRate || 0;
-
+                const taxable = (n[index].unitPrice * n[index].receivedQty) - (n[index].schemeDiscount || 0) - (n[index].discountAmt || 0);
                 n[index] = updateLineItemCalcs(n[index]);
             }
         }
@@ -496,26 +440,16 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
             expiry: "",
             mrp: 0,
             salePrice: 0,
-            marginPct: 100,
+            marginPct: 0,
             taxRate: 0,
             taxAmount: 0,
             hsn: "",
             packing: "",
-            uom: "PCS",
-            conversionFactor: 1,
-            baseUom: "PCS",
-            purchaseUom: "PCS",
             schemeDiscount: 0,
             discountPct: 0,
             discountAmt: 0,
             freeQty: 0
         }]);
-    };
-
-    const removeItem = (index: number) => {
-        const n = [...items];
-        n.splice(index, 1);
-        setItems(n);
     };
 
     const searchSuppliers = async (query: string) => {
@@ -530,18 +464,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
 
     const searchProducts = async (query: string) => {
         const res = await getProductsPremium(query, 1, supplierId || undefined) as any;
-        return res?.data?.map((p: any) => {
-            const meta = p.metadata || {};
-            const stock = p.totalStock ?? p.total_stock ?? 0;
-            const mrp = p.mrp ?? meta.mrp ?? p.price ?? 0;
-            const exp = meta.lastExpiry || meta.last_expiry || 'N/A';
-            return { 
-                id: p.id, 
-                label: p.name, 
-                subLabel: `Stock: ${stock} | MRP: ${mrp} | Exp: ${exp}`,
-                metadata: { ...p, mrp, stock, hsn: p.hsn_code || meta.hsn, packing: meta.packing }
-            };
-        }) || [];
+        return res?.data?.map((p: any) => ({ id: p.id, label: p.name, subLabel: p.category })) || [];
     };
 
     const createProductQuick = async (name: string): Promise<Option | null> => {
@@ -588,18 +511,14 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                         mrp: Number(i.mrp),
                         hsn: i.hsn,
                         taxRate: Number(i.taxRate),
-                        packing: i.packing,
-                        uom: i.uom,
-                        conversion_factor: i.conversionFactor || (i.uom?.toUpperCase() === 'BOX' ? 10 : 
-                                                                  i.uom?.toUpperCase() === 'STRIP' ? 10 : 
-                                                                  i.uom?.toUpperCase() === 'PKT' ? 10 : 1)
+                        packing: i.packing
                     }));
 
                     const productRes = await findOrCreateProductsBatch(productPayload) as any;
-                    const productDataMap = new Map();
+                    const productIdMap = new Map();
                     if (productRes.success && Array.isArray(productRes.data)) {
                         productRes.data.forEach((p: any) => {
-                            productDataMap.set(p.originalName, p);
+                            productIdMap.set(p.originalName, p.productId);
                         });
                     }
 
@@ -613,8 +532,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                     // 2. Map scanned items to UI state
                     const mapped = scannedItems.map((item: any) => {
                         try {
-                            const histData = productDataMap.get(item.productName) || {};
-                            const pId = item.productId || histData.productId || "";
+                            const pId = item.productId || productIdMap.get(item.productName) || "";
 
                             // Safe number parsing
                             const qty = !isNaN(parseFloat(item.qty)) ? parseFloat(item.qty) : 0;
@@ -633,6 +551,13 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                 finalDiscPct = 0;
                             }
 
+                            // Smart UOM Conversion for Scanned Items (Pharma World Standard)
+                            let effectiveConv = 1;
+                            const uomStr = (item.uom || "").trim().toUpperCase();
+                            const convMatch = uomStr.match(/(\d+)/);
+                            if (convMatch) effectiveConv = parseInt(convMatch[1]);
+                            else if (uomStr === 'STRIP') effectiveConv = 10;
+
                             const rawItem = {
                                 productId: pId,
                                 productName: item.productName || "Unknown Item",
@@ -643,16 +568,14 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                 unitPrice: price,
                                 batch: item.batch || "",
                                 expiry: item.expiry ? normalizeDate(item.expiry) : "",
-                                mrp: histData.lastMrp || Number(item.mrp) || price,
-                                salePrice: histData.lastSellingPrice || Number(item.mrp) || price,
-                                marginPct: 100,
+                                mrp: Number(item.mrp) || price,
+                                salePrice: 0,
+                                marginPct: 0,
                                 taxRate: rate,
                                 hsn: item.hsn || "",
                                 packing: item.packing || "",
-                                uom: item.uom ? item.uom.trim().toUpperCase() : "PCS",
-                                conversionFactor: item.conversionFactor || (item.uom?.toUpperCase() === 'BOX' ? 10 : 1),
-                                baseUom: "PCS", // Default to PCS as base for pharma
-                                purchaseUom: item.uom ? item.uom.trim().toUpperCase() : "PCS",
+                                uom: uomStr || "PCS",
+                                conversionFactor: effectiveConv,
                                 schemeDiscount: finalSchAmt,
                                 discountPct: finalDiscPct,
                                 discountAmt: Number(item.discountAmt) || 0,
@@ -695,8 +618,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
         setPoId(null);
         setScannedTotal(0);
         setMode('po');
-        setGlobalMargin(100);
-        toast({ title: "Form Cleared", description: "All fields and pricing have been reset to 100%." });
+        toast({ title: "Form Cleared", description: "All fields have been reset." });
     };
 
     const normalizeDate = (dateStr: string): string => {
@@ -795,8 +717,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                     hsn: i.hsn,
                     packing: i.packing,
                     purchaseUOM: i.uom,
-                    baseUOM: i.baseUom || "PCS",
-                    conversionFactor: i.conversionFactor || 1,
+                    conversionFactor: i.conversionFactor,
                     schemeDiscount: i.schemeDiscount,
                     discountPct: i.discountPct,
                     discountAmt: i.discountAmt,
@@ -896,68 +817,84 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                             </p>
                         </div>
                     </div>
-                )}                {/* Command Center: Industrial Professional Header */}
-                <div className="flex items-center justify-between px-8 py-4 border-b border-indigo-500/20 bg-indigo-700 text-white shrink-0 z-30 shadow-xl">
-                    <div className="flex items-center gap-6">
-                        <div className="h-12 w-12 bg-white/10 rounded-xl flex items-center justify-center border border-white/20 backdrop-blur-md">
-                            <Receipt className="h-6 w-6 text-white" />
+                )}
+
+                {/* Fixed Title Header */}
+                <div className="flex items-center justify-between px-8 py-4 border-b border-border bg-background/95 backdrop-blur-md shrink-0 z-20">
+                    <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 bg-indigo-500/10 rounded-xl flex items-center justify-center border border-indigo-500/20">
+                            <Receipt className="h-5 w-5 text-indigo-400" />
                         </div>
                         <div>
-                            <div className="flex items-center gap-3">
-                                <h2 className="text-2xl font-black tracking-tight text-white uppercase italic">
-                                    {viewReceiptId ? 'RECORD DETAILS' : `PHARMACY STOCK ENTRY`}
-                                </h2>
-                                <div className="bg-emerald-500 text-white text-[11px] font-black tracking-widest px-2 py-0.5 rounded-full shadow-lg border border-white/20 animate-pulse">
-                                    {nextGrn}
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3 mt-1">
-                                <p className="text-[10px] text-white/70 uppercase tracking-widest font-black">
-                                    Industrial Goods Received Note (GRN) Console
-                                </p>
-                                <span className="h-1 w-1 rounded-full bg-white/30" />
-                                <div className="flex items-center gap-1.5 bg-white/10 px-2 rounded-md border border-white/10">
-                                    <span className="text-[9px] text-white/60 font-black uppercase tracking-tighter">LEDGER ENTRY DATE:</span>
-                                    <p className="text-[10px] text-white font-black uppercase tracking-widest">
-                                        {entryDate}
-                                    </p>
-                                </div>
-                            </div>
+                            <DialogTitle className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
+                                {viewReceiptId ? 'Purchase Receipt Details' : 'New Purchase Entry'}
+                            </DialogTitle>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-black">
+                                {viewReceiptId ? 'Review Inward Stock Record' : 'Record Supplier Stock Inward'}
+                            </p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                        <div className="flex bg-white/10 rounded-lg p-0.5 border border-white/10 items-center mr-4">
+
+
+                    <div className="flex items-center gap-4">
+                        <div className="flex bg-muted/50 rounded-lg p-0.5 border border-border items-center">
                             <button
                                 onClick={() => setMode('po')}
-                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'po' ? 'bg-white text-indigo-700 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'po' ? 'bg-indigo-600 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                                 PO LINKED
                             </button>
                             <button
                                 onClick={() => setMode('direct')}
-                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'direct' ? 'bg-emerald-600 text-white shadow-lg' : 'text-white/60 hover:text-white'}`}
+                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'direct' ? 'bg-emerald-600 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}
                             >
-                                DIRECT ENTRY
+                                DIRECT
                             </button>
                         </div>
-                        
-                        <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            onClick={() => setIsMaximized(!isMaximized)}
-                            className="text-white hover:bg-white/10 rounded-full h-10 w-10 border border-white/10"
-                        >
-                            {isMaximized ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-                        </Button>
-                        <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            onClick={onClose} 
-                            className="bg-red-500 hover:bg-red-600 text-white rounded-full h-10 w-10 border border-white/20 shadow-lg ml-2"
-                        >
-                            <X className="h-5 w-5" />
-                        </Button>
+
+                        <Separator orientation="vertical" className="h-6 bg-border" />
+
+                        <div className="flex bg-muted/50 rounded-lg p-0.5 border border-border items-center">
+                            <button
+                                onClick={() => setIsOpeningStock(false)}
+                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${!isOpeningStock ? 'bg-indigo-500 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                Standard
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setIsOpeningStock(true);
+                                    if (!reference) setReference('OPENING-STOCK');
+                                }}
+                                className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${isOpeningStock ? 'bg-orange-500 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                Opening Stock
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={resetForm}
+                                className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-full h-10 w-10"
+                                title="Clear Form"
+                            >
+                                <RotateCcw className="h-5 w-5" />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setIsMaximized(!isMaximized)}
+                                className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-full h-10 w-10"
+                                title={isMaximized ? "Minimize" : "Maximize"}
+                            >
+                                {isMaximized ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={onClose} className="text-muted-foreground hover:text-foreground hover:bg-muted rounded-full h-10 w-10">
+                                <X className="h-5 w-5" />
+                            </Button>
+                        </div>
                     </div>
                 </div>
 
@@ -1022,91 +959,42 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                     </div>
                                     <div className="h-px w-full bg-neutral-800 absolute bottom-0 left-0 group-focus-within:bg-indigo-500 transition-all duration-300"></div>
                                     <div className="flex flex-col gap-1 pt-1.5">
-                                        <div className="flex flex-wrap gap-2 items-center">
+                                        <div className="flex flex-wrap gap-2">
                                             {supplierMeta?.gstin && (
                                                 <Badge variant="outline" className="bg-indigo-500/10 border-indigo-500/20 text-indigo-400 font-mono text-[9px] px-1.5 py-0 h-5">
                                                     GST {supplierMeta.gstin}
                                                 </Badge>
                                             )}
-                                            {/* Manual Tax Override Toggle */}
-                                            <div className="flex items-center bg-muted/60 border border-border/50 rounded-md p-0.5 ml-auto">
-                                                <button 
-                                                    onClick={() => setTaxType('INTRA')}
-                                                    className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter transition-all ${taxType === 'INTRA' ? 'bg-indigo-500 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-                                                >
-                                                    CGST/SGST
-                                                </button>
-                                                <button 
-                                                    onClick={() => setTaxType('INTER')}
-                                                    className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter transition-all ${taxType === 'INTER' ? 'bg-orange-500 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-                                                >
-                                                    IGST
-                                                </button>
-                                            </div>
+                                            {supplierMeta?.address && (
+                                                <div className="text-[10px] text-muted-foreground font-medium line-clamp-1 flex items-center gap-1.5 opacity-60">
+                                                    <span className="shrink-0 bg-muted px-1 rounded-[3px] text-[8px] border border-border text-muted-foreground">ADR</span>
+                                                    {supplierMeta.address}
+                                                </div>
+                                            )}
                                         </div>
-                                        {supplierMeta?.address && (
-                                            <div className="text-[10px] text-muted-foreground font-medium line-clamp-1 flex items-center gap-1.5 opacity-60 mt-1">
-                                                <span className="shrink-0 bg-muted px-1 rounded-[3px] text-[8px] border border-border text-muted-foreground">ADR</span>
-                                                {supplierMeta.address}
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
 
                                 {/* Stock Metadata */}
-                                <div className="col-span-12 lg:col-span-4 grid grid-cols-2 gap-4">
-                                    <div className="space-y-1.5 col-span-2">
-                                        <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest flex items-center gap-2">
-                                            System Controls
-                                            <div className="h-0.5 flex-1 bg-indigo-500/10 rounded-full" />
-                                        </label>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">Entry Date</label>
-                                                <div className="relative">
-                                                    <CalendarIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                                                    <Input
-                                                        type="text"
-                                                        value={entryDate}
-                                                        readOnly
-                                                        className="h-9 bg-muted/30 border-border text-foreground font-mono font-bold pl-8 text-[11px] rounded-md opacity-80"
-                                                        title="The date this record is being entered into the ledger"
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div className="space-y-1">
-                                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">System GRN #</label>
-                                                <div className="relative">
-                                                    <FileText className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                                                    <Input
-                                                        type="text"
-                                                        value={nextGrn}
-                                                        readOnly
-                                                        className="h-9 bg-muted/30 border-border text-indigo-500 font-mono font-bold pl-8 text-[11px] rounded-md"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Inv. Date</label>
+                                <div className="col-span-12 lg:col-span-4 grid grid-cols-2 gap-6">
+                                    <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Invoice Date</label>
                                         <Input
                                             type="date"
                                             value={receivedDate}
                                             onChange={(e) => setReceivedDate(e.target.value)}
-                                            className="h-9 bg-background border-border text-foreground font-mono font-bold px-3 text-[12px] rounded-md focus:ring-1 focus:ring-indigo-500"
+                                            className="h-10 bg-background border-border text-foreground font-mono font-bold px-3 text-sm rounded-lg"
                                         />
                                     </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Inv. Number</label>
+                                    <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Invoice Number</label>
                                         <div className="relative group">
-                                            <Receipt className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-indigo-400 transition-colors" />
+                                            <Receipt className="absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-indigo-400 transition-colors" />
                                             <Input
-                                                placeholder="INV/..."
+                                                placeholder="INV/24-25/..."
                                                 value={reference}
                                                 onChange={(e) => setReference(e.target.value)}
-                                                className="h-9 bg-background border-border text-foreground font-mono font-bold pl-10 pr-3 text-[12px] rounded-md focus:ring-1 focus:ring-indigo-500"
+                                                className="h-10 bg-background border-border text-foreground font-mono font-bold pl-10 pr-3 text-sm rounded-lg"
                                             />
                                         </div>
                                     </div>
@@ -1135,12 +1023,12 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                 </div>
                                             </div>
                                         )}
-                                        <div className="shrink-0 w-48 border border-indigo-500/20 rounded-lg overflow-hidden transition-all bg-indigo-500/[0.02]">
+                                        <div className="shrink-0 w-52 border border-border rounded-xl overflow-hidden group/scan shadow-2xl hover:shadow-indigo-500/20 transition-all bg-background">
                                             <FileUpload
                                                 onUploadComplete={(url) => { if (url) handleScanInvoice(url); else setAttachmentUrl(''); }}
                                                 currentFileUrl={attachmentUrl}
-                                                label="AI SCAN / UPLOAD"
-                                                className="h-10 border-none bg-transparent hover:bg-indigo-500/10 transition-colors py-0"
+                                                label="AI MAGIC SCAN"
+                                                className="h-20 border-dashed border-indigo-500/30 bg-indigo-500/[0.04] hover:bg-indigo-500/10 transition-colors"
                                             />
                                         </div>
                                     </div>
@@ -1216,14 +1104,14 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                         Apply All
                                     </button>
                                 </div>
-                                 <div className="flex items-center gap-1.5 bg-muted rounded-xl p-1 border border-border">
-                                    {['MRP-0', 'MRP-5', 'MRP-10', 'MRP-12', 'MRP-15'].map(m => (
+                                <div className="flex items-center gap-1.5 bg-muted rounded-xl p-1 border border-border">
+                                    {['MRP-5', 'MRP-10', 'MRP-12', 'MRP-15'].map(m => (
                                         <button
                                             key={m}
                                             onClick={() => applyQuickMargin(m)}
                                             className="px-3 py-1 text-[9px] font-black rounded-lg hover:bg-accent transition-all text-muted-foreground hover:text-foreground"
                                         >
-                                            {m === 'MRP-0' ? 'MRP' : m}
+                                            {m}%
                                         </button>
                                     ))}
                                 </div>
@@ -1246,8 +1134,8 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                         <th className="py-2.5 px-2 w-24">Pack</th>
                                         <th className="py-2.5 px-2 w-24 text-indigo-400">UOM</th>
                                         <th className="py-2.5 px-2 w-16 text-indigo-400">Conv</th>
-                                        <th className="py-2.5 px-2 w-[110px] text-indigo-400">Batch</th>
-                                        <th className="py-2.5 px-2 w-[110px] text-emerald-400">Expiry</th>
+                                        <th className="py-2.5 px-2 w-28">Batch</th>
+                                        <th className="py-2.5 px-2 w-24">Exp</th>
                                         <th className="py-2.5 px-2 w-24 text-right">MRP</th>
                                         <th className="py-2.5 px-2 w-24 text-right">Sale Price</th>
                                         <th className="py-2.5 px-2 w-24 text-right text-green-400">Margin %</th>
@@ -1259,12 +1147,11 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                         <th className="py-2.5 px-2 w-24 text-right">Schm Amt</th>
                                         <th className="py-2.5 px-2 w-28 text-right">Taxable Val</th>
                                         <th className="py-2.5 px-2 w-24 text-right">Tax (%)</th>
-                                        <th className={`py-2.5 px-2 w-24 text-right transition-colors ${taxType === 'INTRA' ? 'text-indigo-400' : 'text-muted-foreground/30'}`}>CGST</th>
-                                        <th className={`py-2.5 px-2 w-24 text-right transition-colors ${taxType === 'INTRA' ? 'text-indigo-400' : 'text-muted-foreground/30'}`}>SGST</th>
-                                        <th className={`py-2.5 px-2 w-24 text-right transition-colors ${taxType === 'INTER' ? 'text-orange-400' : 'text-muted-foreground/30'}`}>IGST</th>
+                                        <th className="py-2.5 px-2 w-20 text-right">CGST</th>
+                                        <th className="py-2.5 px-2 w-20 text-right">SGST</th>
+                                        <th className="py-2.5 px-2 w-20 text-right">IGST</th>
                                         <th className="py-2.5 px-2 w-24 text-right">Net Cost</th>
                                         <th className="py-2.5 pr-6 text-right w-32 sticky right-0 z-50 bg-muted border-l border-border shadow-2xl">Line Total</th>
-                                        <th className="py-2.5 px-2 w-12 text-center bg-muted border-l border-border"></th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border/30">
@@ -1308,12 +1195,17 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                     value={item.uom || 'PCS'}
                                                     onValueChange={(val) => {
                                                         const n = [...items];
-                                                        n[index].uom = val;
-                                                        // Try auto-derive conversion if not set
+                                                        n[index].uom = val.toUpperCase().trim();
+                                                        // Aggressive auto-derive conversion if not set (Pharma Standard)
                                                         if (!n[index].conversionFactor || n[index].conversionFactor === 1) {
                                                             const match = val.match(/(\d+)/);
-                                                            if (match) n[index].conversionFactor = parseInt(match[1]);
-                                                            else if (val.toUpperCase() === 'STRIP') n[index].conversionFactor = 10;
+                                                            if (match) {
+                                                                n[index].conversionFactor = parseInt(match[1]);
+                                                                toast({ title: "Auto Conversion", description: `Detected ${match[1]} units for ${val}` });
+                                                            } else if (val.toUpperCase() === 'STRIP') {
+                                                                n[index].conversionFactor = 10;
+                                                                toast({ title: "Standard Conversion", description: `Assuming 10 PCS for STRIP` });
+                                                            }
                                                         }
                                                         setItems(n);
                                                     }}
@@ -1337,29 +1229,18 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                 />
                                             </td>
                                             <td className="py-1.5 px-2">
-                                                <input 
-                                                    defaultValue={item.batch} 
-                                                    onBlur={(e) => {
-                                                        const n = [...items];
-                                                        n[index].batch = e.target.value;
-                                                        setItems(n);
-                                                    }}
-                                                    onFocus={(e) => e.target.select()}
-                                                    placeholder="Batch" 
-                                                    className="w-full bg-slate-100 dark:bg-slate-800/20 border border-border/20 rounded px-1.5 py-1 text-[11px] font-mono focus:ring-1 focus:ring-indigo-500/50 text-foreground text-center font-bold" 
-                                                />
+                                                <input value={item.batch || ''} onChange={(e) => { const n = [...items]; n[index].batch = e.target.value; setItems(n); }} className="w-full bg-transparent border-none text-[10px] font-mono p-0 focus:ring-0 text-foreground" />
                                             </td>
-                                            <td className="py-1.5 px-2">
+                                            <td className="py-1.5 px-2 text-center">
                                                 <input 
-                                                    defaultValue={item.expiry} 
-                                                    onBlur={(e) => { 
+                                                    value={formatDisplayDate(item.expiry)} 
+                                                    onChange={(e) => { 
                                                         const n = [...items]; 
-                                                        n[index].expiry = e.target.value; 
+                                                        n[index].expiry = normalizeDate(e.target.value); 
                                                         setItems(n); 
                                                     }} 
-                                                    onFocus={(e) => e.target.select()}
-                                                    placeholder="Expiry" 
-                                                    className="w-full bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/10 rounded px-1.5 py-1 text-[11px] font-mono focus:ring-1 focus:ring-emerald-500/50 text-emerald-600 dark:text-emerald-400 text-center font-bold" 
+                                                    placeholder="DD/MM/YYYY" 
+                                                    className="w-full bg-transparent border-none text-[10px] font-mono p-0 focus:ring-0 text-muted-foreground text-center" 
                                                 />
                                             </td>
                                             <td className="py-1.5 px-2 text-right">
@@ -1370,18 +1251,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                     onKeyDown={(e) => handleKeyDown(e, index, 'mrp')}
                                                     data-index={index}
                                                     data-field="mrp"
-                                                    onChange={(e) => { 
-                                                        const n = [...items]; 
-                                                        const val = Number(e.target.value);
-                                                        n[index].mrp = val; 
-                                                        // Automatically sync sale price to MRP by default
-                                                        n[index].salePrice = val;
-                                                        // Update margin based on new sale price
-                                                        if (val > 0 && n[index].unitPrice > 0) {
-                                                            n[index].marginPct = Number(calculateMargin(val, n[index].unitPrice).toFixed(2));
-                                                        }
-                                                        setItems(n); 
-                                                    }}
+                                                    onChange={(e) => { const n = [...items]; n[index].mrp = Number(e.target.value); setItems(n); }}
                                                     className="w-full bg-transparent border-none text-right font-bold focus:ring-0 p-0 text-foreground text-[11px]"
                                                 />
                                             </td>
@@ -1428,10 +1298,10 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                     }
                                                     n[index] = updateLineItemCalcs(n[index]);
                                                     setItems(n);
-                                                }} className="w-16 mx-auto bg-muted/60 hover:bg-muted rounded p-1 text-center font-black text-foreground border border-border/40 focus:border-indigo-500 focus:ring-0 text-[12px] transition-all" />
+                                                }} className="w-9 mx-auto bg-muted rounded p-0.5 text-center font-bold text-foreground border-none focus:ring-0 text-[11px]" />
                                             </td>
                                             <td className="py-1.5 px-2 text-center">
-                                                <input type="number" value={item.freeQty ?? 0} onChange={(e) => { const n = [...items]; n[index].freeQty = Number(e.target.value); setItems(n); }} className="w-14 mx-auto bg-muted/40 rounded p-1 text-center font-bold text-orange-500 border border-border/20 focus:ring-0 text-[11px]" />
+                                                <input type="number" value={item.freeQty ?? 0} onChange={(e) => { const n = [...items]; n[index].freeQty = Number(e.target.value); setItems(n); }} className="w-9 mx-auto bg-muted rounded p-0.5 text-center font-bold text-orange-500 border-none focus:ring-0 text-[11px]" />
                                             </td>
                                             <td className="py-1.5 px-2 text-right">
                                                 <input type="number" value={item.discountPct ?? 0} onChange={(e) => {
@@ -1470,37 +1340,22 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                                     n[index] = updateLineItemCalcs(n[index]);
                                                     setItems(n);
                                                 }}>
-                                                    <SelectTrigger className="h-7 w-20 bg-muted/30 border-border/50 text-[10px] font-black text-foreground px-2 hover:bg-muted/60 transition-all">
+                                                    <SelectTrigger className="h-5 w-12 bg-transparent border-border text-[9px] font-mono text-foreground px-1">
                                                         <SelectValue />
                                                     </SelectTrigger>
                                                     <SelectContent className="bg-background border-border text-foreground">
-                                                        {TAX_OPTIONS.map(v => <SelectItem key={v} value={String(v)} className="font-bold">{v}%</SelectItem>)}
+                                                        {TAX_OPTIONS.map(v => <SelectItem key={v} value={String(v)}>{v}%</SelectItem>)}
                                                     </SelectContent>
                                                 </Select>
                                             </td>
-                                            <td className={`py-1.5 px-2 text-right transition-all ${taxType === 'INTRA' ? 'bg-indigo-500/5' : 'opacity-20'}`}>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-[7.5px] font-black text-indigo-500/50">CGST {(item.taxRate / 2).toFixed(1)}%</span>
-                                                    <span className="text-[11px] font-mono font-bold text-indigo-400">
-                                                        {taxType === 'INTRA' ? ((item.taxAmount || 0) / 2).toFixed(2) : '0.00'}
-                                                    </span>
-                                                </div>
+                                            <td className="py-1.5 px-2 text-right text-[9px] font-mono text-muted-foreground">
+                                                {taxType === 'INTRA' ? ((item.taxAmount || 0) / 2).toFixed(2) : '-'}
                                             </td>
-                                            <td className={`py-1.5 px-2 text-right transition-all ${taxType === 'INTRA' ? 'bg-indigo-500/5' : 'opacity-20'}`}>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-[7.5px] font-black text-indigo-500/50">SGST {(item.taxRate / 2).toFixed(1)}%</span>
-                                                    <span className="text-[11px] font-mono font-bold text-indigo-400">
-                                                        {taxType === 'INTRA' ? ((item.taxAmount || 0) / 2).toFixed(2) : '0.00'}
-                                                    </span>
-                                                </div>
+                                            <td className="py-1.5 px-2 text-right text-[9px] font-mono text-muted-foreground">
+                                                {taxType === 'INTRA' ? ((item.taxAmount || 0) / 2).toFixed(2) : '-'}
                                             </td>
-                                            <td className={`py-1.5 px-2 text-right transition-all ${taxType === 'INTER' ? 'bg-orange-500/5' : 'opacity-20'}`}>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-[7.5px] font-black text-orange-500/50">IGST {item.taxRate}%</span>
-                                                    <span className="text-[11px] font-mono font-bold text-orange-400">
-                                                        {taxType === 'INTER' ? (item.taxAmount || 0).toFixed(2) : '0.00'}
-                                                    </span>
-                                                </div>
+                                            <td className="py-1.5 px-2 text-right text-[9px] font-mono text-muted-foreground">
+                                                {taxType === 'INTER' ? (item.taxAmount || 0).toFixed(2) : '-'}
                                             </td>
                                             <td className="py-1.5 px-2 text-right text-[10px] font-mono font-bold text-indigo-400/80">
                                                 {((item.receivedQty || 0) + (item.freeQty || 0)) > 0
@@ -1509,16 +1364,6 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                             </td>
                                             <td className="py-1.5 pr-6 text-right font-mono font-black text-foreground sticky right-0 z-20 bg-muted border-l border-border shadow-2xl">
                                                 {(Math.max(0, (item.unitPrice * item.receivedQty) - (item.discountAmt || 0) - (item.schemeDiscount || 0)) + (item.taxAmount || 0)).toFixed(2)}
-                                            </td>
-                                            <td className="py-1.5 px-2 text-center border-l border-border">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={() => removeItem(index)}
-                                                    className="h-6 w-6 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 rounded-full transition-all"
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </Button>
                                             </td>
                                         </tr>
                                     ))}
@@ -1529,7 +1374,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                 </div>
 
                 {/* World-Class Fixed Footer */}
-                <div className="px-8 py-4 border-t border-border bg-muted/80 backdrop-blur-3xl shrink-0 flex items-center justify-between z-10">
+                <div className="px-8 py-6 border-t border-border bg-muted/80 backdrop-blur-3xl shrink-0 flex items-center justify-between z-10">
                     <div className="flex items-center gap-12">
                         <div className="flex items-center gap-8">
                             <div className="space-y-1">
@@ -1538,19 +1383,7 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                             </div>
                             <div className="space-y-1 border-l border-border pl-8">
                                 <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Aggregate Tax</p>
-                                <div className="flex items-center gap-3">
-                                    <div className="flex flex-col">
-                                        {taxType === 'INTRA' ? (
-                                            <>
-                                                <span className="text-[8px] text-indigo-500 font-bold uppercase tracking-tight">CGST Spl. (Half)</span>
-                                                <span className="text-[8px] text-indigo-500 font-bold uppercase tracking-tight">SGST Spl. (Half)</span>
-                                            </>
-                                        ) : (
-                                            <span className="text-[8px] text-orange-500 font-bold uppercase tracking-tight">IGST Full</span>
-                                        )}
-                                    </div>
-                                    <p className={`text-sm font-mono font-bold ${taxType === 'INTRA' ? 'text-indigo-400' : 'text-orange-400'}`}>₹{totalTax.toFixed(2)}</p>
-                                </div>
+                                <p className="text-sm font-mono font-bold text-indigo-500">₹{totalTax.toFixed(2)}</p>
                             </div>
                             <div className="flex flex-col space-y-1 border-l border-border pl-8 group/round">
                                 <div className="flex items-center gap-2">
@@ -1560,7 +1393,6 @@ export function ReceiptEntryDialog({ isOpen, onClose, onSuccess, viewReceiptId }
                                 <input
                                     type="number"
                                     value={roundOff}
-                                    onFocus={(e) => e.target.select()}
                                     onChange={(e) => { setRoundOff(Number(e.target.value)); setIsAutoRound(false); }}
                                     className="bg-transparent border-none p-0 text-sm font-mono font-bold text-muted-foreground focus:ring-0 w-16"
                                 />

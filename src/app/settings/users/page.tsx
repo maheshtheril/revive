@@ -2,17 +2,16 @@ import { getUsers, getAvailableRoles } from "@/app/actions/users"
 import { Users, TrendingUp, UserCheck, UserX } from "lucide-react"
 import { UserTable } from "@/components/users/user-table"
 import { InviteUserDialog } from "@/components/users/invite-user-dialog"
-import { BulkStaffUploadDialog } from "@/components/users/bulk-staff-upload-dialog"
 import { Toaster } from "@/components/ui/toaster"
 import { cn } from "@/lib/utils"
 
 interface PageProps {
-    searchParams: Promise<{
+    searchParams: {
         search?: string
         role?: string
         status?: 'active' | 'inactive' | 'all'
         page?: string
-    }>
+    }
 }
 
 export default async function UsersPage({ searchParams }: PageProps) {
@@ -58,8 +57,7 @@ export default async function UsersPage({ searchParams }: PageProps) {
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-4 bg-white/50 backdrop-blur-md p-1.5 rounded-[1.5rem] shadow-sm border border-slate-100 dark:border-slate-800">
-                    <BulkStaffUploadDialog roles={roles} />
+                <div className="bg-white/50 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-slate-100">
                     <InviteUserDialog roles={roles} />
                 </div>
             </div>

@@ -75,16 +75,32 @@ export async function GET(
         const vitals = vitalsArr[0];
         const labOrder = labOrders[0];
 
+        // Fetch nursing consumption items independently
+        const consumptionItems: any[] = await prisma.$queryRaw`
+            SELECT 
+                sm.id, sm.qty, sm.uom, sm.created_at,
+                p.name as product_name,
+                u.full_name as nurse_name
+            FROM hms_stock_move sm
+            LEFT JOIN hms_product p ON sm.product_id = p.id
+            LEFT JOIN app_user u ON sm.created_by = u.id
+            WHERE sm.source_reference::text = CAST(${id} AS text)
+            AND sm.source = 'Nursing Consumption'
+            AND sm.tenant_id::text = CAST(${session.user.tenantId} AS text)
+            ORDER BY sm.created_at DESC
+        `;
+
         console.log(`[GET /api/prescriptions/by-appointment/${id}] Found:`, {
             prescriptionId: prescription?.id,
             vitalsId: vitals?.id,
             labOrderId: labOrder?.id,
             itemCount: prescription?.prescription_items?.length,
-            labCount: labOrder?.tests?.length
+            labCount: labOrder?.tests?.length,
+            consumptionCount: consumptionItems.length
         })
 
-        if (!prescription && !vitals) {
-            return NextResponse.json({ success: true, prescription: null, vitals: null })
+        if (!prescription && !vitals && consumptionItems.length === 0) {
+            return NextResponse.json({ success: true, prescription: null, vitals: null, consumption: [] })
         }
 
         // Format for frontend (handle the aggregate JSON structure safely)
@@ -109,7 +125,8 @@ export async function GET(
                 medicines,
                 labTests: labOrder?.tests || []
             } : null,
-            vitals: vitals || null
+            vitals: vitals || null,
+            consumption: consumptionItems
         })
     } catch (error) {
         console.error('Error fetching prescription by appointment:', error)

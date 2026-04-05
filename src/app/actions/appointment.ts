@@ -5,6 +5,7 @@ import { auth } from "@/auth" // Correct auth import
 import { redirect } from "next/navigation"
 import { revalidatePath } from "next/cache"
 import { isUUID, safeNum } from "@/lib/utils/is-uuid"
+import { serialize } from "@/lib/utils"
 
 export async function getAppointmentsProp(start: Date, end: Date) {
     const session = await auth();
@@ -48,7 +49,7 @@ export async function getAppointmentsProp(start: Date, end: Date) {
             };
         });
 
-        return { success: true, data: events };
+        return { success: true, data: serialize(events) };
     } catch (error) {
         console.error("Failed to fetch appointments:", error);
         return { success: false, error: "Failed to fetch appointments" };
@@ -148,11 +149,31 @@ export async function createAppointment(formData: FormData) {
             const durationMinutes = clinician?.consultation_slot_duration || 30
             const endsAt = new Date(startsAt.getTime() + durationMinutes * 60000)
 
+            // [WORLD CLASS] Token Generator: Sequential per clinician, per day
+            const todayStart = new Date(startsAt);
+            todayStart.setHours(0, 0, 0, 0);
+            const todayEnd = new Date(startsAt);
+            todayEnd.setHours(23, 59, 59, 999);
+
+            const lastApt: any = await tx.hms_appointments.findFirst({
+                where: {
+                    clinician_id: clinicianId,
+                    starts_at: { gte: todayStart, lte: todayEnd },
+                    tenant_id: session.user.tenantId,
+                    deleted_at: null
+                },
+                orderBy: { token_number: 'desc' },
+                select: { token_number: true }
+            });
+            const nextToken = (lastApt?.token_number || 0) + 1;
+            console.log(`[TOKEN-GEN] Assigned Token #${nextToken} for Dr. ${clinicianId} on ${dateStr}`);
+
             // 3. Create Appointment
             const created = await tx.$queryRaw`
                 INSERT INTO hms_appointments (
                     id, tenant_id, company_id, patient_id, clinician_id,
-                    starts_at, ends_at, type, mode, priority, notes, status, created_by, branch_id
+                    starts_at, ends_at, type, mode, priority, notes, status, 
+                    created_by, branch_id, token_number
                 ) VALUES (
                     gen_random_uuid(),
                     ${session.user.tenantId}::uuid,
@@ -167,7 +188,8 @@ export async function createAppointment(formData: FormData) {
                     ${notes || null},
                     'scheduled',
                     ${session.user.id}::uuid,
-                    ${session.user.current_branch_id || null}::uuid
+                    ${session.user.current_branch_id || null}::uuid,
+                    ${nextToken}::int
                 )
                 RETURNING *
             `;
@@ -199,7 +221,7 @@ export async function createAppointment(formData: FormData) {
     if (source === 'dashboard' || source === 'terminal') {
         revalidatePath("/hms/reception/dashboard")
         revalidatePath("/hms/dashboard")
-        return { success: true, data: createdApt }
+        return { success: true, data: serialize(createdApt) }
     }
 
     // Default Fallback
@@ -286,7 +308,7 @@ export async function updateAppointmentDetails(formData: FormData) {
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60000)
 
     try {
-        await prisma.hms_appointments.update({
+        const updated = await prisma.hms_appointments.update({
             where: {
                 id,
                 tenant_id: session.user.tenantId
@@ -305,17 +327,16 @@ export async function updateAppointmentDetails(formData: FormData) {
             }
         });
 
+        // Handle redirection outside try/catch
+        const source = formData.get("source") as string
+        if (source === 'dashboard' || source === 'terminal') {
+            revalidatePath("/hms/reception/dashboard")
+            revalidatePath("/hms/dashboard")
+            return { success: true, data: serialize(updated) }
+        }
     } catch (error) {
         console.error("Failed to update details:", error);
         return { error: "Failed to update appointment details" }
-    }
-
-    // Handle redirection outside try/catch
-    const source = formData.get("source") as string
-    if (source === 'dashboard' || source === 'terminal') {
-        revalidatePath("/hms/reception/dashboard")
-        revalidatePath("/hms/dashboard")
-        return { success: true, data: { id } } // editingAppointment was undefined here
     }
 
     redirect("/hms/appointments")
@@ -354,7 +375,7 @@ export async function getAppointmentsByClinician(clinicianId: string, date: stri
             }
         });
 
-        return { success: true, data: appointments }
+        return { success: true, data: serialize(appointments) }
     } catch (error: any) {
         console.error("Failed to fetch clinician appointments:", error)
         return { success: false, error: "Failed to fetch appointments" }

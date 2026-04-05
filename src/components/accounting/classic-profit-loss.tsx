@@ -18,7 +18,6 @@ interface ClassicProfitLossProps {
     } | null
     startDate: Date
     endDate: Date
-    onDateChange?: (newDate: Date) => void
     currencySymbol?: string
 }
 
@@ -26,7 +25,6 @@ export function ClassicProfitLoss({
     data,
     startDate,
     endDate,
-    onDateChange,
     currencySymbol = '₹'
 }: ClassicProfitLossProps) {
     const { formatCurrency } = useLocalization()
@@ -70,29 +68,7 @@ export function ClassicProfitLoss({
                             <div className="flex items-center gap-2 text-[10px] bg-[#002b2b] px-3 py-1 border border-[#008080]">
                                 <Calendar className="h-3 w-3 text-[#64ffff]" />
                                 <span className="text-[#64ffff]">Period:</span>
-                                    <div className="flex items-center gap-2">
-                                        <select 
-                                            value={startDate.getMonth()} 
-                                            onChange={(e) => onDateChange?.(new Date(startDate.getFullYear(), parseInt(e.target.value), 1))}
-                                            className="bg-[#002b2b] text-[#64ffff] font-black outline-none border border-[#008080] px-2 py-0.5 cursor-pointer uppercase"
-                                        >
-                                            {Array.from({ length: 12 }, (_, i) => (
-                                                <option key={i} value={i} className="bg-[#002b2b] text-[#64ffff]">
-                                                    {new Date(0, i).toLocaleString('default', { month: 'short' }).toUpperCase()}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <select 
-                                            value={startDate.getFullYear()} 
-                                            onChange={(e) => onDateChange?.(new Date(parseInt(e.target.value), startDate.getMonth(), 1))}
-                                            className="bg-[#002b2b] text-[#64ffff] font-black outline-none border border-[#008080] px-2 py-0.5 cursor-pointer"
-                                        >
-                                            {Array.from({ length: 10 }, (_, i) => {
-                                                const y = new Date().getFullYear() - 5 + i;
-                                                return <option key={y} value={y} className="bg-[#002b2b] text-[#64ffff]">{y}</option>;
-                                            })}
-                                        </select>
-                                    </div>
+                                <span className="text-white font-bold">{format(startDate, 'd-MMM-yy').toUpperCase()} to {format(endDate, 'd-MMM-yy').toUpperCase()}</span>
                             </div>
                         </div>
                         <div className="flex items-center gap-3">

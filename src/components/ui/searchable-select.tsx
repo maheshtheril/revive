@@ -77,18 +77,16 @@ export function SearchableSelect({
     const [position, setPosition] = React.useState({ top: 0, left: 0, width: 0 });
 
     React.useEffect(() => {
-        // Stop updating if user is searching. 
-        // We only want to sync options with propOptions when search is cleared/idle.
+        // Sync options with propOptions ONLY when propOptions actually changes (content-wise)
         if (query) return;
 
-        // Content comparison to avoid infinite loops from unmemoized props (e.g. .slice() or filtered arrays)
         const currentOptionsIds = options.map(o => o.id).join(',');
         const propOptionsIds = propOptions.map(o => o.id).join(',');
-        
+
         if (currentOptionsIds !== propOptionsIds) {
             setOptions(propOptions);
         }
-    }, [propOptions, query, options]);
+    }, [propOptions, query]); // Only depend on external propOptions and query, NOT internal options.
 
     // Reset active index when options change
     React.useEffect(() => {
@@ -100,34 +98,37 @@ export function SearchableSelect({
     const listRef = React.useRef<HTMLUListElement>(null);
 
     // Initial value handling
+    // Initial value handling: sync internal state when the value prop changes
     React.useEffect(() => {
-        // If the dropdown is open (user is interacting/searching), DO NOT touch the query.
         if (open) return;
 
         if (!value) {
             setSelectedOption(null);
-            setQuery(valueLabel || "");
+            const targetQuery = valueLabel || "";
+            if (query !== targetQuery) setQuery(targetQuery);
             return;
         }
 
-        // Try finding in current options or default options
         const found = options.find(o => o.id === value) || propOptions.find(o => o.id === value);
 
         if (found) {
-            setSelectedOption(found);
-            if (variant === 'ghost') {
-                setQuery(found.label);
-            } else {
-                setQuery("");
+            if (selectedOption?.id !== found.id) {
+                setSelectedOption(found);
+            }
+            const targetQuery = variant === 'ghost' ? found.label : "";
+            if (query !== targetQuery) {
+                setQuery(targetQuery);
             }
         } else if (valueLabel) {
-            // Fallback to valueLabel if provided
-            const fallbackOption = { id: value, label: valueLabel };
-            setSelectedOption(fallbackOption);
-            if (variant === 'ghost') setQuery(valueLabel);
-            else setQuery("");
+            if (selectedOption?.id !== value || selectedOption?.label !== valueLabel) {
+                setSelectedOption({ id: value, label: valueLabel });
+            }
+            const targetQuery = variant === 'ghost' ? valueLabel : "";
+            if (query !== targetQuery) {
+                setQuery(targetQuery);
+            }
         }
-    }, [value, valueLabel, options, propOptions, variant, open]);
+    }, [value, valueLabel, propOptions]); // DO NOT rely on internal state here to avoid loops.
 
     // Close on disable
     React.useEffect(() => {
@@ -334,7 +335,7 @@ export function SearchableSelect({
                 <ul className="py-1 overflow-auto max-h-[240px]" ref={listRef}>
                     {options.map((option, index) => (
                         <li
-                            key={option.id}
+                            key={`${option.id}-${index}`}
                             onMouseDown={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();

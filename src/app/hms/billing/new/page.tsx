@@ -19,10 +19,11 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
     const { patientId, appointmentId, medicines, items } = sp;
 
     // 1. Parallel Data Fetching for Maximum Speed
-    const [taxRes, uomsRes, gatewayRes] = await Promise.all([
+    const [taxRes, uomsRes, gatewayRes, hmsSettingsRes] = await Promise.all([
         getTaxConfiguration(),
         getUOMs(),
-        getPaymentGatewaySettings()
+        getPaymentGatewaySettings(),
+        getHMSSettings()
     ]);
 
     // 2. Resolve Incoming Intent (Prescriptions, Items, etc)
@@ -43,30 +44,36 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
     } catch (e) {
         console.log("[BILLING-PAGE] Failed to parse items from URL:", e);
     }
-    
+
     const initialItems = [...initialMedicines, ...itemsFromUrl];
 
     // 3. Conditional Data Fetching
-    const effectivePatientId = (patientId as string) || '';
-    
     let draftInvoice = null;
     if (appointmentId) {
-        const apptData = await getInitialInvoiceData(appointmentId as string);
+        const apptData = await getInitialInvoiceData(appointmentId as string, session.user.tenantId);
         if (apptData?.success && apptData.data) {
             draftInvoice = apptData.data;
         }
     }
 
-    // 4. Fetch Patients (Optimized)
+    const effectivePatientId = (patientId as string) || (draftInvoice as any)?.patientId || '';
+
+    // 4. Consolidate Items (URL + Prescription/Nursing items)
+    const consolidatedMedicines = [
+        ...initialItems,
+        ...(draftInvoice as any)?.initialItems || []
+    ];
+
+    // 5. Fetch Patients (Optimized)
     const patientList = await prisma.hms_patient.findMany({
-        where: { 
+        where: {
             company_id: session.user.companyId,
             status: 'active'
         },
-        select: { 
-            id: true, 
-            first_name: true, 
-            last_name: true, 
+        select: {
+            id: true,
+            first_name: true,
+            last_name: true,
             patient_number: true,
             contact: true
         },
@@ -74,7 +81,7 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
         orderBy: { created_at: 'desc' }
     });
 
-    // 5. Serialize and Sanitize for Client Hydration
+    // 6. Serialize and Sanitize for Client Hydration
     const safeProps = {
         patients: JSON.parse(JSON.stringify(patientList.map(p => ({
             id: p.id,
@@ -87,11 +94,13 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
         uoms: JSON.parse(JSON.stringify(uomsRes || [])),
         gatewayConfig: JSON.parse(JSON.stringify(gatewayRes?.success ? gatewayRes.settings : null)),
         initialPatientId: effectivePatientId,
-        initialMedicines: JSON.parse(JSON.stringify(initialItems)),
+        initialMedicines: JSON.parse(JSON.stringify(consolidatedMedicines)),
         appointmentId: (appointmentId as string) || '',
-        initialInvoice: JSON.parse(JSON.stringify(draftInvoice)),
+        initialInvoice: JSON.parse(JSON.stringify((draftInvoice as any)?.initialInvoice || null)),
+        pendingConsumablesCount: (draftInvoice as any)?.pendingConsumablesCount || 0,
         currency: (session.user as any).currencySymbol || '₹',
-        isRegistrationFee: Boolean(patientId && !appointmentId && initialItems.some(i => i.isRegistration || i.name?.includes('Registration')))
+        allowRateEdit: hmsSettingsRes?.success ? hmsSettingsRes.settings.allowRateEdit : true,
+        isRegistrationFee: Boolean(effectivePatientId && !appointmentId && consolidatedMedicines.some(i => i.isRegistration || i.name?.includes('Registration')))
     };
 
     return (

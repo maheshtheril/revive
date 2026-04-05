@@ -30,8 +30,8 @@ export function SupplierPricingDefaults({
 }: SupplierPricingDefaultsProps) {
     const { toast } = useToast();
     const [strategy, setStrategy] = useState(currentDefaults?.defaultPricingStrategy || 'mrp_discount');
-    const [mrpDiscountPct, setMrpDiscountPct] = useState(currentDefaults?.defaultMrpDiscountPct || 0);
-    const [markupPct, setMarkupPct] = useState(currentDefaults?.defaultMarkupPct || 100);
+    const [mrpDiscountPct, setMrpDiscountPct] = useState(currentDefaults?.defaultMrpDiscountPct || 10);
+    const [markupPct, setMarkupPct] = useState(currentDefaults?.defaultMarkupPct || 25);
 
     const handleSave = async () => {
         const defaults = {
@@ -154,17 +154,24 @@ export function SupplierPricingDefaults({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setMrpDiscountPct(2)}
+                                    onClick={() => setMrpDiscountPct(10)}
                                     className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 border border-white/10 transition-colors"
                                 >
-                                    2%
+                                    10%
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setMrpDiscountPct(0)}
+                                    onClick={() => setMrpDiscountPct(15)}
                                     className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 border border-white/10 transition-colors"
                                 >
-                                    Full MRP (0%)
+                                    15%
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMrpDiscountPct(20)}
+                                    className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 border border-white/10 transition-colors"
+                                >
+                                    20%
                                 </button>
                             </div>
                         </div>
@@ -196,10 +203,10 @@ export function SupplierPricingDefaults({
                             <div className="flex gap-2 mt-2">
                                 <button
                                     type="button"
-                                    onClick={() => setMarkupPct(100)}
+                                    onClick={() => setMarkupPct(20)}
                                     className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 border border-white/10 transition-colors"
                                 >
-                                    100%
+                                    20%
                                 </button>
                                 <button
                                     type="button"

@@ -28,7 +28,7 @@ export function ProductSearchClient({ initialQuery }: ProductSearchClientProps) 
             const result = await getProductsPremium(query);
             if (result.success && result.data) {
                 return result.data.map(p => ({
-                    id: p.name, // We search by name in history ledger currently, but ID/Name is fine
+                    id: p.id || p.name, // Use actual UUID if available
                     label: p.name,
                     subLabel: `SKU: ${p.sku} | ${p.category}`
                 }));

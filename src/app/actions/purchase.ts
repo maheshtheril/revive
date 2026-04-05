@@ -4,6 +4,7 @@ import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
 import { hms_purchase_status } from "@prisma/client"
+import { serialize } from "@/lib/utils"
 
 export type PurchaseOrderLineItem = {
     productId: string
@@ -50,7 +51,7 @@ export async function getPurchaseOrders(params?: { status?: string, supplierId?:
             take: 50
         })
 
-        return { success: true, data: orders }
+        return { success: true, data: serialize(orders) }
     } catch (error) {
         console.error("Failed to fetch POs:", error)
         return { error: "Failed to fetch purchase orders" }
@@ -76,7 +77,7 @@ export async function getPurchaseOrder(id: string) {
             }
         })
         if (!order) return { error: "Order not found" }
-        return { success: true, data: order }
+        return { success: true, data: serialize(order) }
     } catch (error) {
         console.error("Failed to fetch PO:", error)
         return { error: "Failed to fetch purchase order" }
@@ -96,7 +97,6 @@ export async function createSupplier(data: {
     contactPerson?: string
     openingBalance?: number
     openingBalanceDate?: Date
-    aiRules?: string
 }) {
     const session = await auth()
     if (!session?.user?.companyId) return { error: "Unauthorized" }
@@ -117,8 +117,7 @@ export async function createSupplier(data: {
                     phone: data.phone,
                     contact_person: data.contactPerson,
                     opening_balance: data.openingBalance,
-                    opening_balance_date: data.openingBalanceDate,
-                    ai_rules: data.aiRules
+                    opening_balance_date: data.openingBalanceDate
                 }
             }
         })
@@ -156,7 +155,6 @@ export async function updateSupplier(id: string, data: {
     phone?: string
     contactPerson?: string
     is_active?: boolean
-    aiRules?: string
 }) {
     const session = await auth()
     if (!session?.user?.companyId) return { error: "Unauthorized" }
@@ -182,8 +180,7 @@ export async function updateSupplier(id: string, data: {
                     ...(data.address !== undefined && { address: data.address }),
                     ...(data.email !== undefined && { email: data.email }),
                     ...(data.phone !== undefined && { phone: data.phone }),
-                    ...(data.contactPerson !== undefined && { contact_person: data.contactPerson }),
-                    ...(data.aiRules !== undefined && { ai_rules: data.aiRules })
+                    ...(data.contactPerson !== undefined && { contact_person: data.contactPerson })
                 }
             }
         })
@@ -327,7 +324,7 @@ export async function createPurchaseOrder(data: PurchaseOrderData) {
         })
 
         revalidatePath('/hms/purchasing/orders')
-        return { success: true, data: result }
+        return { success: true, data: serialize(result) }
 
     } catch (error) {
         console.error("Create PO Failed:", error)

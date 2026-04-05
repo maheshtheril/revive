@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { useState, useEffect, Suspense } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, DollarSign } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
@@ -124,6 +124,7 @@ export function PatientPaymentDialog({
                         <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Loading Terminal...</p>
                     </div>
                 ) : (
+                <Suspense fallback={<div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-2xl"><Loader2 className="h-12 w-12 text-emerald-600 animate-spin" /><p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Hydrating Terminal...</p></div>}>
                     <CompactInvoiceEditorWithNoSSR
                         patients={patients}
                         billableItems={billableItems}
@@ -142,6 +143,7 @@ export function PatientPaymentDialog({
                             onPaymentSuccess?.(data);
                         }}
                     />
+                </Suspense>
                 )}
             </DialogContent>
         </Dialog>

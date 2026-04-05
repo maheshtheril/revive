@@ -1,84 +1,48 @@
-'use client';
-
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+"use client"
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   MessageSquare, Plus, Trash2, Search, Save, User, DollarSign, Receipt, X,
   Loader2, CreditCard, Banknote, Smartphone, Maximize2,
   Minimize2, Check, QrCode, Clock, ArrowRight, Activity, Package, Landmark,
-  Copy, AlertTriangle, Info
+  Copy, AlertTriangle, Info, SidebarOpen, SidebarClose, FlaskConical, Zap,
+  ShieldCheck, CheckCircle2, PlusCircle, RefreshCcw
 } from 'lucide-react'
+import { cn } from "@/lib/utils"
 import { QRCodeSVG } from 'qrcode.react'
 
 // ------------------------------------------------------------------------------------------------
 // POS DEVICE SERVICE (INLINED TO RESOLVE CIRCULAR/EVALUATION ERRORS)
 // ------------------------------------------------------------------------------------------------
 type POSStatus = 'connected' | 'offline' | 'searching' | 'unsupported';
-type POSType = 'pinelabs' | 'paytm' | 'unknown';
 let posServiceInstance: any = null;
 class POSDeviceService {
     private activeUrl: string | null = null;
-    private activeType: POSType = 'unknown';
     private status: POSStatus = 'searching';
     constructor() {}
     public async autoDiscover() {
         if (typeof window === 'undefined') return false;
-        
-        const checkEndpoint = async (url: string, endpoint: string) => {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const ports = [8080, 8082, 12345];
+        for (const port of ports) {
             try {
-                const res = await fetch(`${url}${endpoint}`, { 
-                    method: 'GET', 
-                    signal: controller.signal 
-                }).catch(() => null);
+                const url = `http://localhost:${port}`;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 800);
+                const res = await fetch(`${url}/web/status`, { method: 'GET', signal: controller.signal }).catch(() => null);
                 clearTimeout(timeoutId);
-                return res && res.ok;
-            } catch (e) {
-                clearTimeout(timeoutId);
-                return false;
-            }
-        };
-
-        // 1. Check PineLabs
-        const plPorts = [8080, 8082, 12345];
-        for (const port of plPorts) {
-            const url = `http://localhost:${port}`;
-            if (await checkEndpoint(url, '/web/status')) {
-                this.activeUrl = url; this.activeType = 'pinelabs'; this.status = 'connected'; 
-                return true; 
-            }
+                if (res && res.ok) { this.activeUrl = url; this.status = 'connected'; return true; }
+            } catch (e) {}
         }
-
-        // 2. Check Paytm
-        const ptPorts = [5001, 8080];
-        for (const port of ptPorts) {
-            const url = `http://localhost:${port}`;
-            if (await checkEndpoint(url, '/paytm/status')) {
-                this.activeUrl = url; this.activeType = 'paytm'; this.status = 'connected'; 
-                return true; 
-            }
-        }
-
         this.status = 'offline'; return false;
     }
     public getStatus(): POSStatus { return this.status; }
-    public getType(): POSType { return this.activeType; }
     public async initiatePayment(req: any): Promise<any> {
         if (!this.activeUrl) { await this.autoDiscover(); if (!this.activeUrl) return { success: false, error: 'POS Controller not found' }; }
         try {
-            if (this.activeType === 'pinelabs') {
-                const payload = { transaction_type: 4001, amount: Math.round(req.amount * 100), billing_ref_no: req.invoiceId, payment_mode: req.method === 'CARD' ? 1 : 14 };
-                const res = await fetch(`${this.activeUrl}/web/doTransaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                const data = await res.json();
-                if (data.status === 'success' || data.response_code === '00') return { success: true, reference: data.approval_code || data.retrieval_ref_no, amount: req.amount, brand: 'pinelabs' };
-            } else if (this.activeType === 'paytm') {
-                const payload = { orderId: req.invoiceId, amount: req.amount.toFixed(2), transactionType: "SALE", paymentMode: req.method || "ANY" };
-                const res = await fetch(`${this.activeUrl}/paytm/sale`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                const data = await res.json();
-                if (data.status === 'SUCCESS' || data.responseCode === '00') return { success: true, reference: data.referenceNo || data.rrn || data.txnId, amount: req.amount, brand: 'paytm' };
-            }
-            return { success: false, error: 'Transaction Failed' };
+            const payload = { transaction_type: 4001, amount: Math.round(req.amount * 100), billing_ref_no: req.invoiceId, payment_mode: req.method === 'CARD' ? 1 : 14 };
+            const response = await fetch(`${this.activeUrl}/web/doTransaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await response.json();
+            if (data.status === 'success' || data.response_code === '00') return { success: true, reference: data.approval_code || data.retrieval_ref_no, amount: req.amount };
+            return { success: false, error: data.message || 'Transaction Failed' };
         } catch (err: any) { return { success: false, error: 'Communication error' }; }
     }
 }
@@ -99,6 +63,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { format } from "date-fns"
+import { useRouter, useSearchParams } from 'next/navigation'
 import { BatchSelectorDialog } from "./batch-selector-dialog"
 
 export function CompactInvoiceEditor({ 
@@ -140,71 +105,38 @@ export function CompactInvoiceEditor({
   const safeTaxRates = Array.isArray(safeTaxConfig.taxRates) ? safeTaxConfig.taxRates : [];
   const defaultTaxId = (safeTaxConfig.defaultTax as any)?.id || '';
 
+  const [isMounted, setIsMounted] = useState(false)
+  useEffect(() => { setIsMounted(true) }, [])
+
     // Robust Line Item State (PRE-INITIALIZED FOR DEPENDENCY REASONS)
     const [lines, setLines] = useState<any[]>(() => {
         try {
             let combinedLines: any[] = []
 
-            // 1. If we are editing an existing invoice (or draft), load those lines first
+            // [CLEAN-UI] Filter out legacy clinical markers that were auto-injected by previous systems.
+            // These usually have prefixes like (Nursing) and 0 price. 
+            // We ignore them during grid load so the cashier has a clean start.
             if (initialInvoice?.hms_invoice_lines) {
-                combinedLines = initialInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
-                    id: l.id || `line-${idx}-${Date.now()}`,
-                    product_id: l.product_id || '',
-                    description: l.description || 'Untitled Item',
-                    quantity: Number(l.quantity || 1),
-                    uom: l.uom || 'PCS',
-                    unit_price: Number(l.unit_price || 0),
-                    tax_rate_id: l.tax_rate_id,
-                    tax_amount: Number(l.tax_amount || 0),
-                    discount_amount: Number(l.discount_amount || 0),
-                    base_price: Number(l.unit_price || 0),
-                    item_type: l.product_id ? (safeBillableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
-                    isFromInvoice: true
-                }))
-            }
-
-            // 2. If we have initial items passed (doctor prescriptions, nurse items, cons. fees)
-            const safeInitialMedicines = Array.isArray(initialMedicines) ? initialMedicines : [];
-            if (safeInitialMedicines.length > 0) {
-                const initialMapped = safeInitialMedicines.map((m: any, idx: number) => {
-                    if (!m) return null;
-                    const billable = safeBillableItems.find(bi => bi && (bi.id === (m.id || m.product_id) || bi.label === m.name));
-                    const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
-                    const finalPrice = billable?.price !== undefined ? Number(billable.price) : Number(m.price || 0);
-
-                    // Calculate initial tax
-                    const taxRateObj = safeTaxRates.find((t: any) => t && t.id === taxId);
-                    const rate = taxRateObj ? Number(taxRateObj.rate || 0) : 0;
-                    const lineNet = (Number(m.quantity || 1) * finalPrice);
-                    const taxAmt = (Math.max(0, lineNet) * rate) / 100;
-
-                    return {
-                        id: `init-${idx}-${Date.now()}`,
-                        product_id: billable?.id || m.id || '',
-                        description: m.name || m.description || 'Prescribed Item',
-                        quantity: Number(m.quantity || 1),
-                        uom: m.uom || billable?.uom || 'PCS',
-                        unit_price: finalPrice,
-                        tax_rate_id: taxId,
-                        tax_amount: taxAmt,
-                        discount_amount: 0,
-                        base_price: finalPrice,
-                        item_type: m.type || billable?.type || 'item',
-                        metadata: billable?.metadata || {}
-                    }
-                }).filter(Boolean);
-
-                // Merge: Add if not already in the draft invoice
-                initialMapped.forEach((m: any) => {
-                    const exists = combinedLines.some(cl => {
-                        const productMatch = cl.product_id && m.product_id && cl.product_id === m.product_id;
-                        const descMatch = (cl.description?.toLowerCase() || '').trim() === (m.description?.toLowerCase() || '').trim();
-                        return productMatch || descMatch;
-                    });
-                    if (!exists) {
-                        combinedLines.push(m);
-                    }
-                });
+                combinedLines = initialInvoice.hms_invoice_lines
+                    .filter((l: any) => {
+                        const desc = l.description?.toLowerCase() || '';
+                        const isMarker = (desc.includes('(nursing)') || desc.includes('(doctor)') || desc.includes('(prescription)')) && (Number(l.unit_price) === 0);
+                        return !isMarker;
+                    })
+                    .map((l: any, idx: number) => ({
+                        id: l.id || `line-${idx}-${Date.now()}`,
+                        product_id: l.product_id || '',
+                        description: l.description || 'Untitled Item',
+                        quantity: Number(l.quantity || 1),
+                        uom: l.uom || 'PCS',
+                        unit_price: Number(l.unit_price || 0),
+                        tax_rate_id: l.tax_rate_id,
+                        tax_amount: Number(l.tax_amount || 0),
+                        discount_amount: Number(l.discount_amount || 0),
+                        base_price: Number(l.unit_price || 0),
+                        item_type: l.product_id ? (safeBillableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
+                        isFromInvoice: true
+                    }))
             }
 
             if (combinedLines.length > 0) return combinedLines;
@@ -220,61 +152,28 @@ export function CompactInvoiceEditor({
     })
 
 
-    const getUomOptions = (itemType: string, currentUom: string, providedMetadata?: any) => {
+    const getUomOptions = (itemType: string, currentUom: string, metadata?: any) => {
         try {
-            // [WORLD CLASS SAFETY] Handle potentially stringified JSON
-            let metadata = providedMetadata;
-            if (typeof metadata === 'string') {
-                try { metadata = JSON.parse(metadata); } catch(e) {}
-            }
-            
-            const uomData = metadata?.uom_data || {};
-            
-            // Collect all possible UOM field variants (including from flattened backend response)
-            const packUom = (
-                metadata?.purchase_uom || uomData.purchase_uom || 
-                metadata?.pack_uom || uomData.pack_uom || 
-                metadata?.packUom || uomData.packUom || 
-                'BOX'
-            ).toString().toUpperCase();
-
-            const baseUom = (
-                metadata?.base_uom || uomData.base_uom || 
-                metadata?.baseUom || uomData.baseUom || 
-                'PCS'
-            ).toString().toUpperCase();
-
-            const currentUomUpper = (currentUom || '').toUpperCase();
-            const catalogUom = (metadata?.uom || '').toUpperCase();
-
-            // If it's a medicine/item, show common pharma units + metadata units
-            if (itemType === 'item' || !itemType) {
-                const relevantUnits = Array.from(new Set([
-                    packUom,
-                    baseUom,
-                    catalogUom,
-                    currentUomUpper,
-                    'PCS',
-                    'UNT'
-                ])).filter(u => u && u !== 'UNDEFINED' && u !== 'NULL' && u.length > 0);
-
-                // If we have distinct units from metadata, return them
-                if (relevantUnits.length > 1) return relevantUnits;
-            }
-
-            // Fallback: master list + metadata
             const safeUomsList = Array.isArray(uoms) ? uoms : [];
             const dbUnitNames = safeUomsList.map(u => (u?.name || '').toUpperCase()).filter(Boolean);
-            
-            return Array.from(new Set([
-                currentUomUpper,
-                packUom,
-                baseUom,
+
+            // World Class Integration: Always include metadata UOMs (Packing context) even if not in master table
+            const metaUnits = metadata ? [
+                (metadata.baseUom || '').toUpperCase(),
+                (metadata.packUom || '').toUpperCase()
+            ].filter(Boolean) : [];
+
+            const allUnits = Array.from(new Set([
                 ...dbUnitNames,
-                'PCS'
-            ])).filter(u => u && u !== 'UNDEFINED' && u.length > 0);
+                ...metaUnits,
+                (currentUom || '').toUpperCase()
+            ])).filter(Boolean);
+
+            if (itemType === 'service') {
+                return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || (safeUomsList.find(du => (du?.name || '').toUpperCase() === u && du?.uom_type === 'service')));
+            }
+            return allUnits; // For products, show all relevant units including packing units from metadata
         } catch (e) {
-            console.error("UOM Error:", e);
             return ['PCS', 'UNIT'];
         }
     }
@@ -321,8 +220,7 @@ export function CompactInvoiceEditor({
   const [hmsConfig, setHmsConfig] = useState<any>(null)
 
   const [pdfConfig, setPdfConfig] = useState<any>(null);
-  const [posStatus, setPosStatus] = useState<POSStatus>('searching')
-  const [posType, setPosType] = useState<POSType>('unknown')
+  const [posStatus, setPosStatus] = useState<'connected' | 'offline' | 'searching'>('searching')
   const [isPOSLoading, setIsPOSLoading] = useState(false)
 
   // Razorpay UPI QR State
@@ -343,7 +241,6 @@ export function CompactInvoiceEditor({
       if (pos && typeof pos.autoDiscover === 'function') {
         pos.autoDiscover().then(() => {
             setPosStatus(pos.getStatus());
-            setPosType(pos.getType());
         });
       }
     }
@@ -436,57 +333,36 @@ export function CompactInvoiceEditor({
                                 setActiveInvoice(foundInvoice);
                                 if (!selectedPatientId) setSelectedPatientId(foundInvoice.patient_id);
 
-                                // Load lines from existing invoice
+                                // Load lines from existing invoice (with marker filter)
                                 if (foundInvoice.hms_invoice_lines) {
-                                    const invLines = foundInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
-                                        id: l.id || `line-${idx}-${Date.now()}`,
-                                        product_id: l.product_id || '',
-                                        description: l.description || 'Untitled',
-                                        quantity: Number(l.quantity || 1),
-                                        uom: l.uom || 'PCS',
-                                        unit_price: Number(l.unit_price || 0),
-                                        tax_rate_id: l.tax_rate_id,
-                                        tax_amount: Number(l.tax_amount || 0),
-                                        discount_amount: Number(l.discount_amount || 0),
-                                        base_price: Number(l.unit_price || 0),
-                                        item_type: l.product_id ? (safeBillableItems.find(bi => bi && bi.id === l.product_id)?.type || 'item') : 'item',
-                                        isFromInvoice: true
-                                    }));
+                                    const invLines = foundInvoice.hms_invoice_lines
+                                        .filter((l: any) => {
+                                            const desc = l.description?.toLowerCase() || '';
+                                            const isMarker = (desc.includes('(nursing)') || desc.includes('(doctor)') || desc.includes('(prescription)')) && (Number(l.unit_price) === 0);
+                                            return !isMarker;
+                                        })
+                                        .map((l: any, idx: number) => ({
+                                            id: l.id || `line-${idx}-${Date.now()}`,
+                                            product_id: l.product_id || '',
+                                            description: l.description || 'Untitled',
+                                            quantity: Number(l.quantity || 1),
+                                            uom: l.uom || 'PCS',
+                                            unit_price: Number(l.unit_price || 0),
+                                            tax_rate_id: l.tax_rate_id,
+                                            tax_amount: Number(l.tax_amount || 0),
+                                            discount_amount: Number(l.discount_amount || 0),
+                                            base_price: Number(l.unit_price || 0),
+                                            item_type: l.product_id ? (safeBillableItems.find(bi => bi && bi.id === l.product_id)?.type || 'item') : 'item',
+                                            isFromInvoice: true
+                                        }));
                                     setLines(invLines);
                                 }
                                 return;
                             }
 
-                            // Fallback to initialItems if no invoice exists
-                            if (Array.isArray(initialItems) && initialItems.length > 0) {
-                                const newLines = initialItems.map((m: any, idx: number) => {
-                                    if (!m) return null;
-                                    const billable = safeBillableItems.find(bi => bi && (bi.id === (m.id || m.product_id) || bi.label === m.name));
-                                    const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
-                                    const finalPrice = billable?.price !== undefined ? Number(billable.price) : Number(m.price || 0);
-
-                                    const taxRateObj = safeTaxRates.find((t: any) => t && t.id === taxId);
-                                    const rate = taxRateObj ? Number(taxRateObj.rate || 0) : 0;
-                                    const lineNet = (Number(m.quantity || 1) * finalPrice);
-                                    const taxAmt = (Math.max(0, lineNet) * rate) / 100;
-
-                                    return {
-                                        id: `init-eff-${idx}-${Date.now()}`,
-                                        product_id: billable?.id || m.id || '',
-                                        description: m.name || m.description || 'Appt Item',
-                                        quantity: Number(m.quantity || 1),
-                                        uom: m.uom || billable?.uom || 'PCS',
-                                        unit_price: finalPrice,
-                                        tax_rate_id: taxId,
-                                        tax_amount: taxAmt,
-                                        discount_amount: 0,
-                                        base_price: finalPrice,
-                                        item_type: m.type || billable?.type || 'item',
-                                        metadata: billable?.metadata || {}
-                                    }
-                                }).filter(Boolean);
-                                setLines(newLines as any[]);
-                            }
+                            // [CLEAN-UI] Removed auto-population from initialItems.
+                            // The "Clinical Intelligence Hub" (Sidebar) handles all clinical data now.
+                            // Cashiers must use "Import Hub" to pull these into the bill.
                         }
                     }).catch(err => console.log("[BILLING-EDITOR] Fetch Appt Data Failed:", err));
                 });
@@ -566,78 +442,37 @@ export function CompactInvoiceEditor({
   }, [safeTaxRates, safeBillableItems]);
 
 
-  // Sync lines when initial props change (e.g. after async fetch in parent)
-  useEffect(() => {
-    if (initialInvoice?.hms_invoice_lines || (initialMedicines && initialMedicines.length > 0)) {
-      // [WORLD CLASS] Lock on to the invoice if it arrived asynchronously
-      if (initialInvoice && !activeInvoice) {
-        console.log("[INVOICE-SYNC] Locking on to asynchronously arrived invoice:", initialInvoice.invoice_number);
-        setActiveInvoice(initialInvoice);
-      }
-
-      let combined: any[] = [];
+      // [CLEAN-UI] Filtered sync for initial props
       if (initialInvoice?.hms_invoice_lines) {
-        combined = initialInvoice.hms_invoice_lines.map((l: any, idx: number) => ({
-          id: l.id || `line-async-${idx}-${Date.now()}`,
-          product_id: l.product_id || '',
-          description: l.description,
-          quantity: Number(l.quantity),
-          uom: l.uom || 'PCS',
-          unit_price: Number(l.unit_price),
-          tax_rate_id: l.tax_rate_id,
-          tax_amount: Number(l.tax_amount),
-          discount_amount: Number(l.discount_amount),
-          base_price: l.unit_price,
-          item_type: l.product_id ? (safeBillableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
-          isFromInvoice: true
-        }));
+        // [WORLD CLASS] Lock on to the invoice if it arrived asynchronously
+        if (initialInvoice && !activeInvoice) {
+          console.log("[INVOICE-SYNC] Locking on to asynchronously arrived invoice:", initialInvoice.invoice_number);
+          setActiveInvoice(initialInvoice);
+        }
+
+        const combined = initialInvoice.hms_invoice_lines
+          .filter((l: any) => {
+            const desc = l.description?.toLowerCase() || '';
+            const isMarker = (desc.includes('(nursing)') || desc.includes('(doctor)') || desc.includes('(prescription)')) && (Number(l.unit_price) === 0);
+            return !isMarker;
+          })
+          .map((l: any, idx: number) => ({
+            id: l.id || `line-async-${idx}-${Date.now()}`,
+            product_id: l.product_id || '',
+            description: l.description,
+            quantity: Number(l.quantity),
+            uom: l.uom || 'PCS',
+            unit_price: Number(l.unit_price),
+            tax_rate_id: l.tax_rate_id,
+            tax_amount: Number(l.tax_amount),
+            discount_amount: Number(l.discount_amount),
+            base_price: l.unit_price,
+            item_type: l.product_id ? (safeBillableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
+            isFromInvoice: true
+          }));
+
+        if (combined.length > 0) setLines(combined);
       }
-
-      if (initialMedicines && initialMedicines.length > 0) {
-        initialMedicines.forEach((m: any, idx: number) => {
-          // [WORLD CLASS AUTO-POPULATE]
-          // Find the real catalog item by ID or exact Name match
-          const billable = safeBillableItems.find((bi: any) =>
-            bi.id === (m.id || m.product_id) ||
-            bi.label === m.name ||
-            bi.name === m.name ||
-            (isRegistrationFee && (bi.label === "Patient Registration Fee" || bi.name === "Patient Registration Fee"))
-          );
-
-          const taxId = billable?.categoryTaxId !== undefined ? billable.categoryTaxId : defaultTaxId;
-          const finalPrice = billable?.price || Number(m.price || 0);
-          const taxRateObj = safeTaxRates.find((t: any) => t.id === taxId);
-          const rate = taxRateObj ? Number(taxRateObj.rate) : 0;
-          const lineNet = (Number(m.quantity || 1) * finalPrice);
-          const taxAmt = (Math.max(0, lineNet) * rate) / 100;
-
-          const exists = combined.some(cl => {
-            const productMatch = cl.product_id && (billable?.id || m.id) && cl.product_id === (billable?.id || m.id);
-            const descMatch = (cl.description?.toLowerCase() || '').trim() === (m.name?.toLowerCase() || m.description?.toLowerCase() || '').trim();
-            return productMatch || descMatch;
-          });
-
-          if (!exists) {
-            combined.push({
-              id: `init-async-${idx}-${Date.now()}`,
-              product_id: billable?.id || m.id || '',
-              description: billable?.label || billable?.name || m.name || m.description || '',
-              quantity: Number(m.quantity || 1),
-              uom: m.uom || billable?.uom || 'PCS',
-              unit_price: finalPrice,
-              tax_rate_id: taxId,
-              tax_amount: taxAmt,
-              discount_amount: 0,
-              base_price: finalPrice,
-              item_type: m.type || billable?.type || 'item',
-              metadata: billable?.metadata || {}
-            });
-          }
-        });
-      }
-      if (combined.length > 0) setLines(combined);
-    }
-  }, [initialInvoice, initialMedicines, safeBillableItems, defaultTaxId, safeTaxRates, isRegistrationFee]);
 
   // Sync Tax Amounts on Mount for initial items
   useEffect(() => {
@@ -747,6 +582,85 @@ export function CompactInvoiceEditor({
     }
   }, [loading]);
 
+  const [clinicalHubs, setClinicalHubs] = useState<any[]>([])
+  const [isHubOpen, setIsHubOpen] = useState(false)
+  const [hubLoading, setHubLoading] = useState(false)
+  const [internalPendingCount, setInternalPendingCount] = useState(0)
+  const [isSettling, setIsSettling] = useState(false)
+
+  const checkContext = async () => {
+    if (selectedPatientId || appointmentId) {
+      setHubLoading(true);
+      const targetId = appointmentId || (initialInvoice?.appointment_id as string || '');
+      if (targetId) {
+        import('@/app/actions/billing').then(async (mod) => {
+          const res = await mod.getInitialInvoiceData(targetId);
+          if (res.success && res.data) {
+            setClinicalHubs((res.data as any).hubs || []);
+            setInternalPendingCount((res.data as any).pendingConsumablesCount || 0);
+            if (!isHubOpen && ((res.data as any).hubs || []).length > 0) {
+              setIsHubOpen(true);
+            }
+          }
+        });
+      }
+      setHubLoading(false);
+    }
+  }
+
+  const addItemToBill = (item: any) => {
+    // Check if item with same sourceId or product already exists to prevent duplicates
+    const exists = lines.some(l => 
+      (l.sourceId === item.sourceId && l.product_id === item.id) || 
+      (l.product_id === 'REG-FEE' && item.id === 'reg-fee')
+    );
+    
+    if (exists) {
+      toast({ 
+        title: "Already Added", 
+        description: `${item.name} is already in the billing grid.`,
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const newLine = {
+      id: Date.now() + Math.random(),
+      product_id: item.id || '',
+      description: item.name || '',
+      quantity: item.quantity || 1,
+      unit_price: Number(item.price || item.unit_price || 0),
+      tax_rate_id: item.tax_rate_id || defaultTaxId,
+      tax_amount: 0,
+      uom: item.uom || 'PCS',
+      item_type: (item.type === 'medicine' || item.type === 'item') ? 'item' : 'service',
+      fromClinicalHub: true,
+      source: item.source,
+      sourceId: item.sourceId
+    };
+
+    // Smart Injection: Replace first empty line or append
+    setLines(prev => {
+      const emptyIndex = prev.findIndex(l => !l.product_id && !l.description);
+      if (emptyIndex !== -1) {
+        const copy = [...prev];
+        copy[emptyIndex] = newLine as any;
+        return copy;
+      }
+      return [...prev, newLine as any];
+    });
+
+    toast({
+      title: "Item Imported",
+      description: `Successfully added ${item.name} to voucher.`,
+      variant: "default"
+    });
+  };
+
+  useEffect(() => {
+    checkContext();
+  }, [selectedPatientId]);
+
   const handleQuickPatientCreate = async () => {
     if (!quickPatientName || !quickPatientPhone) return;
     setIsCreatingPatient(true);
@@ -759,22 +673,8 @@ export function CompactInvoiceEditor({
   }
 
   const handleAddItem = () => {
-    const isNurseOrAdmin = (session?.user as any)?.role === 'nurse' || (session?.user as any)?.role === 'doctor' || isAdmin;
-    setLines([...lines, { 
-      id: Date.now(), 
-      product_id: '', 
-      description: '', 
-      quantity: 1, 
-      uom: 'PCS', 
-      unit_price: 0, 
-      tax_rate_id: defaultTaxId, 
-      tax_amount: 0, 
-      discount_amount: 0, 
-      item_type: 'item',
-      metadata: { confirmed: isNurseOrAdmin } // Auto-confirm if entered by clinician, else require audit
-    }])
+    setLines([...lines, { id: Date.now(), product_id: '', description: '', quantity: 1, uom: 'PCS', unit_price: 0, tax_rate_id: defaultTaxId, tax_amount: 0, discount_amount: 0, item_type: 'item' }])
   }
-
 
   const handleRemoveItem = (id: number) => {
     if (lines.length > 1) {
@@ -782,45 +682,48 @@ export function CompactInvoiceEditor({
     }
   }
 
-  const updateLine = (id: number, field: string, value: any, providedMetadata?: any) => {
+  const updateLine = (id: number, field: string, value: any) => {
     setLines(lines.map(line => {
       if (line.id === id) {
         const updated = { ...line, [field]: value }
 
-        // [WORLD CLASS SYNC] Logic for Product/Service Selection
+        // Logic for Product/Service Selection
         if (field === 'product_id') {
-          // If billableItems is empty (dynamic search mode), use providedMetadata
           const item = safeBillableItems.find(bi => bi && bi.id === value)
-          const meta = providedMetadata || item?.metadata || {}
-          
-          if (item || providedMetadata) {
-            // Description Polish
-            const rawDescription = item?.description || item?.label || item?.name || providedMetadata?.name || providedMetadata?.label;
-            updated.description = rawDescription?.includes('Auto-created from') ? (item?.label || item?.name || providedMetadata?.label || providedMetadata?.name) : rawDescription;
+          if (item) {
+            // Description Polish: Override generic auto-created labels
+            const rawDescription = item.description || item.label || item.name;
+            updated.description = rawDescription?.includes('Auto-created from') ? (item.label || item.name) : rawDescription;
 
-            updated.item_type = item?.type || providedMetadata?.type || 'item'
+            updated.item_type = item.type || 'item'
 
             // Extract Prices (Support for packing metadata)
-            const uomData = meta.uom_data || {};
-            const basePrice = meta.basePrice || uomData.base_price || meta.base_price || item?.price || 0
+            const basePrice = item.metadata?.basePrice || item.price || 0
             updated.base_price = basePrice
             updated.unit_price = basePrice
-            updated.uom = meta.baseUom || uomData.base_uom || meta.base_uom || 'PCS'
+            // Intelligent Defaulting: Preference to packUom for retail sales if quantity context is missing
+            const defaultUom = (item.metadata?.packUom || item.metadata?.baseUom || 'PCS').toUpperCase();
+            updated.uom = defaultUom;
 
-            // Metadata for complex items
-            updated.metadata = meta
+            // Trigger pack price if defaulting to packUom
+            if (item.metadata?.packUom?.toUpperCase() === defaultUom && item.metadata?.packPrice) {
+                updated.unit_price = item.metadata.packPrice;
+            }
 
             // INTELLIGENT TAX RESOLUTION (UI side fallback)
-            let resolvedTaxId = item?.categoryTaxId;
-            if (!resolvedTaxId && item?.categoryTaxRate > 0) {
+            let resolvedTaxId = item.categoryTaxId;
+            if (!resolvedTaxId && item.categoryTaxRate > 0) {
               const match = extendedTaxRates.find((tr: any) => Math.abs(Number(tr.rate) - Number(item.categoryTaxRate)) < 0.1);
               if (match) resolvedTaxId = match.id;
             }
             updated.tax_rate_id = resolvedTaxId || defaultTaxId;
 
+            // Metadata for complex items
+            updated.metadata = item.metadata
+
             // WORLD CLASS FEFO: Auto-select best batch
-            if (updated.item_type === 'item') {
-              getBestBatch(value).then(batch => {
+            if (item.type === 'item' || !item.type) {
+              getBestBatch(item.id).then(batch => {
                 if (batch) {
                   setLines(current => current.map(l =>
                     l.id === id ? {
@@ -850,21 +753,14 @@ export function CompactInvoiceEditor({
           }
         }
 
-        // Logic for UOM Changes (Robust Pack vs Piece switching)
+        // Logic for UOM Changes (strips vs pieces)
         if (field === 'uom' && updated.metadata) {
-          const selectedUom = (value || '').toUpperCase();
-          const meta = updated.metadata;
-          const uomData = meta.uom_data || {};
-          
-          const packUom = (meta.purchase_uom || uomData.purchase_uom || meta.packUom || uomData.packUom || uomData.pack_uom || meta.pack_uom || 'STRIP').toUpperCase();
-          const baseUom = (meta.base_uom || uomData.base_uom || meta.baseUom || uomData.baseUom || meta.base_uom || 'PCS').toUpperCase();
-          const packPrice = Number(meta.packPrice || uomData.pack_price || meta.pack_price || 0);
-          const piecePrice = Number(updated.base_price || meta.basePrice || uomData.basePrice || uomData.base_price || meta.base_price || 0);
-
-          if (selectedUom === packUom && packPrice > 0) {
-            updated.unit_price = packPrice;
-          } else if (selectedUom === baseUom) {
-            updated.unit_price = piecePrice;
+          const selectedUom = (value || '').toUpperCase()
+          const meta = updated.metadata
+          if (selectedUom === (meta.packUom || 'STRIP').toUpperCase() && meta.packPrice) {
+            updated.unit_price = meta.packPrice
+          } else if (selectedUom === (meta.baseUom || 'PCS').toUpperCase()) {
+            updated.unit_price = updated.base_price
           }
         }
 
@@ -882,23 +778,7 @@ export function CompactInvoiceEditor({
 
   const handleSave = async (status: any, paymentsOverride?: Payment[]) => {
     if (loading) return
-
-    // [WORLD-STANDARD AUDIT GUARD] Block finalization if clinical items are unverified
-    // Only applies to posted, finalized, or paid statuses. Drafts can still be saved.
-    const isFinalizing = status === 'posted' || status === 'paid' || status === 'finalized';
-    const hasUnconfirmed = lines.some(l => (l.description || l.product_id) && l.metadata?.confirmed === false);
-    
-    if (isFinalizing && hasUnconfirmed) {
-      const count = lines.filter(l => l.metadata?.confirmed === false).length;
-      return toast({
-        title: "🛡️ Nursing Audit Required",
-        description: `${count} item(s) are awaiting clinical verification by the duty nurse. Verification is mandatory for billing.`,
-        variant: "destructive"
-      });
-    }
-
     const finalPayments = paymentsOverride || payments.filter(p => p.amount > 0)
-
 
     // Auto-paid if fully settled
     const effectiveStatus = (status === 'paid' && totalPaid < grandTotal) ? 'posted' : status;
@@ -1063,17 +943,15 @@ export function CompactInvoiceEditor({
 
   const handlePOSPayment = async (method: 'CARD' | 'UPI', amount: number) => {
     setIsPOSLoading(true);
-    const pos = getPOSService();
     try {
-      const res = await pos.initiatePayment({
+      const res = await getPOSService().initiatePayment({
         amount,
         invoiceId: provisionalNo || 'BILL-TEMP',
         method
       });
 
       if (res.success) {
-        const brandLabel = res.brand === 'paytm' ? 'Paytm' : (res.brand === 'pinelabs' ? 'PineLabs' : 'Device');
-        toast({ title: "Payment Successful", description: `Received ${currency}${amount} via ${brandLabel} terminal` });
+        toast({ title: "Payment Successful", description: `Received ${currency}${amount} via Device` });
         setPayments(prev => {
           const newPayments: Payment[] = [...prev, { method: method.toLowerCase() as any, amount, reference: res.reference } as Payment];
           const currentTotalPaid = newPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -1269,6 +1147,21 @@ export function CompactInvoiceEditor({
     setLoading(false)
   }
 
+  // ------------------------------------------------------------------------------------------------
+  // HYDRATION GATE (Top Level Return)
+  // ------------------------------------------------------------------------------------------------
+  if (!isMounted) return (
+      <div className="flex-1 space-y-6 p-8 pt-6 min-h-screen bg-slate-50 dark:bg-slate-950">
+          <div className="h-10 w-full bg-slate-200 dark:bg-slate-900 animate-pulse rounded-2xl mb-8" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="h-32 bg-slate-200 dark:bg-slate-900 animate-pulse rounded-[2rem]" />
+              <div className="h-32 bg-slate-200 dark:bg-slate-900 animate-pulse rounded-[2rem]" />
+              <div className="h-32 bg-slate-200 dark:bg-slate-900 animate-pulse rounded-[2rem]" />
+          </div>
+          <div className="h-[50vh] w-full bg-slate-200 dark:bg-slate-900 animate-pulse rounded-[3rem]" />
+      </div>
+  )
+
   if (isSuccess) {
     // Reset function for "NEXT BILL"
     const handleNextBill = () => {
@@ -1457,22 +1350,38 @@ export function CompactInvoiceEditor({
           <div className="flex items-center gap-6">
             {/* Clinical Loaders */}
             <div className="flex items-center gap-2">
-              <button onClick={loadPrescriptionItems} disabled={!selectedPatientId || loading} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all">
-                <Package className="h-3.5 w-3.5" /> Pull Prescription
+              <button
+                type="button"
+                onClick={() => setIsHubOpen(!isHubOpen)}
+                disabled={!selectedPatientId || hubLoading}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg",
+                  isHubOpen
+                    ? "bg-[#64ffff] text-[#003333] shadow-[#64ffff]/20"
+                    : "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20"
+                )}
+              >
+                {isHubOpen ? <SidebarClose className="h-4 w-4" /> : <SidebarOpen className="h-4 w-4" />}
+                {isHubOpen ? 'HIDE CLINICAL HUB' : 'OPEN CLINICAL HUB'}
+                {(clinicalHubs || []).length > 0 && !isHubOpen && (
+                  <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping ml-1" />
+                )}
               </button>
 
-              <div className="h-4 w-[1px] bg-slate-200 mx-1" />
+              <div className="h-4 w-[1px] bg-white/10 mx-1" />
 
-              <div className="flex items-center h-10 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center h-10 bg-slate-900/50 p-1 rounded-lg border border-white/10">
                 <button
+                  type="button"
                   onClick={() => applyPricingMode('standard')}
-                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'standard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'standard' ? 'bg-[#64ffff] text-[#003333] shadow-md' : 'text-[#64ffff]/40 hover:text-[#64ffff]'}`}
                 >
                   INTELLIGENT
                 </button>
                 <button
+                  type="button"
                   onClick={() => applyPricingMode('mrp')}
-                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'mrp' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`h-full px-3 text-[8px] font-black rounded-md transition-all ${pricingMode === 'mrp' ? 'bg-amber-600 text-white shadow-md' : 'text-[#64ffff]/40 hover:text-[#64ffff]'}`}
                 >
                   MRP MODE
                 </button>
@@ -1612,8 +1521,11 @@ export function CompactInvoiceEditor({
           </div>
         </div>
 
-        {/* 2. Unified Grid (Medicine & Services) */}
-        <div className="flex-1 overflow-auto p-6 bg-slate-50/20 dark:bg-slate-950/20 space-y-6">
+        {/* Body Section with Sidebar Integration */}
+        <div className="flex-1 flex overflow-hidden bg-slate-50/20 dark:bg-slate-950/20">
+
+          {/* 2. Unified Grid (Medicine & Services) */}
+          <div className="flex-1 overflow-auto p-6 space-y-6">
           <div className="max-w-[1400px] mx-auto">
             <div className="bg-white dark:bg-slate-950 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
               <table className="w-full text-left">
@@ -1640,20 +1552,6 @@ export function CompactInvoiceEditor({
                         className={`group transition-all relative ${isZeroLine ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.05]' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/50'}`}
                       >
                         <td className="px-8 py-3 relative">
-                          <div className="flex items-center gap-2 mb-1">
-                            {line.metadata?.confirmed === false ? (
-                              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
-                                <Clock className="h-3 w-3 text-amber-500" />
-                                <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest truncate">Awaiting Nurse Verification</span>
-                              </div>
-                            ) : line.metadata?.confirmed === true ? (
-                              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                                <Check className="h-3 w-3 text-emerald-500" />
-                                <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Verified Usage</span>
-                              </div>
-                            ) : null}
-                          </div>
-
                           {isZeroLine && (
                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500 animate-pulse z-10" />
                           )}
@@ -1662,21 +1560,17 @@ export function CompactInvoiceEditor({
                             value={line.product_id}
                             valueLabel={line.description}
                             options={displayedBillableOptions}
-                            onSearch={async q => {
-                              const res = await getProductsPremium(q, 1) as any;
-                              if (!res.success) return [];
-                              return (res.data || []).map((p: any) => ({
-                                id: p.id,
-                                label: p.name,
-                                subLabel: `Stock: ${p.totalStock || 0} • MRP: ${currency}${p.mrp || 0} • Exp: ${p.metadata?.lastExpiry || 'N/A'}`,
-                                metadata: p.metadata, // PASS METADATA HERE
-                                mrp: p.mrp
-                              }));
-                            }}
-                            onChange={(v, opt) => updateLine(line.id, 'product_id', v, opt?.metadata)}
+                            onChange={v => updateLine(line.id, 'product_id', v)}
                             disabled={isPaymentModalOpen || loading}
                             variant="ghost"
                             isDark={true}
+                            onSearch={async q => {
+                              const query = (q || "").toLowerCase();
+                              return itemOptions.filter(i => 
+                                (i.label || "").toLowerCase().includes(query) || 
+                                (i.subLabel || "").toLowerCase().includes(query)
+                              );
+                            }}
                             placeholder="SEARCH..."
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && !line.product_id && lines.some(l => l.product_id)) {
@@ -1817,33 +1711,132 @@ export function CompactInvoiceEditor({
                 </tbody>
               </table>
               <div className="p-6 bg-slate-50/50 dark:bg-slate-900/50 border-t border-slate-100 dark:border-slate-900">
-                <div className="flex items-center justify-between">
-                  <button onClick={handleAddItem} disabled={isPaymentModalOpen || loading} className="flex items-center gap-3 text-[9px] font-black uppercase tracking-[0.3em] text-indigo-600 hover:text-indigo-800 transition-all group disabled:opacity-50 disabled:cursor-not-allowed">
-                    <div className="bg-white dark:bg-slate-800 p-1.5 rounded-lg border border-indigo-200 dark:border-indigo-900/40 shadow-sm group-hover:rotate-90 transition-transform"><Plus className="h-4 w-4" /></div>
-                    ADD LINE
-                  </button>
-
-                  {(session?.user as any)?.role === 'nurse' || (session?.user as any)?.role === 'doctor' || isAdmin ? (
-                    <button 
-                      onClick={() => {
-                        const newLines = lines.map(line => ({
-                          ...line,
-                          metadata: { ...line.metadata, confirmed: true, confirmed_at: new Date().toISOString(), confirmed_by: session?.user?.id }
-                        }));
-                        setLines(newLines);
-                        toast({ title: "Audit Complete", description: "All items verified for clinical usage." });
-                      }}
-                      className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20"
-                    >
-                      <Check Circle2 className="h-3 w-3" />
-                      Verify All Items (Nurse)
-                    </button>
-                  ) : null}
-                </div>
-
+                <button onClick={handleAddItem} disabled={isPaymentModalOpen || loading} className="flex items-center gap-3 text-[9px] font-black uppercase tracking-[0.3em] text-indigo-600 hover:text-indigo-800 transition-all group disabled:opacity-50 disabled:cursor-not-allowed">
+                  <div className="bg-white dark:bg-slate-800 p-1.5 rounded-lg border border-indigo-200 dark:border-indigo-900/40 shadow-sm group-hover:rotate-90 transition-transform"><Plus className="h-4 w-4" /></div>
+                  ADD LINE
+                </button>
               </div>
+          </div>
+          </div>
+          </div>
+
+          {/* Clinical Hub Sidebar - The World Standard Implementation */}
+          <div className={cn(
+            "w-96 border-l border-white/10 bg-[#002b2b] backdrop-blur-3xl transition-all duration-500 overflow-y-auto no-print flex flex-col z-10 shadow-[-20px_0_50px_rgba(0,0,0,0.2)]",
+            isHubOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 pointer-events-none hidden"
+          )}>
+            <div className="p-8 border-b border-[#006666] flex items-center justify-between bg-[#004d4d]/50">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-[#64ffff]/10 rounded-2xl border border-[#64ffff]/20">
+                  <Activity className="h-6 w-6 text-[#64ffff] animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[#ffffcc] italic tracking-tighter uppercase">Clinical Intelligence</h3>
+                  <p className="text-[8px] font-black text-[#64ffff] uppercase tracking-[0.2em] opacity-60">Live Hub Bridge Active</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsHubOpen(false)} 
+                className="p-3 hover:bg-white/10 rounded-2xl transition-all text-[#64ffff] border border-[#64ffff]/10"
+              >
+                <SidebarClose className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 p-8 space-y-10 custom-scrollbar overflow-y-auto">
+              {hubLoading ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-6">
+                  <Loader2 className="h-10 w-10 text-[#64ffff] animate-spin" />
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#64ffff]/40">Syncing Medical Records...</p>
+                </div>
+              ) : (clinicalHubs || []).length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-6 text-center">
+                  <div className="p-6 bg-white/5 rounded-3xl border border-white/5 shadow-inner">
+                    <Clock className="h-10 w-10 text-[#64ffff]/20" />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-black uppercase tracking-widest text-[#ffffcc]/30 italic">Hub Disengaged</p>
+                    <p className="text-[9px] font-medium text-[#64ffff]/20 leading-relaxed px-10 uppercase tracking-tighter">New clinical orders will appear here automatically when doctor or nurses confirm them.</p>
+                  </div>
+                </div>
+              ) : (
+                (clinicalHubs || []).map(hub => (
+                  <div key={hub.id} className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+                    <div className="flex items-center justify-between border-b border-[#006666] pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-[#004d4d] rounded-xl border border-[#006666] text-[#64ffff] shadow-lg">
+                          {hub.id === 'doctor' && <Package className="h-4 w-4" />}
+                          {hub.id === 'lab' && <FlaskConical className="h-4 w-4" />}
+                          {hub.id === 'nurse' && <Zap className="h-4 w-4" />}
+                          {hub.id === 'consult' && <User className="h-4 w-4" />}
+                          {hub.id === 'reg' && <ShieldCheck className="h-4 w-4" />}
+                        </div>
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-[#ffffcc] italic underline decoration-[#64ffff]/30 underline-offset-4">{hub.label}</h4>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => hub.items.forEach((i: any) => addItemToBill(i))}
+                        className="text-[8px] font-black text-[#64ffff] hover:text-white uppercase tracking-[0.2em] bg-[#004d4d] px-3 py-1.5 rounded-lg border border-[#006666] hover:border-[#64ffff] transition-all active:scale-95"
+                      >
+                        Import Hub
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {hub.items.map((item: any, idx: number) => {
+                        const isAdded = lines.some(l => (l.sourceId === item.sourceId && l.product_id === item.id) || (l.product_id === 'REG-FEE' && item.id === 'reg-fee'));
+                        return (
+                          <div key={idx} className={cn(
+                            "group p-4 rounded-2xl border transition-all flex items-center justify-between gap-4",
+                            isAdded ? "bg-emerald-500/10 border-emerald-500/20 opacity-80" : "bg-white/5 border-white/5 hover:border-[#64ffff]/30 hover:bg-[#004d4d]"
+                          )}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="text-[11px] font-black text-[#ffffcc] italic truncate tracking-tight">{item.name}</p>
+                                {isAdded && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] font-black text-[#64ffff] tracking-tighter">{currency}{Number(item.price || item.unit_price || 0).toFixed(2)}</span>
+                                <div className="h-1 w-1 rounded-full bg-white/20" />
+                                <span className="text-[9px] font-black text-[#ffffcc]/40 uppercase tracking-widest">{item.quantity} QTV</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => addItemToBill(item)}
+                              disabled={isAdded}
+                              className={cn(
+                                "h-11 w-11 rounded-xl flex items-center justify-center transition-all shrink-0 shadow-lg",
+                                isAdded 
+                                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 opacity-50 cursor-not-allowed" 
+                                  : "bg-[#64ffff]/5 text-[#64ffff] border border-[#64ffff]/20 hover:bg-[#64ffff] hover:text-[#003333] hover:shadow-[0_0_20px_rgba(100,255,255,0.4)] active:scale-90"
+                              )}
+                            >
+                              {isAdded ? <CheckCircle2 className="h-5 w-5" /> : <PlusCircle className="h-5 w-5" />}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div className="p-8 bg-[#004d4d]/80 border-t border-[#006666]">
+              <button 
+                type="button"
+                onClick={checkContext}
+                disabled={hubLoading}
+                className="w-full h-15 bg-[#002b2b] hover:bg-[#003333] text-[#64ffff] rounded-2xl border border-[#006666] flex items-center justify-center gap-4 text-[10px] font-black uppercase tracking-[0.3em] transition-all active:scale-95 shadow-xl"
+              >
+                {hubLoading ? <Loader2 className="h-5 w-5 animate-spin text-[#64ffff]" /> : <RefreshCcw className="h-5 w-5 text-[#64ffff]" />}
+                Refresh Bio-Data Sync
+              </button>
             </div>
           </div>
+
         </div>
 
         {/* 3. Global Control Bar */}
@@ -1909,11 +1902,30 @@ export function CompactInvoiceEditor({
                       setActivePaymentAmount(grandTotal.toFixed(2));
                       setIsPaymentModalOpen(true);
                     }}
-                    disabled={loading || lines.filter(l => l.description || l.product_id).length === 0}
-                    className="group relative px-10 py-4 bg-indigo-600 hover:bg-indigo-700 focus:ring-4 focus:ring-white/20 outline-none text-white rounded-2xl shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-95 text-lg font-black italic uppercase tracking-tighter overflow-hidden focus:translate-y-[-2px] border-2 border-transparent focus:border-white/50"
+                    disabled={loading || (internalPendingCount > 0) || lines.filter(l => l.description || l.product_id).length === 0}
+                    className={cn(
+                      "group relative px-10 py-5 focus:ring-4 focus:ring-white/20 outline-none text-white rounded-3xl shadow-xl flex flex-col items-center justify-center transition-all hover:scale-[1.02] active:scale-95 text-lg font-black italic uppercase tracking-tighter overflow-hidden focus:translate-y-[-2px] border-2 border-transparent focus:border-white/50 min-w-[320px]",
+                      internalPendingCount > 0 ? 'bg-slate-300 dark:bg-slate-800 cursor-not-allowed grayscale shadow-none border-dashed border-rose-500/20' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                    )}
                   >
                     <div className="absolute inset-x-0 bottom-0 h-0.5 bg-white/20 animate-pulse" />
-                    COLLECT SETTLEMENT <span className="bg-white/20 px-2 py-0.5 rounded text-[8px] font-bold">ALT+S</span> <ArrowRight className="h-6 w-6 group-hover:translate-x-1 transition-transform" />
+                    {internalPendingCount > 0 ? (
+                      <div className="flex items-center gap-3">
+                        <div className="flex flex-col items-start leading-none gap-1">
+                          <span className="text-[10px] text-rose-500 opacity-60 font-black tracking-[0.2em] uppercase">Clinical Block</span>
+                          <span className="text-slate-500 dark:text-slate-400">UNCONFIRMED ITEMS</span>
+                        </div>
+                        <AlertTriangle className="h-8 w-8 text-rose-500 animate-pulse" />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <div className="flex flex-col items-end leading-none gap-1">
+                          <span className="text-[10px] text-white opacity-40 font-black tracking-[0.2em] uppercase">READY FOR SETTLEMENT</span>
+                          <span>COLLECT PAYMENT</span>
+                        </div>
+                        <ArrowRight className="h-8 w-8 group-hover:translate-x-2 transition-transform" />
+                      </div>
+                    )}
                   </button>
                   {!isRegistrationFee && (
                     <div className="flex gap-3">
@@ -1928,10 +1940,13 @@ export function CompactInvoiceEditor({
                       <button
                         type="button"
                         onClick={(e) => { e.preventDefault(); handleSave('posted'); }}
-                        disabled={loading || lines.filter(l => l.product_id || l.description).length === 0}
-                        className="px-8 py-4 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-lg"
+                        disabled={loading || (internalPendingCount > 0) || lines.filter(l => l.product_id || l.description).length === 0}
+                        className={cn(
+                          "px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg",
+                          internalPendingCount > 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white hover:opacity-90'
+                        )}
                       >
-                        Post Credit
+                        {internalPendingCount > 0 ? 'Post Blocked' : 'Post Credit'}
                       </button>
                     </div>
                   )}
@@ -1949,6 +1964,10 @@ export function CompactInvoiceEditor({
             onEscapeKeyDown={(e) => e.preventDefault()}
             className="z-[400] max-w-4xl p-0 overflow-hidden bg-white dark:bg-[#0a0f1e] border-none shadow-[0_60px_200px_rgba(0,0,0,0.2)] dark:shadow-[0_60px_200px_rgba(0,0,0,1)] rounded-[3rem] ring-1 ring-slate-200 dark:ring-white/10"
           >
+            <DialogHeader className="sr-only">
+              <DialogTitle>Financial Payment Settlement Terminal</DialogTitle>
+              <DialogDescription>Finalize the invoice settlement and payment allocation.</DialogDescription>
+            </DialogHeader>
             <div className="flex flex-col md:flex-row min-h-[500px]">
               {/* COLUMN 1: Audit & Reconciliation (Left) */}
               <div className="flex-1 bg-slate-50 dark:bg-slate-900 border-r border-slate-100 dark:border-white/5 p-10 flex flex-col gap-8">
@@ -2112,9 +2131,7 @@ export function CompactInvoiceEditor({
                     >
                       {/* POS Connected Badge */}
                       {posStatus === 'connected' && (m.id === 'card' || m.id === 'upi') && (
-                        <div className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full shadow-lg animate-pulse uppercase">
-                          {posType === 'paytm' ? 'Paytm' : (posType === 'pinelabs' ? 'PineLabs' : 'Device')} Active
-                        </div>
+                        <div className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full shadow-lg animate-pulse uppercase">Device Active</div>
                       )}
 
                       <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-white/10 group-hover:border-current transition-all">
@@ -2247,6 +2264,10 @@ export function CompactInvoiceEditor({
         {/* Razorpay QR Modal */}
         <Dialog open={isRazorpayQROpen} onOpenChange={setIsRazorpayQROpen}>
           <DialogContent className="z-[500] max-w-md p-8 bg-white dark:bg-slate-900 rounded-[3rem] border-none shadow-2xl overflow-hidden">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Quick Patient Registration</DialogTitle>
+              <DialogDescription>Quickly register a new patient for immediate billing.</DialogDescription>
+            </DialogHeader>
             <div className="text-center">
               <div className="inline-flex items-center gap-2 mb-6 bg-indigo-50 dark:bg-indigo-900/30 px-4 py-1.5 rounded-full border border-indigo-100 dark:border-indigo-800/50">
                 <Activity className="h-3 w-3 text-indigo-500" />
@@ -2326,6 +2347,10 @@ export function CompactInvoiceEditor({
         {/* QUICK PATIENT DIALOG */}
         <Dialog open={isQuickPatientOpen} onOpenChange={setIsQuickPatientOpen}>
           <DialogContent className="z-[400] max-w-md bg-white dark:bg-[#0a0f1e] text-slate-900 dark:text-white rounded-[2rem] border-none p-12 shadow-[0_50px_100px_rgba(0,0,0,0.5)]">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Success Confirmation</DialogTitle>
+              <DialogDescription>Your action was completed successfully.</DialogDescription>
+            </DialogHeader>
             <DialogHeader><DialogTitle className="text-3xl font-black italic tracking-tighter text-slate-900 dark:text-white">Quick Identification</DialogTitle><DialogDescription className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Register new medical identity node for {quickPatientName}</DialogDescription></DialogHeader>
             <div className="grid gap-8 py-8">
               <div className="space-y-3">
@@ -2344,19 +2369,21 @@ export function CompactInvoiceEditor({
         {/* FINANCIAL LEDGER DIALOG */}
         <Dialog open={isLedgerOpen} onOpenChange={setIsLedgerOpen}>
           <DialogContent className="z-[400] max-w-4xl p-6 bg-white dark:bg-[#0a0f1e] text-slate-900 dark:text-white rounded-[2rem] border-none p-0 overflow-hidden shadow-[0_50px_100px_rgba(0,0,0,0.4)]">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Patient Ledger Audit</DialogTitle>
+              <DialogDescription>Full financial reconciliation for patient identity node</DialogDescription>
+            </DialogHeader>
             <div className="p-10">
-              <DialogHeader className="mb-8">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <DialogTitle className="4xl font-black italic tracking-tighter text-slate-900 dark:text-white">Patient Ledger Audit</DialogTitle>
-                    <DialogDescription className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 mt-2">Full financial reconciliation for patient identity node</DialogDescription>
-                  </div>
-                  <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2 rounded-2xl text-right">
-                    <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Total Liability</p>
-                    <p className="text-2xl font-black text-amber-700">{currency}{patientBalance.toFixed(2)}</p>
-                  </div>
+              <div className="flex justify-between items-start mb-8">
+                <div>
+                  <h2 className="text-3xl font-black italic tracking-tighter text-slate-900 dark:text-white">Patient Ledger Audit</h2>
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 mt-2">Full financial reconciliation for patient identity node</p>
                 </div>
-              </DialogHeader>
+                <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2 rounded-2xl text-right">
+                  <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Total Liability</p>
+                  <p className="text-2xl font-black text-amber-700">{currency}{patientBalance.toFixed(2)}</p>
+                </div>
+              </div>
 
               <div className="max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
                 {isFetchingLedger ? (
@@ -2372,7 +2399,7 @@ export function CompactInvoiceEditor({
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-100 dark:border-white/5">
-                        <th className="py-4 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Date/Time</th>
+                        <th className="py-4 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">{"Date/Time"}</th>
                         <th className="py-4 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Reference</th>
                         <th className="py-4 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Account Node</th>
                         <th className="py-4 text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 text-right">Debit</th>
@@ -2417,6 +2444,10 @@ export function CompactInvoiceEditor({
         {/* UPI QR MODAL */}
         <Dialog open={!!showUPIQR} onOpenChange={() => setShowUPIQR(null)}>
           <DialogContent className="z-[500] max-w-sm p-0 bg-white dark:bg-[#0a0f1e] rounded-[2.5rem] border-none shadow-[0_50px_100px_rgba(99,102,241,0.2)] overflow-hidden">
+            <DialogHeader className="sr-only">
+              <DialogTitle>UPI Payment</DialogTitle>
+              <DialogDescription>Scan the QR code to complete your UPI payment.</DialogDescription>
+            </DialogHeader>
             <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-8 text-center relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
                 <div className="absolute top-[-50%] left-[-50%] w-[200%] h-[200%] animate-spin-slow bg-[radial-gradient(circle,white_0%,transparent_70%)]" />
@@ -2467,7 +2498,11 @@ export function CompactInvoiceEditor({
         {/* CRITICAL ERROR DIALOG */}
         <Dialog open={isErrorDialogOpen} onOpenChange={setIsErrorDialogOpen}>
           <DialogContent className="z-[400] max-w-md p-6 bg-white dark:bg-slate-900 border-rose-500/30 rounded-[2rem] shadow-2xl shadow-rose-500/20 text-center flex flex-col items-center border-none overflow-hidden shadow-[0_50px_100px_rgba(255,0,0,0.5)]">
-            <div className="bg-rose-600 p-8 flex items-center gap-4">
+            <DialogHeader className="sr-only">
+              <DialogTitle>Critical Error</DialogTitle>
+              <DialogDescription>An unexpected error has occurred.</DialogDescription>
+            </DialogHeader>
+            <div className="bg-rose-600 p-8 flex items-center gap-4 w-full">
               <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md">
                 <AlertTriangle className="h-8 w-8 text-white" />
               </div>

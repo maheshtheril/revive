@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
 import { MoreHorizontal, Pencil, Eye, Printer, Trash2, MessageCircle, Loader2 } from "lucide-react"
 import { useState } from "react"
@@ -22,7 +23,12 @@ interface BillingActionsProps {
 }
 
 export function BillingActions({ invoiceId, invoiceNumber }: BillingActionsProps) {
-    const [isLoading, setIsLoading] = useState(false)
+    const [mounted, setMounted] = React.useState(false)
+    React.useEffect(() => {
+        setMounted(true)
+    }, [])
+
+    const [isLoading, setIsLoading] = React.useState(false)
     const { toast } = useToast()
 
     async function handleWhatsappShare() {
@@ -51,6 +57,14 @@ export function BillingActions({ invoiceId, invoiceNumber }: BillingActionsProps
         } finally {
             setIsLoading(false);
         }
+    }
+
+    if (!mounted) {
+        return (
+            <Button variant="ghost" className="h-8 w-8 p-0" disabled>
+                <MoreHorizontal className="h-4 w-4 text-gray-300" />
+            </Button>
+        )
     }
 
     return (

@@ -1,12 +1,9 @@
 /**
  * POS Device Service - Plug-n-Play Integration
- * Supports:
- * 1. PineLabs Plutus Smart API (HTTP Localhost, Ports 8080, 8082, 12345)
- * 2. Paytm EDC Machine (HTTP Localhost, Port 5001 or 8080 /paytm/sale)
+ * Supports PineLabs Plutus Smart API over HTTP (Localhost)
  */
 
 export type POSStatus = 'connected' | 'offline' | 'searching' | 'unsupported';
-export type POSType = 'pinelabs' | 'paytm' | 'unknown';
 
 export interface POSTransactionRequest {
     amount: number;
@@ -20,64 +17,47 @@ export interface POSTransactionResponse {
     reference?: string;
     amount?: number;
     rawResponse?: any;
-    brand?: POSType;
 }
 
 let posServiceInstance: any = null;
 
 class POSDeviceService {
+    private baseUrl: string = 'http://localhost:8080';
+    private fallbackUrl: string = 'http://localhost:8082';
     private activeUrl: string | null = null;
-    private activeType: POSType = 'unknown';
     private status: POSStatus = 'searching';
 
-    constructor() {}
-
-    private async checkEndpoint(url: string, endpoint: string) {
-        if (typeof window === 'undefined') return false;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
-        try {
-            const res = await fetch(`${url}${endpoint}`, { 
-                method: 'GET', 
-                signal: controller.signal 
-            }).catch(() => null);
-            clearTimeout(timeoutId);
-            return res && res.ok;
-        } catch (e) {
-            clearTimeout(timeoutId);
-            return false;
-        }
+    constructor() {
+        // [NUCLEAR-SAFETY] REMOVED AUTOMATIC AUTO-DISCOVER ON MODULE EVALUATION
     }
 
     public async autoDiscover() {
         if (typeof window === 'undefined') return false;
         
-        // 1. Check PineLabs Ports
-        const pinelabsPorts = [8080, 8082, 12345];
-        for (const port of pinelabsPorts) {
-            const url = `http://localhost:${port}`;
-            if (await this.checkEndpoint(url, '/web/status')) {
-                this.activeUrl = url;
-                this.activeType = 'pinelabs';
-                this.status = 'connected';
-                console.log(`[POS] PineLabs Device detected at ${url}`);
-                return true;
+        const ports = [8080, 8082, 12345];
+        for (const port of ports) {
+            try {
+                const url = `http://localhost:${port}`;
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 800);
+                
+                const res = await fetch(`${url}/web/status`, { 
+                    method: 'GET', 
+                    signal: controller.signal 
+                }).catch(() => null);
+                
+                clearTimeout(timeoutId);
+                
+                if (res && res.ok) {
+                    this.activeUrl = url;
+                    this.status = 'connected';
+                    console.log(`[POS] Device Controller detected at ${url}`);
+                    return true;
+                }
+            } catch (e) {
+                // silience
             }
         }
-
-        // 2. Check Paytm Bridge Port
-        const paytmPorts = [5001, 8080];
-        for (const port of paytmPorts) {
-            const url = `http://localhost:${port}`;
-            if (await this.checkEndpoint(url, '/paytm/status')) {
-                this.activeUrl = url;
-                this.activeType = 'paytm';
-                this.status = 'connected';
-                console.log(`[POS] Paytm Device detected at ${url}`);
-                return true;
-            }
-        }
-
         this.status = 'offline';
         return false;
     }
@@ -86,91 +66,60 @@ class POSDeviceService {
         return this.status;
     }
 
-    public getType(): POSType {
-        return this.activeType;
+    public getBaseUrl(): string | null {
+        return this.activeUrl;
     }
 
     public async initiatePayment(req: POSTransactionRequest): Promise<POSTransactionResponse> {
         if (!this.activeUrl) {
-            const connected = await this.autoDiscover();
-            if (!connected) {
+            await this.autoDiscover();
+            if (!this.activeUrl) {
                 return { success: false, error: 'POS Controller not found on localhost' };
             }
         }
 
         try {
-            if (this.activeType === 'pinelabs') {
-                const payload = {
-                    transaction_type: 4001,
-                    amount: Math.round(req.amount * 100), // Standard paise conversion
-                    billing_ref_no: req.invoiceId,
-                    payment_mode: req.method === 'CARD' ? 1 : 14 // 1=Card, 14=UPI
+            const payload = {
+                transaction_type: 4001,
+                amount: Math.round(req.amount * 100),
+                billing_ref_no: req.invoiceId,
+                payment_mode: req.method === 'CARD' ? 1 : 14,
+            };
+
+            const response = await fetch(`${this.activeUrl}/web/doTransaction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'success' || data.response_code === '00') {
+                return {
+                    success: true,
+                    reference: data.approval_code || data.retrieval_ref_no,
+                    amount: req.amount,
+                    rawResponse: data
                 };
-
-                const res = await fetch(`${this.activeUrl}/web/doTransaction`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await res.json();
-                if (data.status === 'success' || data.response_code === '00') {
-                    return {
-                        success: true,
-                        reference: data.approval_code || data.retrieval_ref_no,
-                        amount: req.amount,
-                        rawResponse: data,
-                        brand: 'pinelabs'
-                    };
-                }
-                return { success: false, error: data.response_message || 'Transaction Rejected', rawResponse: data };
-
-            } else if (this.activeType === 'paytm') {
-                const payload = {
-                    orderId: req.invoiceId,
-                    amount: req.amount.toFixed(2),
-                    transactionType: "SALE",
-                    paymentMode: req.method === 'UPI' ? 'UPI' : (req.method === 'CARD' ? 'CARD' : 'ANY')
-                };
-
-                const res = await fetch(`${this.activeUrl}/paytm/sale`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await res.json();
-                // Paytm standard ECR response codes
-                if (data.status === 'SUCCESS' || data.responseCode === '00') {
-                    return {
-                        success: true,
-                        reference: data.referenceNo || data.rrn || data.txnId,
-                        amount: req.amount,
-                        rawResponse: data,
-                        brand: 'paytm'
-                    };
-                }
-                return { success: false, error: data.message || 'Payment failed on Paytm terminal', rawResponse: data };
             }
 
-            return { success: false, error: 'Unsupported active terminal brand' };
+            return {
+                success: false,
+                error: data.message || 'Transaction Failed on Device',
+                rawResponse: data
+            };
         } catch (err: any) {
-            console.error('[POS] Transaction error:', err);
-            return { success: false, error: `Device communication timeout or error: ${err.message}` };
+            console.error('[POS] Transaction Error:', err);
+            return { success: false, error: 'Communication error with local POS controller' };
         }
     }
 }
 
-export function getPOSService(): POSDeviceService {
-    if (typeof window === 'undefined') {
-        const mock: any = {
-            getStatus: () => 'offline',
-            getType: () => 'unknown',
-            autoDiscover: () => Promise.resolve(false),
-            initiatePayment: () => Promise.resolve({ success: false, error: 'Server-side call' })
-        };
-        return mock;
-    }
+/**
+ * [ISOMORPHIC-SAFETY] Lazy-bind the service to prevent module evaluation crashes.
+ */
+export function getPOSService(): any {
+    if (typeof window === 'undefined') return { getStatus: () => 'offline', autoDiscover: () => Promise.resolve(false) };
     if (!posServiceInstance) {
         posServiceInstance = new POSDeviceService();
     }

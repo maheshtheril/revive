@@ -96,7 +96,7 @@ export async function consumeStock(data: ConsumeStockData) {
                     ${data.quantity},
                     ${product.uom || 'Unit'},
                     'out',
-                    'Nursing Consumption',
+                    'Nursing Consumption (Pending)',
                     CAST(${data.encounterId || null} AS uuid),
                     CAST(${userId || null} AS uuid)
                 )
@@ -164,6 +164,7 @@ export async function consumeStock(data: ConsumeStockData) {
 
         revalidatePath('/hms/nursing/dashboard')
         revalidatePath('/hms/nursing/inventory/usage')
+        revalidatePath('/hms/reception/dashboard')
 
         return { success: true }
     } catch (error: any) {
@@ -282,7 +283,7 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         ${item.quantity},
                         ${product.uom || 'Unit'},
                         'out',
-                        'Nursing Consumption',
+                        'Nursing Consumption (Pending)',
                         CAST(${data.encounterId || null} AS uuid),
                         CAST(${userId || null} AS uuid)
                     )
@@ -345,125 +346,58 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                     `;
                 }
             }
-
-            // ---------------------------------------------------------
-            // 2. BILLING INTEGRATION (Create/Update Invoice)
-            // ---------------------------------------------------------
-
-            // Find existing DRAFT invoice for this encounter deeply with Raw SQL
-            const invoices: any[] = await tx.$queryRaw`
-                SELECT id::text FROM hms_invoice 
-                WHERE company_id::text = CAST(${companyId} AS text)
-                AND appointment_id::text = CAST(${data.encounterId} AS text)
-                AND status::text = 'draft'
-                LIMIT 1
-            `;
-
-            let invoiceId = invoices[0]?.id;
-
-            // If no draft invoice exists, create one
-            if (!invoiceId) {
-                // Generate Invoice Number
-                const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-                const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-                const invoiceNumber = `INV-${dateStr}-${randomSuffix}`;
-
-                invoiceId = crypto.randomUUID();
-
-                await tx.$executeRaw`
-                    INSERT INTO hms_invoice (
-                        id, tenant_id, company_id, patient_id, appointment_id,
-                        invoice_number, invoice_no, invoice_date, issued_at,
-                        status, currency, total, subtotal, total_tax, 
-                        outstanding_amount, outstanding, created_by
-                    ) VALUES (
-                        CAST(${invoiceId} AS uuid),
-                        CAST(${tenantId} AS uuid),
-                        CAST(${companyId} AS uuid),
-                        CAST(${data.patientId} AS uuid),
-                        CAST(${data.encounterId} AS uuid),
-                        ${invoiceNumber},
-                        ${invoiceNumber},
-                        CURRENT_DATE,
-                        NOW(),
-                        'draft',
-                        'INR',
-                        0, 0, 0, 0, 0,
-                        CAST(${userId} AS uuid)
-                    )
-                `;
-            }
-
-            // Get current max line index
-            const lineIdxResult: any[] = await tx.$queryRaw`
-                SELECT COALESCE(MAX(line_idx), 0) as max_idx 
-                FROM hms_invoice_lines 
-                WHERE invoice_id::text = CAST(${invoiceId} AS text)
-            `;
-            let nextLineIdx = Number(lineIdxResult[0].max_idx) + 1;
-
-            for (const item of data.items) {
-                const product = productMap.get(item.productId);
-                if (!product) continue;
-
-                // Determine Price (Priority: Price History > Base Price > 0)
-                const price = product.hms_product_price_history?.[0]?.price?.toNumber() || Number(product.price) || 0;
-                const netAmount = price * item.quantity;
-
-                await tx.$executeRaw`
-                    INSERT INTO hms_invoice_lines (
-                        id, tenant_id, company_id, invoice_id, line_idx,
-                        product_id, description, quantity, unit_price, net_amount, metadata
-                    ) VALUES (
-                        gen_random_uuid(),
-                        CAST(${tenantId} AS uuid),
-                        CAST(${companyId} AS uuid),
-                        CAST(${invoiceId} AS uuid),
-                        ${nextLineIdx++},
-                        CAST(${product.id} AS uuid),
-                        ${`(Nursing) ${product.name}`},
-                        ${item.quantity},
-                        ${price},
-                        ${netAmount},
-                        ${JSON.stringify({ source: 'nursing_consumption' })}::jsonb
-                    )
-                `;
-            }
-
-            // Update Invoice Totals based on ALL lines (active aggregation for safety)
-            const agg: any[] = await tx.$queryRaw`
-                SELECT 
-                    SUM(net_amount) as subtotal,
-                    SUM(tax_amount) as total_tax
-                FROM hms_invoice_lines 
-                WHERE invoice_id::text = CAST(${invoiceId} AS text)
-            `;
-
-            const newSubtotal = Number(agg[0].subtotal || 0);
-            const newTax = Number(agg[0].total_tax || 0);
-            const newTotal = newSubtotal + newTax;
-
-            await tx.$executeRaw`
-                UPDATE hms_invoice 
-                SET subtotal = ${newSubtotal},
-                    total_tax = ${newTax},
-                    total = ${newTotal},
-                    outstanding_amount = ${newTotal},
-                    outstanding = ${newTotal},
-                    updated_at = NOW()
-                WHERE id::text = CAST(${invoiceId} AS text)
-            `;
-
         })
 
         revalidatePath('/hms/nursing/dashboard')
         revalidatePath('/hms/nursing/inventory/usage')
-        // Revalidate billing so Cashier sees the update
+        revalidatePath('/hms/reception/dashboard')
         revalidatePath('/hms/billing')
 
         return { success: true }
     } catch (error: any) {
         console.error("Consume Bulk Stock Error:", error)
         return { error: error.message || "Failed to record usage" }
+    }
+}
+
+export async function confirmNursingConsumption(encounterId: string, moveId?: string | string[]) {
+    const session = await auth()
+    if (!session?.user?.id) return { error: "Unauthorized" }
+
+    const { companyId, tenantId, id: userId } = session.user
+    if (!companyId || !tenantId) return { error: "Context Missing" }
+
+    try {
+        await prisma.$transaction(async (tx: any) => {
+            // 1. Find Pending Moves
+            const moveIds = Array.isArray(moveId) ? moveId : (moveId ? [moveId] : []);
+            const moves = await tx.hms_stock_move.findMany({
+                where: {
+                    source_reference: encounterId,
+                    source: 'Nursing Consumption (Pending)',
+                    ...(moveIds.length > 0 ? { id: { in: moveIds } } : {})
+                }
+            })
+
+            if (moves.length === 0) return { success: true, message: "No pending items found for this context." }
+
+            // 2. Update Source to confirmed
+            await tx.hms_stock_move.updateMany({
+                where: { id: { in: moves.map((m: any) => m.id) } },
+                data: { source: 'Nursing Consumption' }
+            })
+
+            // 3. Clinical Intelligence Integration
+            // [MOD] Removed automatic invoice line insertion.
+            // Items now remain strictly in the Clinical Hub (sidebar) for manual importation by the cashier.
+            // This prevents the billing grid from being cluttered automatically.
+        })
+
+        revalidatePath('/hms/nursing/dashboard')
+        revalidatePath('/hms/reception/dashboard')
+        revalidatePath('/hms/billing', 'layout')
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message || "Failed to confirm" }
     }
 }

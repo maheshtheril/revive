@@ -1,9 +1,34 @@
-"use client";
+'use client';
 
-import { useEffect, useState, useCallback } from "react";
-import { getStockReport, getCategories, getManufacturers } from "@/app/actions/inventory";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useState, useEffect } from 'react';
+import {
+    Search,
+    Filter,
+    FileDown,
+    RefreshCw,
+    ArrowLeft,
+    ArrowRight,
+    TrendingUp,
+    Package,
+    AlertTriangle,
+    Clock,
+    ChevronDown,
+    Save,
+    CheckSquare,
+    Square,
+    MoreVertical,
+    BarChart3,
+    DollarSign,
+    Box,
+    Edit3,
+    X,
+    Loader2
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import {
     Table,
     TableBody,
@@ -11,456 +36,480 @@ import {
     TableHead,
     TableHeader,
     TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { 
-    Loader2, Search, ArrowLeft, ArrowRight, RefreshCw, 
-    FileDown, Filter, AlertTriangle, Package, CheckCircle2,
-    Database, LayoutGrid, Building2, Trash2
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+} from '@/components/ui/table';
+import {
+    getStockReport,
+    bulkUpdateBatchPricing,
+    getCategories,
+    exportStockReportToExcel
+} from '@/app/actions/inventory';
+import { repairStockQuantities } from '@/app/actions/stock-healer';
+import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 
-// Simple local debounce
-function useDebounceValue<T>(value: T, delay: number): T {
-    const [debouncedValue, setDebouncedValue] = useState<T>(value);
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            setDebouncedValue(value);
-        }, delay);
-        return () => {
-            clearTimeout(handler);
-        };
-    }, [value, delay]);
-    return debouncedValue;
-}
-
-export default function StockReportPage() {
+export default function StockReportPremium() {
     const router = useRouter();
-    const [search, setSearch] = useState("");
-    const debouncedSearch = useDebounceValue(search, 500);
-    const [page, setPage] = useState(1);
+
+    // State
     const [loading, setLoading] = useState(true);
+    const [healing, setHealing] = useState(false);
     const [data, setData] = useState<any[]>([]);
-    const [statusFilter, setStatusFilter] = useState("ALL");
-    const [categoryId, setCategoryId] = useState("ALL");
-    const [manufacturerId, setManufacturerId] = useState("ALL");
-    
     const [categories, setCategories] = useState<any[]>([]);
-    const [manufacturers, setManufacturers] = useState<any[]>([]);
-    
-    const [meta, setMeta] = useState({
+    const [meta, setMeta] = useState<any>({
         total: 0,
         page: 1,
         totalPages: 1,
-        summary: { totalStockOnHand: 0, totalValue: 0 }
+        globalSummary: {
+            totalQty: 0,
+            totalValue: 0,
+            expiringCount: 0,
+            criticalCount: 0
+        }
     });
 
-    const loadData = useCallback(async () => {
+    // Filters
+    const [filters, setFilters] = useState({
+        query: '',
+        category: '',
+        status: 'all' as any,
+        page: 1,
+        limit: 50
+    });
+
+    // Bulk Actions
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [pendingUpdates, setPendingUpdates] = useState<Record<string, { cost?: number, mrp?: number }>>({});
+
+    const loadData = async () => {
         setLoading(true);
         try {
-            const result = await getStockReport({ 
-                query: debouncedSearch, 
-                page, 
-                status: statusFilter !== 'ALL' ? statusFilter : undefined,
-                categoryId: categoryId !== 'ALL' ? categoryId : undefined,
-                manufacturerId: manufacturerId !== 'ALL' ? manufacturerId : undefined
-            } as any);
-            
-            if (result.success && result.data) {
-                setData(result.data);
-                setMeta(result.meta as any);
+            const [report, cats] = await Promise.all([
+                getStockReport(filters),
+                getCategories()
+            ]);
+
+            if (report.success) {
+                setData(report.data || []);
+                setMeta(report.meta);
             }
-        } catch (error) {
-            console.error("Failed to load stock report:", error);
+            if (cats) setCategories(cats);
+        } catch (err) {
+            toast.error("Failed to load stock data");
         } finally {
             setLoading(false);
         }
-    }, [debouncedSearch, page, statusFilter, categoryId, manufacturerId]);
-
-    const loadMeta = async () => {
-        const [cats, mans] = await Promise.all([
-            getCategories(),
-            getManufacturers()
-        ]);
-        setCategories(cats);
-        setManufacturers(mans);
     };
 
-    useEffect(() => {
-        loadMeta();
-    }, []);
+    const handleHeal = async () => {
+        setHealing(true);
+        const res = await repairStockQuantities();
+        if (res.success) {
+            toast.success("Inventory Quantities Synchronized Successfully!");
+            loadData();
+        } else {
+            toast.error(res.error || "Repair failed");
+        }
+        setHealing(false);
+    };
 
     useEffect(() => {
         loadData();
-    }, [loadData]);
+    }, [filters.page, filters.category, filters.status]);
 
-    const handleExport = () => {
-        // Simple CSV export
-        const headers = ["SKU", "Product Name", "Category", "Manufacturer", "UOM", "Stock On Hand", "Value", "Status"];
-        const rows = data.map(item => [
-            `"${item.sku}"`,
-            `"${item.name}"`,
-            `"${item.category}"`,
-            `"${item.manufacturer}"`,
-            `"${item.uom}"`,
-            item.stockOnHand,
-            item.stockValue,
-            `"${item.status}"`
-        ]);
+    const handleSearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        setFilters({ ...filters, page: 1 });
+        loadData();
+    };
 
-        const csvContent = "data:text/csv;charset=utf-8,"
-            + headers.join(",") + "\n"
-            + rows.map(e => e.join(",")).join("\n");
+    const toggleSelectAll = () => {
+        if (selectedIds.length === data.length) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(data.map(d => d.id));
+        }
+    };
 
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `stock_report_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    };
+
+    const handleBatchUpdate = (batchId: string, field: 'cost' | 'mrp', value: string) => {
+        setPendingUpdates(prev => ({
+            ...prev,
+            [batchId]: {
+                ...prev[batchId],
+                [field]: parseFloat(value)
+            }
+        }));
+    };
+
+    const saveChanges = async () => {
+        const updateArray = Object.entries(pendingUpdates).map(([batchId, vals]) => ({
+            batchId,
+            cost: vals.cost,
+            mrp: vals.mrp
+        }));
+
+        if (updateArray.length === 0) return;
+
+        setLoading(true);
+        const res = await bulkUpdateBatchPricing(updateArray as any);
+        if (res.success) {
+            toast.success(`Successfully updated ${updateArray.length} items`);
+            setPendingUpdates({});
+            setIsEditMode(false);
+            loadData();
+        } else {
+            toast.error(res.error || "Update failed");
+            setLoading(false);
+        }
+    };
+
+    const handleExport = async () => {
+        try {
+            const res = await exportStockReportToExcel();
+            if (res.success && res.base64) {
+                const blob = new Blob([Buffer.from(res.base64, 'base64')], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = res.filename || `Stock_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast.success("Excel report generated successfully");
+            } else {
+                toast.error("Failed to generate export");
+            }
+        } catch (err) {
+            console.error("Export failure:", err);
+            toast.error("An error occurred during export");
+        }
     };
 
     return (
-        <div className="flex flex-1 flex-col gap-6 p-4 md:p-8 bg-slate-50/50 dark:bg-slate-950/20 min-h-screen">
+        <div className="flex flex-1 flex-col gap-6 p-4 md:p-8 bg-slate-50/50 min-h-screen font-sans">
             {/* Header Section */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                    <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full bg-white dark:bg-slate-900 shadow-sm border">
+                    <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full bg-white shadow-sm border">
                         <ArrowLeft className="h-4 w-4" />
                     </Button>
-                    <div className="flex flex-col">
-                        <h1 className="font-bold text-2xl md:text-3xl tracking-tight text-slate-900 dark:text-slate-100 italic">
-                            WORLD <span className="text-blue-600 dark:text-blue-400">STOCK</span> REPORT
+                    <div>
+                        <h1 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2">
+                            Stock Intelligence
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100 font-bold">PRO v3.1</Badge>
                         </h1>
-                        <p className="text-sm text-slate-500 font-medium">Enterprise Inventory Intelligence v3.0</p>
+                        <p className="text-sm font-medium text-slate-500">Live Godown Valuation & Batch Control</p>
                     </div>
                 </div>
+
                 <div className="flex items-center gap-2">
-                    <Button 
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                            if(confirm("This will repair all batch costs by scanning the ledger history. Proceed?")) {
-                                setLoading(true);
-                                const { repairBatchCosts } = await import("@/app/actions/stock-healer");
-                                const res = await repairBatchCosts() as any;
-                                if(res?.success) {
-                                    alert(res.message || "Valuations Repaired Successfully");
-                                    loadData();
-                                } else {
-                                    alert("Error: " + (res?.error || "Unknown error"));
-                                    setLoading(false);
-                                }
-                            }
-                        }}
-                        className="bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30 text-xs gap-1 shadow-sm"
-                    >
-                        <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-                        RE-SYNC VALUATIONS
+                    <Button variant="outline" className="bg-white border-slate-200" onClick={() => loadData()}>
+                        <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                        Sync Live
                     </Button>
-                    <Button 
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                            if(confirm("This will re-calculate all stock levels from the transaction ledger. Proceed?")) {
-                                setLoading(true);
-                                const { recalculateStockLevels } = await import("@/app/actions/inventory");
-                                const res = await recalculateStockLevels() as any;
-                                if(res?.success) {
-                                    alert("Inventory Recalculated Successfully");
-                                    loadData();
-                                } else {
-                                    alert("Error: " + (res?.error || "Unknown error"));
-                                    setLoading(false);
-                                }
-                            }
-                        }}
-                        className="bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100 dark:bg-rose-950/20 dark:border-rose-900/30 text-xs gap-1 shadow-sm"
+                    <Button
+                        variant="ghost"
+                        onClick={handleHeal}
+                        disabled={healing}
+                        className="text-amber-600 hover:bg-amber-50 font-black text-[10px] uppercase tracking-widest border border-amber-100 h-9"
                     >
-                        <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-                        RE-SYNC LEDGER
+                        {healing ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <AlertTriangle className="h-3 w-3 mr-2" />}
+                        Database Sync (Force)
                     </Button>
-                    <Button 
-                        variant="outline" 
-                        onClick={handleExport} 
-                        disabled={loading || data.length === 0}
-                        className="bg-white dark:bg-slate-900 shadow-sm transition-all hover:shadow-md"
+                    <Button
+                        onClick={handleExport}
+                        className="bg-slate-900 border-slate-800 text-white shadow-lg shadow-slate-900/10"
                     >
-                        <FileDown className="mr-2 h-4 w-4 text-green-600" />
-                        Export Data
-                    </Button>
-                    <Button 
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                             const wipeType = confirm("Full Nuclear Wipe (Delete 367 Medicines + Purchase History) or Just Purchase History?\n\nOK = FULL WIPE (EVERYTHING TO 0)\nCancel = JUST STOCK HISTORY (KEEP CATALOG)") 
-                                ? true : false;
-
-                             const confirm1 = confirm(`DANGER: You selected ${wipeType ? 'FULL NUCLEAR WIPE' : 'STOCK ONLY WIPE'}. This will permanently reset metrics to Zero. Proceed?`);
-                             if(confirm1) {
-                                     setLoading(true);
-                                     const { totalNuclearWipe } = await import("@/app/actions/slate-reset");
-                                     // For verification during the wipe
-                                     const res = await totalNuclearWipe(wipeType) as any;
-                                     if(res?.success) {
-                                         alert(`SUCCESS: ${res.message}\nWiped IDs: ${res.debugIds || "N/A"}`);
-                                         loadData();
-                                     } else {
-                                         alert(`FAILED: ${res?.error || "Unknown Error"}`);
-                                     }
-                                     setLoading(false);
-                             }
-                        }}
-                        className="bg-red-600 text-white border-red-700 hover:bg-red-700 text-[10px] font-black gap-1 shadow-lg animate-pulse hover:animate-none"
-                    >
-                        <Trash2 className="h-3 w-3" />
-                        WIPE ALL DATA (RESET)
-                    </Button>
-                    <Button 
-                        variant="default" 
-                        size="icon" 
-                        onClick={() => loadData()}
-                        className="rounded-full shadow-lg bg-blue-600 hover:bg-blue-700 transition-transform active:scale-95"
-                    >
-                        <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+                        {loading && !isEditMode ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
+                        Export Excel
                     </Button>
                 </div>
             </div>
 
-            {/* Quick Stats Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-
-                {/* 1. PHYSICAL STOCK COUNT */}
-                <Card className="border-none shadow-sm bg-white dark:bg-slate-900 border-l-4 border-l-emerald-500 overflow-hidden relative group hover:scale-[1.02] transition-all">
-                    <div className="absolute right-0 top-0 opacity-5 translate-x-1/4 -translate-y-1/4 group-hover:scale-110 transition-transform">
-                        <Package className="h-24 w-24 text-emerald-600" />
-                    </div>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Stock Units on Hand (Pcs)</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tighter">
-                            {loading ? "---" : meta.summary?.totalStockOnHand?.toLocaleString('en-IN')}
+            {/* Premium Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <Card className="border-none bg-slate-900 text-white shadow-2xl relative overflow-hidden group">
+                    <CardContent className="p-6">
+                        <div className="flex justify-between items-start relative z-10">
+                            <div className="p-3 rounded-2xl bg-white/10 backdrop-blur-md">
+                                <DollarSign className="h-6 w-6 text-emerald-400" />
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Total Godown Value</p>
+                                <h3 className="text-3xl font-black mt-1">₹{meta.globalSummary.totalValue.toLocaleString('en-IN')}</h3>
+                                <p className="text-[10px] font-bold text-emerald-400 mt-1 flex items-center justify-end gap-1">
+                                    <TrendingUp className="h-3 w-3" /> Live Inventory Assets
+                                </p>
+                            </div>
                         </div>
-                        <p className="text-[9px] mt-1 text-slate-400 font-bold uppercase tracking-widest italic">Total Units across all batches</p>
+                        {/* Decorative Chart Background */}
+                        <div className="absolute -bottom-4 -left-4 opacity-10 group-hover:scale-110 transition-transform">
+                            <BarChart3 className="h-32 w-32" />
+                        </div>
                     </CardContent>
                 </Card>
 
-                {/* 2. PRODUCT CATALOG (MASTER DATA) */}
-                <Card className="border-none shadow-sm bg-slate-50 dark:bg-slate-800/50 overflow-hidden relative group hover:scale-[1.02] transition-all">
-                   <div className="absolute right-0 top-0 opacity-5 translate-x-1/4 -translate-y-1/4 group-hover:scale-110 transition-transform">
-                        <Database className="h-24 w-24 text-slate-600" />
-                    </div>
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Master Product Registry</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-black text-slate-500 dark:text-slate-400 tracking-tighter">
-                            {loading ? "---" : (meta.total || 0).toLocaleString()}
-                        </div>
-                        <p className="text-[9px] mt-1 text-slate-400 font-bold uppercase tracking-widest italic leading-tight">Count of Medicine Masters Setup</p>
-                    </CardContent>
-                </Card>
+                {[
+                    { label: 'Total Units Stocked', value: meta.globalSummary.totalQty.toLocaleString(), sub: 'In Physical Godown', icon: Package, color: 'text-blue-600', bg: 'bg-blue-50' },
+                    { label: 'Expiring Soon', value: `${meta.globalSummary.expiringCount} Items`, sub: 'Next 3 Months', icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50' },
+                    { label: 'Critical / Out', value: `${meta.globalSummary.criticalCount} Nodes`, sub: 'Below 10 Qty', icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' }
+                ].map((stat, i) => (
+                    <Card key={i} className="border-none shadow-sm overflow-hidden group hover:shadow-md transition-all bg-white">
+                        <CardContent className="p-6">
+                            <div className="flex items-center gap-4">
+                                <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color}`}>
+                                    <stat.icon className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{stat.label}</p>
+                                    <h3 className="text-2xl font-black text-slate-900 mt-0.5">{loading ? '...' : stat.value}</h3>
+                                    <p className="text-[10px] font-bold text-slate-400">{stat.sub}</p>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
             </div>
 
-            {/* Main Action Bar */}
-            <Card className="border-none shadow-sm bg-white dark:bg-slate-900">
-                <CardHeader className="pb-3 border-b">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                        <div className="flex flex-1 flex-wrap items-center gap-3">
-                            {/* Detailed Search */}
-                            <div className="relative w-full max-w-sm">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                                <Input
-                                    placeholder="Search Product Serial/SKU/Name..."
-                                    className="pl-10 h-10 border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950 focus:ring-blue-500 transition-all"
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                />
-                            </div>
+            {/* Filters Dashboard */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-col md:flex-row gap-4 items-center">
+                    <form onSubmit={handleSearch} className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            placeholder="Find Batch, SKU or Product Name..."
+                            className="h-11 pl-10 bg-slate-50 border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-blue-600 transition-all"
+                            value={filters.query}
+                            onChange={(e) => setFilters({ ...filters, query: e.target.value })}
+                        />
+                    </form>
 
-                            {/* Status Pills */}
-                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-lg border dark:border-slate-800">
-                                {['ALL', 'IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK'].map((st) => (
-                                    <Button 
-                                        key={st}
-                                        variant={statusFilter === st ? 'secondary' : 'ghost'} 
-                                        size="sm" 
-                                        className={cn(
-                                            "h-8 text-[11px] px-3 font-semibold uppercase tracking-tight transition-all",
-                                            statusFilter === st ? "shadow-sm bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400" : "text-slate-500"
-                                        )}
-                                        onClick={() => { setStatusFilter(st); setPage(1); }}
-                                    >
-                                        {st.replace('_', ' ')}
-                                    </Button>
-                                ))}
-                            </div>
-                        </div>
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                        <select
+                            className="h-11 px-4 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+                            value={filters.category}
+                            onChange={(e) => setFilters({ ...filters, category: e.target.value, page: 1 })}
+                        >
+                            <option value="">All Categories</option>
+                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
 
-                        {/* Advanced Filters */}
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <div className="flex items-center gap-2">
-                                <LayoutGrid className="h-4 w-4 text-slate-400" />
-                                <Select value={categoryId} onValueChange={(v) => { setCategoryId(v); setPage(1); }}>
-                                    <SelectTrigger className="w-[160px] h-9 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-xs font-medium">
-                                        <SelectValue placeholder="Category" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="ALL">All Categories</SelectItem>
-                                        {categories.map((c: any) => (
-                                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                        <select
+                            className="h-11 px-4 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+                            value={filters.status}
+                            onChange={(e) => setFilters({ ...filters, status: e.target.value, page: 1 })}
+                        >
+                            <option value="all">Stock Status: All</option>
+                            <option value="in">In Stock Only (&gt;0)</option>
+                            <option value="low">Low Stock (&lt;10)</option>
+                            <option value="out">Out of Stock (Zero)</option>
+                            <option value="expiry">Expiring (3 Months)</option>
+                        </select>
 
-                            <div className="flex items-center gap-2">
-                                <Building2 className="h-4 w-4 text-slate-400" />
-                                <Select value={manufacturerId} onValueChange={(v) => { setManufacturerId(v); setPage(1); }}>
-                                    <SelectTrigger className="w-[160px] h-9 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-xs font-medium">
-                                        <SelectValue placeholder="Manufacturer" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="ALL">All Manufacturers</SelectItem>
-                                        {manufacturers.map((m: any) => (
-                                            <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
+                        <Button
+                            variant={isEditMode ? "secondary" : "outline"}
+                            className={`h-11 rounded-xl px-4 font-bold border-2 ${isEditMode ? 'border-amber-200 text-amber-700' : 'border-slate-100'}`}
+                            onClick={() => setIsEditMode(!isEditMode)}
+                        >
+                            <Edit3 className="h-4 w-4 mr-2" />
+                            {isEditMode ? "Exit Bulk Mode" : "Bulk Value Edit"}
+                        </Button>
                     </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                        <Table>
-                            <TableHeader className="bg-slate-50/50 dark:bg-slate-950/50">
-                                <TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-slate-800">
-                                    <TableHead className="py-4 pl-6 text-[11px] font-bold uppercase text-slate-400">SKU Code</TableHead>
-                                    <TableHead className="py-4 text-[11px] font-bold uppercase text-slate-400 w-[400px]">Product Description</TableHead>
-                                    <TableHead className="py-4 text-[11px] font-bold uppercase text-slate-400">Category</TableHead>
-                                    <TableHead className="py-4 text-[11px] font-bold uppercase text-slate-400 text-center">UOM</TableHead>
-                                    <TableHead className="py-4 text-[11px] font-bold uppercase text-slate-400 text-right">Qty On Hand</TableHead>
-                                    <TableHead className="text-[11px] font-bold uppercase text-slate-400 text-center pr-6">Status</TableHead>
+                </div>
+
+                {isEditMode && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        className="p-4 bg-amber-50 rounded-xl border border-amber-100 flex items-center justify-between"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
+                                <AlertTriangle className="h-4 w-4" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-black text-amber-900 uppercase">Valuation Edit Mode Active</p>
+                                <p className="text-[10px] font-bold text-amber-600">Changes are staged. Click "Sync Updates" to commit to database.</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button size="sm" variant="ghost" onClick={() => { setPendingUpdates({}); setIsEditMode(false); }}>Cancel</Button>
+                            <Button size="sm" onClick={saveChanges} className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shadow-lg shadow-amber-600/20">
+                                <Save className="h-3.5 w-3.5 mr-2" /> Sync Updates ({Object.keys(pendingUpdates).length})
+                            </Button>
+                        </div>
+                    </motion.div>
+                )}
+            </div>
+
+            {/* Main Data Table */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <Table>
+                    <TableHeader className="bg-slate-50">
+                        <TableRow className="border-none">
+                            <TableHead className="w-12">
+                                <button onClick={toggleSelectAll} className="text-slate-400 hover:text-blue-600 transition-colors">
+                                    {selectedIds.length === data.length ? <CheckSquare className="h-4 w-4 text-blue-600" /> : <Square className="h-4 w-4" />}
+                                </button>
+                            </TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500">Node / SKU</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500">Product Particulars</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500">Batch Info</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500 text-right">In-Stock</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500 text-right">Cost Price</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500 text-right">MRP / Sale</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500 text-right">Valuation</TableHead>
+                            <TableHead className="text-[10px] font-black uppercase tracking-widest text-slate-500 text-center">Status</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        <AnimatePresence>
+                            {loading ? (
+                                <TableRow>
+                                    <TableCell colSpan={9} className="h-64 text-center">
+                                        <div className="flex flex-col items-center justify-center gap-3">
+                                            <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+                                            <p className="text-sm font-bold text-slate-400 italic">Calculating Godown Inventory...</p>
+                                        </div>
+                                    </TableCell>
                                 </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {loading && data.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={6} className="h-32 text-center">
-                                            <div className="flex flex-col items-center gap-2">
-                                                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                                                <p className="text-xs font-medium text-slate-500 animate-pulse">Scanning Inventory Repositories...</p>
+                            ) : data.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={9} className="h-64 text-center">
+                                        <div className="flex flex-col items-center justify-center gap-3">
+                                            <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center">
+                                                <Box className="h-8 w-8 text-slate-200" />
                                             </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ) : data.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={7} className="h-32 text-center text-slate-500 font-medium italic">
-                                            No products matching critical criteria found.
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    data.map((item) => (
-                                        <TableRow key={item.id} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-100 dark:border-slate-800">
-                                            <TableCell className="pl-6 py-4">
-                                                <code className="text-[10px] font-bold px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                                                    {item.sku}
-                                                </code>
-                                            </TableCell>
-                                            <TableCell className="py-4">
-                                                <div className="flex flex-col">
-                                                    <span className="font-semibold text-sm text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition-colors">{item.name}</span>
-                                                    <span className="text-[10px] text-slate-400 font-medium uppercase">{item.manufacturer}</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="py-4">
-                                                <Badge variant="outline" className="text-[10px] font-medium border-slate-200 dark:border-slate-800 bg-white dark:bg-transparent text-slate-500">
-                                                    {item.category}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-center py-4">
-                                                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{item.uom}</span>
-                                            </TableCell>
-                                            <TableCell className="text-right py-4">
-                                                <span className={cn(
-                                                    "text-sm font-bold",
-                                                    item.stockOnHand <= 0 ? "text-red-500" : (item.stockOnHand < 10 ? "text-amber-500" : "text-slate-700 dark:text-slate-300")
-                                                )}>
-                                                    {item.stockOnHand.toLocaleString('en-IN')}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-center py-4 pr-6">
-                                                <Badge
-                                                    className={cn(
-                                                        "text-[10px] px-2 py-0.5 font-bold border-none uppercase tracking-tighter",
-                                                        item.status === 'In Stock' && "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400",
-                                                        item.status === 'Low Stock' && "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
-                                                        item.status === 'Out of Stock' && "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
-                                                    )}
-                                                >
-                                                    {item.status}
-                                                </Badge>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-
-                    {/* Pagination */}
-                    {meta.totalPages > 1 && (
-                        <div className="flex items-center justify-between px-6 py-4 border-t bg-slate-50/50 dark:bg-slate-950/20">
-                            <div className="text-xs font-medium text-slate-500 uppercase tracking-tight">
-                                Showing Page {meta.page} OF {meta.totalPages} • Total {meta.total} Records
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 rounded-lg hover:bg-white transition-all shadow-sm"
-                                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                                    disabled={page === 1 || loading}
+                                            <div>
+                                                <p className="text-sm font-black text-slate-900">No Inventory Nodes Found</p>
+                                                <p className="text-xs font-medium text-slate-400">Try adjusting your filters or search query.</p>
+                                            </div>
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            ) : data.map((item, i) => (
+                                <motion.tr
+                                    layout
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    key={item.id}
+                                    className={`group hover:bg-slate-50/50 transition-colors ${selectedIds.includes(item.id) ? 'bg-blue-50/30' : ''}`}
                                 >
-                                    <ArrowLeft className="h-4 w-4 text-slate-400" />
-                                </Button>
-                                {[...Array(Math.min(5, meta.totalPages))].map((_, i) => {
-                                    const pNum = i + 1;
-                                    return (
-                                        <Button
-                                            key={i}
-                                            variant={page === pNum ? 'default' : 'outline'}
-                                            size="sm"
-                                            className={cn(
-                                                "h-8 w-8 p-0 text-xs font-bold rounded-lg transition-all",
-                                                page === pNum ? "bg-blue-600 shadow-blue-200" : "bg-transparent text-slate-400 hover:text-slate-600 p-0"
-                                            )}
-                                            onClick={() => setPage(pNum)}
+                                    <TableCell>
+                                        <button onClick={() => toggleSelect(item.id)} className={`transition-colors ${selectedIds.includes(item.id) ? 'text-blue-600' : 'text-slate-300 group-hover:text-slate-400'}`}>
+                                            {selectedIds.includes(item.id) ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                                        </button>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="space-y-1">
+                                            <p className="text-[11px] font-black font-mono text-slate-900">{item.sku}</p>
+                                            <Badge variant="outline" className="text-[8px] h-4 py-0 font-bold bg-slate-50 text-slate-500 border-slate-200">{item.uom}</Badge>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="max-w-[200px]">
+                                            <p className="font-black text-slate-900 text-sm truncate">{item.name}</p>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{item.category}</p>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="space-y-1">
+                                            <p className="text-[11px] font-black text-slate-700 flex items-center gap-1">
+                                                <Tag className="h-2.5 w-2.5 text-slate-400" /> {item.batchNo}
+                                            </p>
+                                            <p className={`text-[10px] font-bold flex items-center gap-1 ${new Date(item.expiryDate) < new Date() ? 'text-rose-600' : 'text-slate-400'}`}>
+                                                <Clock className="h-2.5 w-2.5" />
+                                                {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : 'No Expiry'}
+                                            </p>
+                                        </div>
+                                    </TableCell>
+                                     <TableCell className="text-right">
+                                         <div className="space-y-1">
+                                             <p className={`text-sm font-black ${item.qty < 5 ? 'text-rose-600' : 'text-slate-900'}`}>{item.friendlyQty || item.qty.toLocaleString()}</p>
+                                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">({item.qty.toLocaleString()} {item.uom})</p>
+                                         </div>
+                                     </TableCell>
+                                    <TableCell className="text-right">
+                                        {isEditMode ? (
+                                            <div className="flex items-center justify-end">
+                                                <span className="text-[10px] text-slate-400 mr-1">₹</span>
+                                                <input
+                                                    type="number"
+                                                    defaultValue={item.costPrice}
+                                                    onChange={(e) => handleBatchUpdate(item.id, 'cost', e.target.value)}
+                                                    className="w-16 h-8 bg-white border border-amber-200 rounded text-right text-xs font-black text-slate-900 px-1 outline-none focus:ring-2 focus:ring-amber-500"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm font-bold text-slate-600">₹{item.costPrice.toLocaleString()}</p>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        {isEditMode ? (
+                                            <div className="flex items-center justify-end">
+                                                <span className="text-[10px] text-slate-400 mr-1">₹</span>
+                                                <input
+                                                    type="number"
+                                                    defaultValue={item.mrp}
+                                                    onChange={(e) => handleBatchUpdate(item.id, 'mrp', e.target.value)}
+                                                    className="w-16 h-8 bg-white border border-amber-200 rounded text-right text-xs font-black text-indigo-600 px-1 outline-none focus:ring-2 focus:ring-amber-500"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-0.5">
+                                                <p className="text-sm font-black text-indigo-600">₹{item.mrp.toLocaleString()}</p>
+                                                <p className="text-[9px] font-bold text-slate-400 uppercase">Sale: ₹{item.salePrice.toLocaleString()}</p>
+                                            </div>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                        <p className="text-sm font-black text-emerald-600">₹{item.totalValue.toLocaleString()}</p>
+                                    </TableCell>
+                                    <TableCell className="text-center">
+                                        <Badge
+                                            variant="outline"
+                                            className={`text-[9px] font-black uppercase tracking-widest ${item.status === 'In Stock' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : (item.status === 'Low Stock' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-rose-50 text-rose-700 border-rose-200')}`}
                                         >
-                                            {pNum}
-                                        </Button>
-                                    );
-                                })}
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 rounded-lg hover:bg-white transition-all shadow-sm"
-                                    onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))}
-                                    disabled={page === meta.totalPages || loading}
-                                >
-                                    <ArrowRight className="h-4 w-4 text-slate-400" />
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
+                                            {item.status}
+                                        </Badge>
+                                    </TableCell>
+                                </motion.tr>
+                            ))}
+                        </AnimatePresence>
+                    </TableBody>
+                </Table>
+
+                {/* Performance Pagination */}
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Displaying {data.length} of {meta.total} nodes
+                    </p>
+                    <div className="flex items-center gap-3">
+                        <Button
+                            disabled={filters.page === 1}
+                            onClick={() => setFilters({ ...filters, page: filters.page - 1 })}
+                            variant="outline" size="sm" className="h-8 rounded-lg bg-white"
+                        >
+                            <ArrowLeft className="h-3 w-3 mr-1" /> Prev
+                        </Button>
+                        <span className="text-xs font-black text-slate-900 px-2">{filters.page} / {meta.totalPages}</span>
+                        <Button
+                            disabled={filters.page >= meta.totalPages}
+                            onClick={() => setFilters({ ...filters, page: filters.page + 1 })}
+                            variant="outline" size="sm" className="h-8 rounded-lg bg-white"
+                        >
+                            Next <ArrowRight className="h-3 w-3 ml-1" />
+                        </Button>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
+
+const Tag = ({ className }: { className?: string }) => (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z" /><path d="M7 7h.01" /></svg>
+);

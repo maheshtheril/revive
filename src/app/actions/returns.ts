@@ -4,6 +4,7 @@ import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
 import { AccountingService } from '@/lib/services/accounting'
+import { serialize } from '@/lib/utils'
 
 export type PurchaseReturnData = {
     receiptId: string
@@ -148,12 +149,12 @@ export async function createPurchaseReturn(data: PurchaseReturnData) {
         const accResult = await AccountingService.postPurchaseReturn(result.id, session.user.id);
 
         if (!accResult.success) {
-            return { success: true, data: result, warning: `Return created but accounting failed: ${accResult.error}` };
+            return { success: true, data: serialize(result), warning: `Return created but accounting failed: ${accResult.error}` };
         }
 
         revalidatePath('/hms/purchasing/receipts');
         revalidatePath(`/hms/purchasing/receipts/${data.receiptId}`);
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
     } catch (error: any) {
         console.error("Purchase Return Error:", error);
         return { error: error.message || "Failed to process return" }
@@ -263,7 +264,7 @@ export async function createSalesReturn(data: SalesReturnData) {
 
         await AccountingService.postSalesReturn(result.id, session.user.id);
         revalidatePath('/hms/billing/invoices');
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
     } catch (error: any) {
         console.error("Sales Return Error:", error);
         return { error: error.message || "Failed to process sales return" }
@@ -362,7 +363,7 @@ export async function createStockAdjustment(data: StockAdjustmentData) {
 
         await AccountingService.postStockAdjustment(result.id, session.user.id);
         revalidatePath('/hms/inventory');
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
     } catch (error: any) {
         console.error("Stock Adjustment Error:", error);
         return { error: error.message || "Failed to process adjustment" }
@@ -445,7 +446,7 @@ export async function getSalesReturn(id: string) {
         });
 
         if (!ret) return { success: false, error: "Not found" };
-        return { success: true, data: ret };
+        return { success: true, data: serialize(ret) };
     } catch (e: any) {
         return { success: false, error: e.message };
     }
@@ -515,7 +516,7 @@ export async function getPurchaseReturn(id: string) {
         });
 
         if (!ret) return { success: false, error: "Not found" };
-        return { success: true, data: ret };
+        return { success: true, data: serialize(ret) };
     } catch (e: any) {
         return { success: false, error: e.message };
     }

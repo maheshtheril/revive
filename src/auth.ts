@@ -6,10 +6,6 @@ import bcrypt from 'bcryptjs'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
     ...authConfig,
-    trustHost: true,
-    pages: {
-        signIn: '/login',
-    },
     providers: [
         Credentials({
             credentials: {

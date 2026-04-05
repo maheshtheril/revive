@@ -34,6 +34,7 @@ interface InvoiceControlPanelProps {
     patientEmail?: string | null;
     invoiceData?: any;
     autoOpenPayment?: boolean;
+    pendingConsumablesCount?: number;
 }
 
 export function InvoiceControlPanel({
@@ -42,7 +43,8 @@ export function InvoiceControlPanel({
     outstandingAmount,
     patientEmail,
     invoiceData,
-    autoOpenPayment = false
+    autoOpenPayment = false,
+    pendingConsumablesCount = 0
 }: InvoiceControlPanelProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(autoOpenPayment && currentStatus === 'posted');
@@ -137,16 +139,16 @@ export function InvoiceControlPanel({
         iframe.style.display = 'none';
         const searchParams = new URLSearchParams({ autoPrint: 'true' });
         if (mode) searchParams.append('mode', mode);
-        
+
         iframe.src = `/api/billing/${invoiceId}/pdf?${searchParams.toString()}`;
         document.body.appendChild(iframe);
-        
+
         setTimeout(() => {
             if (document.body.contains(iframe)) {
                 document.body.removeChild(iframe);
             }
             setIsLoading(false);
-        }, 10000); 
+        }, 10000);
     };
 
     const handleDownloadPdf = async () => {
@@ -205,11 +207,12 @@ export function InvoiceControlPanel({
             {currentStatus === 'draft' && (
                 <Button
                     onClick={() => handleStatusChange('posted')}
-                    disabled={isLoading}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                    disabled={isLoading || pendingConsumablesCount > 0}
+                    className={`${pendingConsumablesCount > 0 ? 'bg-slate-400' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
+                    title={pendingConsumablesCount > 0 ? `${pendingConsumablesCount} items pending in Nursing` : ''}
                 >
                     {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                    Post Invoice
+                    {pendingConsumablesCount > 0 ? 'Post Blocked (Clinical)' : 'Post Invoice'}
                 </Button>
             )}
 
@@ -217,9 +220,13 @@ export function InvoiceControlPanel({
             {['posted', 'draft'].includes(currentStatus) && (
                 <Dialog open={isPaymentModalOpen} onOpenChange={setIsPaymentModalOpen}>
                     <DialogTrigger asChild>
-                        <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={openPaymentModal}>
+                        <Button
+                            className={`${pendingConsumablesCount > 0 ? 'bg-slate-400' : 'bg-green-600 hover:bg-green-700'} text-white`}
+                            onClick={openPaymentModal}
+                            disabled={pendingConsumablesCount > 0}
+                        >
                             <CreditCard className="mr-2 h-4 w-4" />
-                            Collect Payment
+                            {pendingConsumablesCount > 0 ? 'Settlement Blocked' : 'Collect Payment'}
                         </Button>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-md">
@@ -326,16 +333,16 @@ export function InvoiceControlPanel({
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid grid-cols-1 gap-3 py-4">
-                        <Button 
-                            variant="outline" 
+                        <Button
+                            variant="outline"
                             className="h-20 flex flex-col items-center justify-center gap-1 border-2 hover:border-indigo-500 hover:bg-slate-50 transition-all group"
                             onClick={() => handlePrintPdf('standard')}
                         >
                             <span className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 group-hover:text-indigo-600">Option 1</span>
                             <span className="font-bold text-slate-800 italic">Standard Full Print</span>
                         </Button>
-                        <Button 
-                            variant="outline" 
+                        <Button
+                            variant="outline"
                             className="h-20 flex flex-col items-center justify-center gap-1 border-2 hover:border-indigo-500 hover:bg-slate-50 transition-all group"
                             onClick={() => handlePrintPdf('letterhead')}
                         >

@@ -1,5 +1,6 @@
 'use client'
 
+import * as React from 'react'
 import { CreditCard, Banknote, Smartphone, Landmark, X } from 'lucide-react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,11 @@ export function BillingMethodFilter() {
     const searchParams = useSearchParams()
     const pathname = usePathname()
     const { replace } = useRouter()
+
+    const [mounted, setMounted] = React.useState(false)
+    React.useEffect(() => {
+        setMounted(true)
+    }, [])
     
     const currentMethod = searchParams.get('method')
     const active = methods.find(m => m.id === currentMethod)
@@ -34,6 +40,23 @@ export function BillingMethodFilter() {
             params.delete('method')
         }
         replace(`${pathname}?${params.toString()}`)
+    }
+
+    if (!mounted) {
+        return (
+            <div className="flex items-center gap-2 bg-white rounded-xl p-1 shadow-sm border border-slate-200">
+                <Button
+                    variant={"ghost"}
+                    className={cn(
+                        "h-9 px-4 justify-start text-left font-bold text-sm tracking-tight rounded-lg text-slate-500"
+                    )}
+                    disabled
+                >
+                    <Banknote className="mr-2 h-4 w-4 text-slate-400" />
+                    All Modes
+                </Button>
+            </div>
+        )
     }
 
     return (

@@ -48,6 +48,17 @@ export default async function EditInvoicePage({
 
     if (!invoice) return notFound();
 
+    // [INTEGRITY-CHECK] Check for pending nursing items
+    let pendingConsumablesCount = 0;
+    if (invoice.appointment_id) {
+        pendingConsumablesCount = await prisma.hms_stock_move.count({
+            where: {
+                source_reference: invoice.appointment_id,
+                source: 'Nursing Consumption (Pending)'
+            }
+        });
+    }
+
     const billableItems = itemsRes.success ? itemsRes.data : [];
     const taxConfig = taxRes.success ? taxRes.data : { defaultTax: null, taxRates: [] };
 
@@ -57,6 +68,7 @@ export default async function EditInvoicePage({
             billableItems={JSON.parse(JSON.stringify(billableItems))}
             taxConfig={JSON.parse(JSON.stringify(taxConfig))}
             initialInvoice={JSON.parse(JSON.stringify(invoice))}
+            pendingConsumablesCount={pendingConsumablesCount}
         />
     )
 }

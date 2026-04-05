@@ -45,13 +45,6 @@ export default function LabPendingOrdersPage() {
         }
     }
 
-    const handlePrintLabel = (order: any) => {
-        const printContent = document.getElementById(`label-${order.id}`);
-        if (!printContent) return;
-        
-        window.print();
-    }
-
     return (
         <div className="p-8 space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -74,6 +67,10 @@ export default function LabPendingOrdersPage() {
                             onChange={(e) => setSearch(e.target.value)}
                         />
                     </div>
+                    <Button variant="outline" className="rounded-xl gap-2">
+                        <Filter className="w-4 h-4" />
+                        Filters
+                    </Button>
                 </div>
             </div>
 
@@ -92,16 +89,7 @@ export default function LabPendingOrdersPage() {
                 ) : (
                     filteredOrders.map(order => (
                         <div key={order.id} className="group bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-indigo-500/50 transition-all shadow-sm hover:shadow-xl hover:shadow-indigo-500/5 overflow-hidden relative">
-                            <div className="absolute top-0 right-0 p-4 flex gap-2">
-                               <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="rounded-full h-8 w-8 p-0 border-slate-200"
-                                    onClick={() => handlePrintLabel(order)}
-                                    title="Print Specimen Label"
-                                >
-                                    <Printer className="w-4 h-4 text-slate-500" />
-                                </Button>
+                            <div className="absolute top-0 right-0 p-4">
                                <Badge variant={
                                     order.status === 'collected' ? 'secondary' : 
                                     order.status === 'in_progress' ? 'default' : 'outline'
@@ -134,7 +122,7 @@ export default function LabPendingOrdersPage() {
 
                                     <div className="flex flex-wrap gap-2">
                                         {(order.hms_lab_order_lines || []).map((line: any) => (
-                                            <Badge key={line.id} variant="secondary" className="bg-slate-50 dark:bg-slate-900 border-none px-3 py-1 text-slate-600 dark:text-slate-400 text-[10px]">
+                                            <Badge key={line.id} variant="secondary" className="bg-slate-50 dark:bg-slate-900 border-none px-3 py-1 text-slate-600 dark:text-slate-400">
                                                 {line.hms_lab_test?.name || line.requested_name}
                                             </Badge>
                                         ))}
@@ -151,58 +139,29 @@ export default function LabPendingOrdersPage() {
                                             Mark Collected
                                         </Button>
                                     )}
-                                    {(order.status === 'requested' || order.status === 'collected' || order.status === 'in_progress') && (
+                                    {(order.status === 'collected' || order.status === 'in_progress') && (
                                         <Link href={`/hms/lab/results/${order.id}`}>
-                                            <Button className="bg-indigo-500 hover:bg-indigo-600 text-white gap-2 rounded-xl px-6 font-bold shadow-lg shadow-indigo-500/20">
+                                            <Button className="bg-indigo-500 hover:bg-indigo-600 text-white gap-2 rounded-xl">
                                                 <FlaskConical className="w-4 h-4" />
                                                 Enter Results
                                                 <ArrowRight className="w-4 h-4 ml-1" />
                                             </Button>
                                         </Link>
                                     )}
-                                </div>
-                            </div>
-                            
-                            {/* HIDDEN PRINT-ONLY SMALL STICKER LABEL (2x1 inch) */}
-                            <div id={`label-${order.id}`} className="hidden print:block print:fixed print:top-0 print:left-0 print:w-[50mm] print:h-[30mm] print:bg-white print:p-2 print:border print:text-black">
-                                <div className="flex flex-col h-full justify-between items-center text-center">
-                                    <div className="w-full">
-                                        <p className="text-[10px] font-black uppercase leading-none truncate">{order.hms_patient?.first_name} {order.hms_patient?.last_name}</p>
-                                        <p className="text-[8px] font-bold mt-0.5">{order.hms_patient?.gender?.charAt(0)} / Age: {new Date().getFullYear() - (order.hms_patient?.dob ? new Date(order.hms_patient.dob).getFullYear() : 30)}</p>
-                                    </div>
-                                    <div className="font-barcode text-3xl leading-none tracking-tighter my-1">
-                                        *{order.order_number || order.id.substring(0,8)}*
-                                    </div>
-                                    <div className="w-full border-t border-black pt-0.5">
-                                        <p className="text-[7px] font-black uppercase overflow-hidden whitespace-nowrap">
-                                            {(order.hms_lab_order_lines || []).map((l: any) => l.hms_lab_test?.name || l.requested_name).join(', ')}
-                                        </p>
-                                        <p className="text-[6px] font-bold mt-0.5 italic">Ziona Health System Lab</p>
-                                    </div>
+                                    {order.status === 'completed' && (
+                                        <Link href={`/hms/lab/reports/${order.id}`}>
+                                            <Button variant="outline" className="rounded-xl gap-2 border-slate-200">
+                                                <Printer className="w-4 h-4" />
+                                                Report
+                                            </Button>
+                                        </Link>
+                                    )}
                                 </div>
                             </div>
                         </div>
                     ))
                 )}
             </div>
-            
-            <style jsx global>{`
-                @media print {
-                    body > *:not(.print-container) {
-                        display: none !important;
-                    }
-                    .print-container {
-                        display: block !important;
-                    }
-                    @page {
-                        size: 50mm 30mm;
-                        margin: 0;
-                    }
-                }
-                .font-barcode {
-                    font-family: var(--font-barcode), 'Libre Barcode 39', cursive;
-                }
-            `}</style>
         </div>
     )
 }

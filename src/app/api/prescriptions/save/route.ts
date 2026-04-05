@@ -100,7 +100,8 @@ export async function POST(request: NextRequest) {
                     where: { appointment_id: appointmentId, tenant_id: session.user.tenantId }
                 })
                 if (existing) {
-                    await (tx.prescription as any).delete({ where: { id: existing.id } })
+                    await (tx as any).prescription_items.deleteMany({ where: { prescription_id: existing.id } })
+                    await (tx as any).prescription.delete({ where: { id: existing.id } })
                 }
             }
 
@@ -179,13 +180,18 @@ export async function POST(request: NextRequest) {
             // 4. Handle Lab Orders
             // Clear existing REQUESTED lab orders for this appointment to avoid duplicates on update
             if (appointmentId) {
-                await tx.hms_lab_order.deleteMany({
+                const existingLabOrder = await tx.hms_lab_order.findFirst({
                     where: {
                         encounter_id: appointmentId,
                         status: 'requested',
                         tenant_id: session.user.tenantId
                     }
                 })
+                if (existingLabOrder) {
+                    await tx.hms_lab_order_line.deleteMany({ where: { order_id: existingLabOrder.id } })
+                    await tx.hms_lab_order_lines.deleteMany({ where: { order_id: existingLabOrder.id } })
+                    await tx.hms_lab_order.delete({ where: { id: existingLabOrder.id } })
+                }
             }
 
             if (labTests && labTests.length > 0) {

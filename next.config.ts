@@ -20,26 +20,6 @@ const nextConfig: NextConfig = {
         destination: '/hms/purchasing/receipts/new',
         permanent: true,
       },
-      {
-        source: '/hms/accounting/page',
-        destination: '/hms/accounting',
-        permanent: true,
-      },
-      {
-        source: '/hms/accounting/credit-notes',
-        destination: '/hms/billing/returns',
-        permanent: true,
-      },
-      {
-        source: '/hms/accounting/debit-notes',
-        destination: '/hms/purchasing/returns',
-        permanent: true,
-      },
-      {
-        source: '/hms/lab',
-        destination: '/hms/lab/dashboard',
-        permanent: false,
-      }
     ]
   },
   experimental: {

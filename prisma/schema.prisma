@@ -233,7 +233,6 @@ model app_user {
   hms_user_roles            hms_user_roles[]
   user_branches             user_branch[]
   user_permission           user_permission[]
-  audit_logs                audit_log[]
 }
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
@@ -256,19 +255,19 @@ model attachment {
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model audit_log {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id  String?   @db.Uuid
   actor_id   String?   @db.Uuid
-  table_name String?
+  table_name String
   record_id  String?   @db.Uuid
-  operation  String?
+  operation  String
   diff       Json?     @default("{}")
   created_at DateTime? @default(now()) @db.Timestamptz(6)
   row_id     String?   @db.Uuid
   event      String?
-  app_user   app_user? @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
 
+  @@ignore
+}
 
 model business_partners {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1034,6 +1033,7 @@ model hms_appointments {
   updated_by        String?             @db.Uuid
   deleted_at        DateTime?           @db.Timestamptz(6)
   branch_id         String?             @db.Uuid
+  token_number      Int?
   branch            hms_branch?         @relation(fields: [branch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hms_clinician     hms_clinicians      @relation(fields: [clinician_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hms_patient       hms_patient         @relation(fields: [patient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -1541,15 +1541,14 @@ model hms_lab_test {
   name                                                                             String
   method                                                                           String?
   units                                                                            String?
-  price                                                                            Decimal?                    @default(0) @db.Decimal(14, 2)
   reference_range                                                                  Json?
+  price                                                                            Decimal?                    @default(0) @db.Decimal(14, 2)
   group_id                                                                         String?                     @db.Uuid
   is_panel                                                                         Boolean?                    @default(false)
   metadata                                                                         Json?                       @default("{}")
   created_by                                                                       String?                     @db.Uuid
   created_at                                                                       DateTime?                   @default(now()) @db.Timestamptz(6)
   updated_at                                                                       DateTime?                   @db.Timestamptz(6)
-  is_active                                                                        Boolean?                    @default(true)
   hms_lab_order_line                                                               hms_lab_order_line[]
   hms_lab_order_lines                                                              hms_lab_order_lines[]
   hms_lab_result                                                                   hms_lab_result[]
@@ -1794,7 +1793,6 @@ model hms_product {
   barcode_type               String?
   manufacturer_id            String?                      @db.Uuid
   uom_id                     String?                      @db.Uuid
-  hsn_code                   String?
   hms_invoice_lines          hms_invoice_lines[]
   hms_medication_order       hms_medication_order[]
   hms_manufacturer           hms_manufacturer?            @relation(fields: [manufacturer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

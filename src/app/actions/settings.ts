@@ -331,8 +331,13 @@ export async function getHMSSettings() {
                 enableCardIssuance: configData.enableCardIssuance ?? true,
                 consultationBillingMode: configData.consultationBillingMode || 'post_visit',
                 defaultDoctorId: configData.defaultDoctorId || null,
-                opSlipPreprintedLetterhead: configData.opSlipPreprintedLetterhead ?? false,
-                opSlipHeaderHeight: configData.opSlipHeaderHeight || '4.5',
+                opSlipPreprintedLetterhead: !!configData.opSlipPreprintedLetterhead,
+                billPreprintedLetterhead: !!configData.billPreprintedLetterhead,
+                opSlipShowVitals: configData.opSlipShowVitals ?? true,
+                opSlipVitalsPosition: configData.opSlipVitalsPosition || 'right',
+                opSlipVitalsList: configData.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'],
+                opSlipRxStyle: configData.opSlipRxStyle || 'centered_small',
+                allowRateEdit: configData.allowRateEdit ?? true,
                 feeHistory: feeHistory.map(f => ({
                     id: f.id,
                     amount: Number(f.fee_amount),
@@ -457,7 +462,11 @@ export async function updateHMSSettings(data: any) {
                 productId: regProduct.id,
                 defaultDoctorId: data.defaultDoctorId || null,
                 opSlipPreprintedLetterhead: !!data.opSlipPreprintedLetterhead,
-                opSlipHeaderHeight: data.opSlipHeaderHeight || '4.5',
+                billPreprintedLetterhead: !!data.billPreprintedLetterhead,
+                opSlipShowVitals: data.opSlipShowVitals ?? true,
+                opSlipVitalsPosition: data.opSlipVitalsPosition || 'right',
+                opSlipVitalsList: data.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'],
+                opSlipRxStyle: data.opSlipRxStyle || 'centered_small',
                 lastUpdated: new Date().toISOString()
             });
 
@@ -924,10 +933,10 @@ export async function getWhatsAppSettings(providedCompanyId?: string, providedTe
     const tenantId = providedTenantId || session?.user?.tenantId;
 
     if (!companyId || !tenantId) return { success: false, error: 'Unauthorized' };
-    
+
     try {
         console.log(`[WHATSAPP FETCH] Searching for: Co: ${companyId}, Te: ${tenantId}`);
-        
+
         let record = await prisma.hms_settings.findFirst({
             where: {
                 company_id: companyId,
@@ -948,7 +957,7 @@ export async function getWhatsAppSettings(providedCompanyId?: string, providedTe
 
         const data = (record?.value as any) || {};
         const hasToken = !!(data.token && data.token.length > 0);
-        
+
         console.log(`[WHATSAPP FETCH] Final: Found=${!!record}, HasToken=${hasToken}, Key=${record?.id || 'N/A'}`);
 
         return {
@@ -1102,8 +1111,6 @@ export async function getPDFSettings(providedCompanyId?: string, providedTenantI
                 addressSize: data.addressSize || 10,
                 showContactInfo: data.showContactInfo ?? true,
                 autoPrint: data.autoPrint ?? false,
-                showTaxInvoiceTitle: data.showTaxInvoiceTitle ?? true,
-                fontFamily: data.fontFamily || 'helvetica'
             }
         };
     } catch (error: any) {
@@ -1119,7 +1126,6 @@ export async function updatePDFSettings(data: {
     showContactInfo?: boolean;
     autoPrint: boolean;
     showTaxInvoiceTitle: boolean;
-    fontFamily?: string;
 }) {
     const session = await auth();
     const companyId = session?.user?.companyId;
@@ -1192,9 +1198,9 @@ export async function getAIConfig(companyId: string, tenantId: string) {
     noStore();
     try {
         const record = await prisma.hms_settings.findFirst({
-            where: { 
-                company_id: companyId, 
-                tenant_id: tenantId, 
+            where: {
+                company_id: companyId,
+                tenant_id: tenantId,
                 key: 'AI_CONFIG' // Normalizing to Uppercase to match DB pattern
             }
         });

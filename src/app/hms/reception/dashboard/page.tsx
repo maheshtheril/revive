@@ -2,20 +2,21 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { ReceptionActionCenter } from "@/components/hms/reception/reception-action-center"
 import { redirect } from "next/navigation"
+import { Suspense } from "react"
 import { getBranches, getCurrentCompany } from "@/app/actions/company"
 import { getBillableItems, getTaxConfiguration, getUoms } from "@/app/actions/billing"
+import { Loader2 } from "lucide-react"
 
 export const dynamic = 'force-dynamic'
 
-// [OPTIMIZED SERIALIZATION] Standard serializable types handled efficiently
 function serialize(obj: any): any {
     if (obj === null || typeof obj !== 'object') return obj;
     if (Array.isArray(obj)) return obj.map(serialize);
-    if (obj instanceof Date) return obj;
+    if (obj instanceof Date) return obj.toISOString();
 
     // Prisma Decimals usually have a toJSON or toNumber method
-    if (typeof obj.toNumber === 'function') {
-        return obj.toNumber();
+    if (typeof (obj as any).toNumber === 'function') {
+        return (obj as any).toNumber();
     }
 
     const newObj: any = {};
@@ -25,17 +26,21 @@ function serialize(obj: any): any {
     return newObj;
 }
 
-export default async function ReceptionDashboardPage() {
-    const session = await auth()
-    if (!session?.user?.id) {
-        return <div className="p-10 text-slate-500 font-bold bg-white rounded-3xl m-10 shadow-2xl border-4 border-dashed border-slate-200 flex flex-col items-center gap-4">
-            <div className="text-4xl text-slate-300">🔐</div>
-            YOU ARE NOT LOGGED IN. PLEASE GO TO <a href="/login" className="text-blue-500 underline">LOGIN PAGE</a> FIRST.
-            <div className="text-xs font-mono bg-slate-50 p-2 rounded">Path: src/app/hms/reception/dashboard/page.tsx</div>
-        </div>
-    }
+export default async function ReceptionDashboardPage({
+    searchParams
+}: {
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+    const params = await searchParams
+    const dateStr = params.date as string
+    const targetDate = dateStr ? new Date(dateStr) : new Date()
 
     try {
+        const session = await auth()
+
+        if (!session?.user?.id) {
+            redirect("/auth/signin")
+        }
 
         const tenantId = session.user.tenantId as string
         const companyId = session.user.companyId as string
@@ -53,9 +58,11 @@ export default async function ReceptionDashboardPage() {
         const branches = branchesRes.success ? branchesRes.data : []
         const currentCompany = await getCurrentCompany()
         const isAdmin = !!session?.user?.isAdmin || !!session?.user?.isTenantAdmin
-        const todayStart = new Date()
+
+        // [ELITE DATE DYNAMIC RANGE] Adjusted to target specific date from URL
+        const todayStart = new Date(targetDate)
         todayStart.setHours(0, 0, 0, 0)
-        const todayEnd = new Date()
+        const todayEnd = new Date(targetDate)
         todayEnd.setHours(23, 59, 59, 999)
 
         // Parallel Data Fetching
@@ -206,12 +213,12 @@ export default async function ReceptionDashboardPage() {
         const currency = companySettings?.currencies?.symbol || session.user.currencySymbol || '₹';
 
 
-        // Fetch Vitals & Tags
+        // Fetch Vitals, Tags, and Clinical Integrity Status (Pending Nursing Consumption)
         const appointmentIds = appointmentsRaw.map(a => a.id);
-        const [vitalsRaw, tagsRaw] = await Promise.all([
+        const [vitalsRaw, tagsRaw, pendingClinicalRaw] = await Promise.all([
             prisma.hms_vitals.findMany({
                 where: { encounter_id: { in: appointmentIds }, tenant_id: tenantId },
-                select: { 
+                select: {
                     encounter_id: true,
                     temperature: true,
                     pulse: true,
@@ -226,6 +233,14 @@ export default async function ReceptionDashboardPage() {
             prisma.hms_appointment_tags.findMany({
                 where: { appointment_id: { in: appointmentIds }, tenant_id: tenantId },
                 select: { appointment_id: true, tag: true }
+            }),
+            prisma.hms_stock_move.groupBy({
+                by: ['source_reference'],
+                where: {
+                    source_reference: { in: appointmentIds },
+                    source: 'Nursing Consumption (Pending)'
+                },
+                _count: { id: true }
             })
         ]);
 
@@ -238,6 +253,11 @@ export default async function ReceptionDashboardPage() {
         tagsRaw.forEach(t => {
             if (!tagsMap[t.appointment_id]) tagsMap[t.appointment_id] = [];
             tagsMap[t.appointment_id].push(t.tag);
+        });
+
+        const pendingMap: Record<string, number> = {};
+        pendingClinicalRaw.forEach(p => {
+            if (p.source_reference) pendingMap[p.source_reference] = p._count.id;
         });
 
         // Calculate Total Collection
@@ -281,6 +301,7 @@ export default async function ReceptionDashboardPage() {
                 tags: tagsMap[apt.id] || [],
                 invoiceStatus: hasPendingInvoice ? 'pending' : (isPaid ? 'paid' : 'none'),
                 labStatus: labs.length > 0 ? (hasPendingLabs ? 'pending' : 'completed') : 'none',
+                pendingConsumablesCount: pendingMap[apt.id] || 0,
                 assigned_ward: admission?.ward,
                 assigned_bed: admission?.bed,
                 hms_invoice: invoices // Re-inject serialized invoices
@@ -303,25 +324,27 @@ export default async function ReceptionDashboardPage() {
         return (
             <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 max-w-7xl mx-auto space-y-6">
                 {/* ShiftManager moved to Action Center */}
-                <ReceptionActionCenter
-                    todayAppointments={serialize(formattedAppointments)}
-                    patients={serialize(patientsList)}
-                    doctors={serialize(doctorsList)}
-                    dailyCollection={totalCollection}
-                    collectionBreakdown={collectionBreakdown}
-                    todayPayments={serialize(serializedPayments)}
-                    todayExpenses={serialize(serializedExpenses)}
-                    totalExpenses={totalExpenses}
-                    draftCount={draftCountVal}
-                    availableBeds={availableBedsCount}
-                    branches={serialize(branches || [])}
-                    isAdmin={isAdmin}
-                    billableItems={serialize(billableItems)}
-                    taxConfig={serialize(taxConfig)}
-                    uoms={serialize(uoms)}
-                    currency={currency}
-                    hospitalInfo={serialize(currentCompany)}
-                />
+                <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-slate-300" /></div>}>
+                    <ReceptionActionCenter
+                        todayAppointments={serialize(formattedAppointments)}
+                        patients={serialize(patientsList)}
+                        doctors={serialize(doctorsList)}
+                        dailyCollection={totalCollection}
+                        collectionBreakdown={collectionBreakdown}
+                        todayPayments={serialize(serializedPayments)}
+                        todayExpenses={serialize(serializedExpenses)}
+                        totalExpenses={totalExpenses}
+                        draftCount={draftCountVal}
+                        availableBeds={availableBedsCount}
+                        branches={serialize(branches || [])}
+                        isAdmin={isAdmin}
+                        billableItems={serialize(billableItems)}
+                        taxConfig={serialize(taxConfig)}
+                        uoms={serialize(uoms)}
+                        currency={currency}
+                        hospitalInfo={serialize(currentCompany)}
+                    />
+                </Suspense>
             </div>
         )
     } catch (err: any) {

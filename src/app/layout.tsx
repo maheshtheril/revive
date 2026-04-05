@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 // Version 1.0.6 - Hardened Against DB Failures
-import { Inter, Roboto_Mono, Libre_Barcode_39 } from "next/font/google";
+import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/contexts/theme-context";
@@ -19,12 +19,6 @@ const robotoMono = Roboto_Mono({
   variable: "--font-geist-mono", // Keeping variable name consistent with existing CSS
   subsets: ["latin"],
 });
-
-const barcodeFont = Libre_Barcode_39({
-    weight: '400',
-    subsets: ['latin'],
-    variable: '--font-barcode'
-})
 
 import { getTenantBrandingByHost } from "./actions/branding";
 import { auditAndFixMenuPermissions } from "./actions/navigation";
@@ -84,7 +78,7 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className="dark">
       <body
-        className={`${inter.variable} ${robotoMono.variable} ${barcodeFont.variable} antialiased`}
+        className={`${inter.variable} ${robotoMono.variable} antialiased`}
       >
         <AuthProvider>
           <LocalizationProvider>

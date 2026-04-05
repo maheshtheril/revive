@@ -1,12 +1,14 @@
 'use client'
 
+import { cn } from "@/lib/utils"
+
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
     UserPlus, CalendarPlus, LogIn, CreditCard,
     PhoneIncoming, IdCard, Users, Search,
     Clock, Stethoscope, ChevronRight, Filter, ChevronDown, CheckCircle, Smartphone, MoreVertical, Edit, Activity, IndianRupee,
-    Printer, Wallet, Banknote, Fingerprint, LayoutDashboard, Kanban, AlertTriangle, Syringe, Zap, Eye, EyeOff, Wifi, Bed as BedIcon,
+    Printer, Wallet, Banknote, Fingerprint, Receipt, LayoutDashboard, Kanban, AlertTriangle, Syringe, Zap, Eye, EyeOff, Wifi, Bed as BedIcon,
     RotateCcw, ShieldAlert, Trash2, Loader2, History
 } from "lucide-react"
 import { ExpenseDialog } from "./expense-dialog"
@@ -56,6 +58,8 @@ interface ReceptionActionCenterProps {
     hospitalInfo?: any
 }
 
+import { DashboardDateFilter } from "../dashboard-date-filter"
+
 export function ReceptionActionCenter({
     todayAppointments,
     patients,
@@ -79,8 +83,7 @@ export function ReceptionActionCenter({
     const { toast } = useToast()
     const [viewMode, setViewMode] = useState<'board' | 'list'>('list')
     const [isPrivacyMode, setIsPrivacyMode] = useState(false)
-    const [currentTime, setCurrentTime] = useState<Date | null>(null)
-    const [isMounted, setIsMounted] = useState(false)
+    const [currentTime, setCurrentTime] = useState(new Date())
     const [activeModal, setActiveModal] = useState<string | null>(null)
     const [editingAppointment, setEditingAppointment] = useState<any>(null)
     const [selectedDoctor, setSelectedDoctor] = useState<string>("all")
@@ -96,8 +99,6 @@ export function ReceptionActionCenter({
 
     // Update time every minute for aging timers
     useEffect(() => {
-        setIsMounted(true)
-        setCurrentTime(new Date())
         const timer = setInterval(() => setCurrentTime(new Date()), 60000)
         return () => clearInterval(timer)
     }, [])
@@ -190,16 +191,16 @@ export function ReceptionActionCenter({
     const filteredAppointments = todayAppointments.filter(apt => {
         const matchesDoctor = selectedDoctor === 'all' || apt.clinician?.id === selectedDoctor
         const matchesStatus = selectedStatus === 'all' || apt.status === selectedStatus
-        
+
         const q = searchQuery.toLowerCase();
         const contact = apt.patient?.contact || {};
         const phone = contact.phone || contact.mobile || "";
-        
+
         const matchesSearch = q === '' ||
             `${apt.patient?.first_name} ${apt.patient?.last_name}`.toLowerCase().includes(q) ||
             apt.patient?.patient_number?.toLowerCase().includes(q) ||
             phone.includes(q)
-            
+
         return matchesDoctor && matchesStatus && matchesSearch
     })
 
@@ -268,19 +269,46 @@ export function ReceptionActionCenter({
         { id: 'shift', title: 'Cash Counter', icon: Banknote, color: 'text-slate-600', bg: 'bg-slate-50 dark:bg-slate-800/50', border: 'border-slate-200 dark:border-slate-700' },
     ]
 
-    if (!isMounted) return null
+    const [isMounted, setIsMounted] = useState(false)
+    useEffect(() => { setIsMounted(true) }, [])
+
+    if (!isMounted) return (
+        <div className="flex-1 space-y-6 pt-6 p-8 bg-slate-50 dark:bg-slate-900 min-h-screen">
+            <div className="flex items-center gap-4 px-6">
+                <div className="h-10 w-48 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-2xl" />
+                <div className="h-10 w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-2xl" />
+            </div>
+            <div className="px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8">
+                {[1, 2, 3, 4].map(i => (
+                    <div key={i} className="h-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-[2.5rem]" />
+                ))}
+            </div>
+        </div>
+    )
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500 relative">
-            {/* LIVE PULSE INDICATOR */}
-            <div className="absolute top-0 right-0 flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50 shadow-sm z-50">
-                <div className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        <div className="flex-1 space-y-6 pt-6 overflow-x-hidden animate-in fade-in duration-500 relative">
+            {/* GLOBAL DATE HUB & LIVE PULSE */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-4">
+                <div className="space-y-1">
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Front <span className="text-indigo-600">Office</span></h1>
+                        <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50 shadow-sm shrink-0">
+                            <div className="relative flex h-1.5 w-1.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                            </div>
+                            <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                <Wifi className="h-2.5 w-2.5" /> LIVE PULSE
+                            </span>
+                        </div>
+                    </div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Daily Operations Hub • World Standard Triage</p>
                 </div>
-                <span className="text-[10px] font-black uppercase tracking-tighter text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                    <Wifi className="h-3 w-3" /> Live Hospital Pulse
-                </span>
+
+                <div className="w-full md:w-auto flex justify-end">
+                    <DashboardDateFilter />
+                </div>
             </div>
 
             {/* TOP STATS */}
@@ -666,8 +694,17 @@ export function ReceptionActionCenter({
 
                                             return (
                                                 <tr key={apt.id} className={`group transition-colors ${rowColor}`}>
-                                                    <td className="px-6 py-5 text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono">
-                                                        {new Date(apt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    <td className="px-6 py-5">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono">
+                                                                {new Date(apt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                            {apt.token_number && (
+                                                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 mt-1 uppercase">
+                                                                    #Token {apt.token_number}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td className="px-6 py-5">
                                                         <div className="flex items-center gap-3">
@@ -709,43 +746,82 @@ export function ReceptionActionCenter({
                                                     </td>
                                                     <td className="px-6 py-5 text-right relative">
                                                         <div className="flex justify-end gap-2 items-center">
-                                                            <div className="flex items-center gap-2">
-                                                                <AdmissionDialog
-                                                                    patientId={apt.patient.id}
-                                                                    patientName={`${apt.patient.first_name} ${apt.patient.last_name}`}
-                                                                    trigger={
-                                                                        <Button variant="outline" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600">
-                                                                            <BedIcon className="h-4 w-4" />
-                                                                        </Button>
-                                                                    }
-                                                                />
-                                                                <OpSlipDialog
-                                                                    appointment={apt}
-                                                                    trigger={
-                                                                        <Button variant="outline" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600">
-                                                                            <Printer className="h-4 w-4" />
-                                                                        </Button>
-                                                                    }
-                                                                />
+                                                            <div className="flex items-center gap-2">                                                                 <AdmissionDialog
+                                                                patientId={apt.patient.id}
+                                                                patientName={`${apt.patient.first_name} ${apt.patient.last_name}`}
+                                                                trigger={
+                                                                    <Button variant="outline" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600">
+                                                                        <BedIcon className="h-4 w-4" />
+                                                                    </Button>
+                                                                }
+                                                            />
+                                                                {/* 🖨️ ELITE MULTI-PRINT HUB: SEPARATE ONE-SHOT BUTTONS */}
+                                                                <div className="flex items-center gap-1 bg-slate-100/50 dark:bg-slate-800/50 p-1 rounded-xl border border-slate-200/50">
+                                                                    {/* 1. Standard Clinical OP Slip */}
+                                                                    <OpSlipDialog
+                                                                        appointment={apt}
+                                                                        hospitalInfo={hospitalInfo}
+                                                                        defaultPrintMode="standard"
+                                                                        initialTab="voucher"
+                                                                        trigger={
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-500 hover:bg-indigo-100 dark:hover:bg-indigo-900/30" title="Print OP Slip (Standard)">
+                                                                                <Printer className="h-4 w-4" />
+                                                                            </Button>
+                                                                        }
+                                                                    />
+                                                                    {/* 2. Token / Identity Label (Thermal) */}
+                                                                    <OpSlipDialog
+                                                                        appointment={apt}
+                                                                        hospitalInfo={hospitalInfo}
+                                                                        defaultPrintMode="label"
+                                                                        initialTab="voucher"
+                                                                        trigger={
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30" title="Print Token Slip (Label)">
+                                                                                <Fingerprint className="h-4 w-4" />
+                                                                            </Button>
+                                                                        }
+                                                                    />
+                                                                    {/* 3. Financial Bill / Receipt (Direct to Invoice Tab) */}
+                                                                    <OpSlipDialog
+                                                                        appointment={apt}
+                                                                        hospitalInfo={hospitalInfo}
+                                                                        defaultPrintMode="standard"
+                                                                        initialTab="invoice"
+                                                                        trigger={
+                                                                            <Button
+                                                                                variant="ghost"
+                                                                                size="icon"
+                                                                                className={`h-8 w-8 ${apt.invoiceStatus === 'paid' ? 'text-amber-500 hover:bg-amber-100' : 'text-slate-300 hover:bg-slate-100'}`}
+                                                                                title="Print Bill / Receipt"
+                                                                            >
+                                                                                <Receipt className="h-4 w-4" />
+                                                                            </Button>
+                                                                        }
+                                                                    />
+                                                                </div>
+
                                                                 <StatusBadge apt={apt} />
                                                                 {((apt.status === 'completed' || apt.hasPrescription) && apt.invoiceStatus !== 'paid') && (
                                                                     <Button
                                                                         size="sm"
+                                                                        disabled={(apt as any).pendingConsumablesCount > 0}
                                                                         onClick={(e) => {
                                                                             e.preventDefault();
                                                                             e.stopPropagation();
-                                                                            console.log("DEBUG: TABLE CLICK COLLECT", apt.id);
-                                                                            try {
-                                                                                setSelectedAptForBilling(apt);
-                                                                                console.log("DEBUG: State set for billing", apt.id);
-                                                                            } catch (err) {
-                                                                                console.error("DEBUG: Failed to set billing state", err);
-                                                                            }
+                                                                            setSelectedAptForBilling(apt);
                                                                         }}
-                                                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black h-8 px-4 text-[10px] rounded-lg shadow-lg flex items-center gap-1 active:scale-95 transition-transform"
+                                                                        className={cn(
+                                                                            "font-black h-8 px-4 text-[10px] rounded-lg shadow-lg flex items-center gap-1 active:scale-95 transition-all uppercase tracking-widest",
+                                                                            (apt as any).pendingConsumablesCount > 0
+                                                                                ? "bg-amber-100 text-amber-700 border border-amber-200 cursor-not-allowed shadow-none"
+                                                                                : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                                        )}
                                                                     >
-                                                                        <CreditCard className="h-3 w-3" />
-                                                                        COLLECT
+                                                                        {(apt as any).pendingConsumablesCount > 0 ? (
+                                                                            <><Clock className="h-3 w-3 animate-pulse" /> PENDING (CLINICAL)</>
+                                                                        ) : (
+                                                                            <><CreditCard className="h-3 w-3" /> COLLECT</>
+                                                                        )}
                                                                     </Button>
                                                                 )}
                                                             </div>
@@ -757,7 +833,7 @@ export function ReceptionActionCenter({
                                                                 </DropdownMenuTrigger>
                                                                 <DropdownMenuContent align="end">
                                                                     <DropdownMenuItem onClick={() => handleEditClick(apt)}>Edit</DropdownMenuItem>
-                                                                    {getSmartStatus(apt).label === 'Billing / Checkout' && (
+                                                                    {(getSmartStatus(apt).label === 'Billing / Checkout' && (apt as any).pendingConsumablesCount === 0) && (
                                                                         <DropdownMenuItem onClick={() => router.push(`/hms/billing/new?appointmentId=${apt.id}&patientId=${apt.patient.id}`)}>
                                                                             Process Billing
                                                                         </DropdownMenuItem>
@@ -833,14 +909,23 @@ export function ReceptionActionCenter({
                                             <Button
                                                 size="sm"
                                                 variant="ghost"
-                                                className="h-7 px-2 text-[9px] font-black bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700 border border-orange-100 uppercase tracking-tighter"
+                                                className={cn(
+                                                    "h-7 px-2 text-[9px] font-black border uppercase tracking-tighter",
+                                                    todayAppointments.find(a => a.patient_id === p.id && a.status === 'completed' && a.invoiceStatus !== 'paid')?.pendingConsumablesCount > 0
+                                                        ? "bg-amber-50 text-amber-700 border-amber-100"
+                                                        : "bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700 border-orange-100 transition-all"
+                                                )}
+                                                disabled={todayAppointments.find(a => a.patient_id === p.id && a.status === 'completed' && a.invoiceStatus !== 'paid')?.pendingConsumablesCount > 0}
                                                 onClick={() => {
                                                     const apt = todayAppointments.find(a => a.patient_id === p.id && a.status === 'completed' && a.invoiceStatus !== 'paid');
                                                     setSelectedAptForBilling(apt);
                                                 }}
                                             >
-                                                <CreditCard className="h-3 w-3 mr-1" />
-                                                Bill Pending
+                                                {todayAppointments.find(a => a.patient_id === p.id && a.status === 'completed' && a.invoiceStatus !== 'paid')?.pendingConsumablesCount > 0 ? (
+                                                    <div className="flex items-center gap-1"><Clock className="h-3 w-3 animate-pulse" /> NURSING PENDING</div>
+                                                ) : (
+                                                    <div className="flex items-center gap-1"><CreditCard className="h-3 w-3 mr-1" /> Bill Pending</div>
+                                                )}
                                             </Button>
                                         )}
                                         <AdmissionDialog
@@ -960,18 +1045,27 @@ export function ReceptionActionCenter({
 
             <Dialog open={activeModal === 'attendance'} onOpenChange={() => setActiveModal(null)}>
                 <DialogContent className="max-w-md p-0">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Staff Attendance & Punching</DialogTitle>
+                    </DialogHeader>
                     <PunchWidget />
                 </DialogContent>
             </Dialog>
 
             <Dialog open={!!viewingPayment} onOpenChange={() => setViewingPayment(null)}>
                 <DialogContent className="max-w-[850px] p-0 overflow-hidden bg-white">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Petty Cash Voucher Detail</DialogTitle>
+                    </DialogHeader>
                     {viewingPayment && <PettyCashVoucher payment={viewingPayment} onClose={() => setViewingPayment(null)} />}
                 </DialogContent>
             </Dialog>
 
             <Dialog open={activeModal === 'beds'} onOpenChange={(open) => !open && setActiveModal(null)}>
                 <DialogContent className="max-w-[95vw] w-[1400px] h-[90vh] p-0 overflow-hidden bg-slate-50 dark:bg-slate-950 rounded-[3rem] border-none shadow-2xl">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Ward & Bed Management Terminal</DialogTitle>
+                    </DialogHeader>
                     <div className="h-full overflow-y-auto custom-scrollbar">
                         <WardManager branches={branches} isAdmin={isAdmin} />
                     </div>
@@ -987,9 +1081,12 @@ export function ReceptionActionCenter({
                     onEscapeKeyDown={(e) => e.preventDefault()}
                     className="max-w-[95vw] h-[95vh] flex flex-col p-0 overflow-hidden bg-slate-50/95 backdrop-blur-xl border-slate-200 focus:outline-none"
                 >
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Financial Billing Terminal - {selectedAptForBilling?.patient?.first_name} ({selectedAptForBilling?.hms_invoice?.length || 0} Invoices)</DialogTitle>
+                    </DialogHeader>
                     {selectedAptForBilling && (
                         <>
-                            {console.log("DEBUG: Rendering Invoice Editor for", selectedAptForBilling.id)}
+                            {console.log(`[DEBUG-RECEPTION] Opening Billing for Appt: ${selectedAptForBilling.id} - Patient: ${selectedAptForBilling.patient?.first_name}`)}
                             <CompactInvoiceEditor
                                 patients={patients}
                                 billableItems={billableItems}
@@ -998,7 +1095,7 @@ export function ReceptionActionCenter({
                                 initialPatientId={selectedAptForBilling.patient?.id}
                                 appointmentId={selectedAptForBilling.id}
                                 onClose={() => {
-                                    console.log("DEBUG: Closing Invoice Editor");
+                                    console.log("[DEBUG-RECEPTION] Modal Close triggered");
                                     setSelectedAptForBilling(null);
                                     router.refresh();
                                 }}
@@ -1180,7 +1277,7 @@ function PatientCard({
     onEdit: () => void,
     onBill?: () => void,
     isPrivacyMode: boolean,
-    currentTime: Date | null,
+    currentTime: Date,
     router: any,
     handleStatusUpdate: (id: string, status: string) => void,
     statusLoading: string | null,
@@ -1202,7 +1299,7 @@ function PatientCard({
     const isPaid = apt.invoiceStatus === 'paid';
 
     const startTime = new Date(apt.start_time);
-    const diffMins = currentTime ? Math.max(0, Math.floor((currentTime.getTime() - startTime.getTime()) / 60000)) : 0;
+    const diffMins = Math.max(0, Math.floor((currentTime.getTime() - startTime.getTime()) / 60000));
     const isOverdue = type === 'billing' && diffMins > 10;
     const isWarning = type === 'billing' && diffMins > 5;
 
@@ -1239,9 +1336,16 @@ function PatientCard({
                         <span className="text-[9px] text-slate-400">{apt.patient?.patient_number}</span>
                     </div>
                 </div>
-                <div className={`text-[10px] flex items-center gap-1 ${diffMins > 15 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
-                    <Clock className="h-2.5 w-2.5" />
-                    {diffMins}m
+                <div className="flex flex-col items-end">
+                    <div className={`text-[10px] flex items-center gap-1 ${diffMins > 15 ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
+                        <Clock className="h-2.5 w-2.5" />
+                        {diffMins}m
+                    </div>
+                    {apt.token_number && (
+                        <div className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-1.5 rounded-full mt-1 border border-emerald-100 dark:border-emerald-900/50">
+                            #{apt.token_number}
+                        </div>
+                    )}
                 </div>
                 <div className="flex items-center gap-1 mt-1">
                     <OpSlipDialog
@@ -1350,9 +1454,22 @@ function PatientCard({
                     <div className="flex gap-1">
                         <Button size="sm" variant="ghost" onClick={() => router.push(`/hms/prescriptions/${apt.id}`)} className="h-7 text-[10px]">Rx</Button>
                         {apt.invoiceStatus !== 'paid' && (
-                            <Button size="sm" onClick={onBill} className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm px-2">
-                                <IndianRupee className="h-3 w-3 mr-1" />
-                                Bill
+                            <Button
+                                size="sm"
+                                onClick={onBill}
+                                disabled={apt.pendingConsumablesCount > 0}
+                                className={cn(
+                                    "h-7 text-[10px] shadow-sm px-2 font-black uppercase tracking-widest transition-all",
+                                    apt.pendingConsumablesCount > 0
+                                        ? "bg-amber-100 text-amber-700 border border-amber-200 cursor-not-allowed"
+                                        : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                )}
+                            >
+                                {apt.pendingConsumablesCount > 0 ? (
+                                    <><Clock className="h-3 w-3 mr-1 animate-pulse" /> NYP</>
+                                ) : (
+                                    <><IndianRupee className="h-3 w-3 mr-1" /> Bill</>
+                                )}
                             </Button>
                         )}
                         <Button

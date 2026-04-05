@@ -2,16 +2,18 @@
 
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { serialize } from "@/lib/utils"
 
-export type TimelineEventType = 
-    | 'REGISTRATION' 
-    | 'APPOINTMENT' 
-    | 'ADMISSION' 
-    | 'VITALS' 
-    | 'PRESCRIPTION' 
-    | 'LAB_ORDER' 
+export type TimelineEventType =
+    | 'REGISTRATION'
+    | 'APPOINTMENT'
+    | 'ADMISSION'
+    | 'VITALS'
+    | 'PRESCRIPTION'
+    | 'LAB_ORDER'
     | 'DISCHARGE'
     | 'BILLING'
+    | 'CONSUMABLES'
 
 export interface TimelineEvent {
     id: string
@@ -37,15 +39,26 @@ export async function getPatientTimeline(patientId: string) {
             vitals,
             prescriptions,
             labOrders,
-            invoices
+            invoices,
+            stockMoves
         ] = await Promise.all([
             prisma.hms_patient.findUnique({ where: { id: patientId, tenant_id: tenantId } }),
             prisma.hms_appointments.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { starts_at: 'desc' } }),
             prisma.hms_admission.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { admitted_at: 'desc' } }),
             prisma.hms_vitals.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { recorded_at: 'desc' } }),
             prisma.$queryRaw`SELECT * FROM prescription WHERE patient_id::text = ${patientId} ORDER BY created_at DESC` as Promise<any[]>,
-            prisma.hms_lab_order.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, include: { hms_lab_order_lines: { include: { hms_lab_test: true } } }, orderBy: { ordered_at: 'desc' } }),
-            prisma.hms_invoice.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { issued_at: 'desc' } })
+            prisma.hms_lab_order.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, include: { hms_lab_order_line: { include: { hms_lab_test: true } } }, orderBy: { ordered_at: 'desc' } }),
+            prisma.hms_invoice.findMany({ where: { patient_id: patientId, tenant_id: tenantId }, orderBy: { issued_at: 'desc' } }),
+            // Fetch consumed assets / nursing usage specifically
+            prisma.hms_stock_ledger.findMany({
+                where: {
+                    tenant_id: tenantId,
+                    movement_type: 'out',
+                    reference: { contains: patientId }
+                },
+                include: { hms_product: true },
+                orderBy: { created_at: 'desc' }
+            })
         ])
 
         if (!patient) return { success: false, error: "Patient not found" }
@@ -128,8 +141,8 @@ export async function getPatientTimeline(patientId: string) {
                 type: 'LAB_ORDER',
                 date: lo.ordered_at || new Date(),
                 title: 'Lab Investigation Ordered',
-                description: `${lo.hms_lab_order_lines.length} tests requested (${lo.order_number})`,
-                metadata: { status: lo.status, tests: lo.hms_lab_order_lines.map(l => l.hms_lab_test?.name) }
+                description: `${lo.hms_lab_order_line.length} tests requested (${lo.order_number})`,
+                metadata: { status: lo.status, tests: lo.hms_lab_order_line.map(l => l.hms_lab_test?.name) }
             })
         })
 
@@ -145,10 +158,26 @@ export async function getPatientTimeline(patientId: string) {
             })
         })
 
+        // 8. Consumables Usage
+        stockMoves.forEach(mv => {
+            events.push({
+                id: mv.id,
+                type: 'CONSUMABLES',
+                date: mv.created_at || new Date(),
+                title: 'Consumable Used',
+                description: `${mv.qty} ${mv.uom} of ${mv.hms_product?.name || 'Item'} consumed`,
+                metadata: {
+                    product_id: mv.product_id,
+                    product_name: mv.hms_product?.name,
+                    notes: (mv.metadata as any)?.notes
+                }
+            })
+        })
+
         // Sort all events by date descending
         events.sort((a, b) => b.date.getTime() - a.date.getTime())
 
-        return { success: true, data: events, patient }
+        return { success: true, data: serialize(events), patient: serialize(patient) }
     } catch (err: any) {
         console.error("Timeline Error:", err)
         return { success: false, error: err.message }
