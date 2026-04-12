@@ -8,15 +8,34 @@ import { currenciesList, countriesList, modulesList } from "@/lib/static-data"
 import { Check, ChevronRight, Building, Layers } from "lucide-react"
 import { ZionaLogo } from "@/components/branding/ziona-logo"
 
-export function SignupForm({ setIsLogin, branding }: { setIsLogin?: (v: boolean) => void, branding?: any }) {
+export function SignupForm({ 
+    setIsLogin, 
+    branding,
+    initialCountries = [],
+    initialCurrencies = [],
+    initialModules = []
+}: { 
+    setIsLogin?: (v: boolean) => void, 
+    branding?: any,
+    initialCountries?: any[],
+    initialCurrencies?: any[],
+    initialModules?: any[]
+}) {
     const [step, setStep] = useState(1)
     const [state, formAction, isPending] = useActionState(signup, null)
     const [signingIn, setSigningIn] = useState(false)
 
     // Data constraints
-    const [countries, setCountries] = useState<any[]>([])
-    const [currencies, setCurrencies] = useState<any[]>([])
-    const [modules, setModules] = useState<any[]>([])
+    const [countries, setCountries] = useState<any[]>(initialCountries)
+    const [currencies, setCurrencies] = useState<any[]>(initialCurrencies)
+    const [modules, setModules] = useState<any[]>(initialModules)
+
+    // Update state if props change (though unlikely in this flow)
+    useEffect(() => {
+        if (initialCountries.length > 0) setCountries(initialCountries);
+        if (initialCurrencies.length > 0) setCurrencies(initialCurrencies);
+        if (initialModules.length > 0) setModules(initialModules);
+    }, [initialCountries, initialCurrencies, initialModules])
 
     // Form State
     const [formData, setFormData] = useState({
@@ -30,11 +49,7 @@ export function SignupForm({ setIsLogin, branding }: { setIsLogin?: (v: boolean)
         modules: [] as string[]
     })
 
-    useEffect(() => {
-        getCountries().then(setCountries)
-        getCurrencies().then(setCurrencies)
-        getModules().then(setModules)
-    }, [])
+    // Form State
 
     const nextStep = () => {
         const form = document.getElementById('signup-form') as HTMLFormElement;
