@@ -30,16 +30,27 @@ export function SignupForm({
     const [currencies, setCurrencies] = useState<any[]>(initialCurrencies)
     const [modules, setModules] = useState<any[]>(initialModules)
 
-    // Update state if props change, AND fetch in background if empty
+    // Update state if props change, AND fetch in background from API
     useEffect(() => {
-        if (initialCountries.length > 0) setCountries(initialCountries);
-        else getCountries().then(setCountries);
+        const loadData = async () => {
+            try {
+                const res = await fetch('/api/master-data');
+                const data = await res.json();
+                if (data.countries) setCountries(data.countries);
+                if (data.currencies) setCurrencies(data.currencies);
+                if (data.modules) setModules(data.modules);
+            } catch (err) {
+                console.error("Failed to load master data:", err);
+            }
+        };
 
-        if (initialCurrencies.length > 0) setCurrencies(initialCurrencies);
-        else getCurrencies().then(setCurrencies);
-
-        if (initialModules.length > 0) setModules(initialModules);
-        else getModules().then(setModules);
+        if (initialCountries.length > 0) {
+            setCountries(initialCountries);
+            setCurrencies(initialCurrencies);
+            setModules(initialModules);
+        } else {
+            loadData();
+        }
     }, [initialCountries, initialCurrencies, initialModules])
 
     // Form State
