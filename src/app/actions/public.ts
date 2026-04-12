@@ -2,8 +2,10 @@
 
 import { prisma } from "@/lib/prisma"
 import { currenciesList, countriesList, modulesList } from "@/lib/static-data"
+import { unstable_noStore as noStore } from 'next/cache'
 
 export async function getCountries() {
+    noStore();
     try {
         const count = await prisma.countries.count();
         if (count === 0) {
@@ -48,6 +50,7 @@ export async function getCountries() {
 }
 
 export async function getCurrencies() {
+    noStore();
     try {
         const count = await prisma.currencies.count();
         if (count === 0) {
@@ -90,6 +93,7 @@ export async function getCurrencies() {
 }
 
 export async function getModules() {
+    noStore();
     try {
         const count = await prisma.modules.count();
         if (count === 0) {

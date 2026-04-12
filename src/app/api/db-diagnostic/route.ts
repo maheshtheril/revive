@@ -40,34 +40,22 @@ export async function GET() {
       AND column_name = 'status'
     `;
 
-    const duplicateRegFees: any = await prisma.$queryRaw`
-      SELECT 
-          i.patient_id, 
-          p.first_name, 
-          p.last_name, 
-          COUNT(il.id) as line_count,
-          MIN(il.created_at) as first_insert,
-          MAX(il.created_at) as last_insert,
-          array_agg(il.created_at) as all_timestamps
-      FROM hms_invoice_lines il
-      JOIN hms_invoice i ON il.invoice_id = i.id
-      JOIN hms_patient p ON i.patient_id = p.id
-      WHERE il.description LIKE '%Registration Fee%'
-      GROUP BY i.patient_id, p.first_name, p.last_name
-      HAVING COUNT(il.id) > 1
-      ORDER BY last_insert DESC
-      LIMIT 10;
-    `;
+    const countriesCount: any = await prisma.$queryRaw`SELECT count(*) FROM countries`;
+    const currenciesCount: any = await prisma.$queryRaw`SELECT count(*) FROM currencies`;
+    const modulesCount: any = await prisma.$queryRaw`SELECT count(*) FROM modules`;
 
     return NextResponse.json({
       success: true,
-      db_url: process.env.DATABASE_URL,
+      db_url: process.env.DATABASE_URL?.split('@')[1] || 'URL NOT SET', 
       connectivity: testQuery,
+      counts: {
+        countries: Number(countriesCount[0]?.count || 0),
+        currencies: Number(currenciesCount[0]?.count || 0),
+        modules: Number(modulesCount[0]?.count || 0)
+      },
       triggers: triggers,
       clinician_columns: clinicianCols,
-      appointment_array_columns: appointmentCols,
-      invoice_status_column: invoiceCols,
-      duplicate_registration_fees: duplicateRegFees
+      invoice_status_column: invoiceCols
     });
 
   } catch (error: any) {
