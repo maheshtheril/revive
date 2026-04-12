@@ -13,9 +13,9 @@ export function SignupForm({ setIsLogin, branding }: { setIsLogin?: (v: boolean)
     const [signingIn, setSigningIn] = useState(false)
 
     // Data constraints
-    const [countries, setCountries] = useState<any[]>([])
-    const [currencies, setCurrencies] = useState<any[]>([])
-    const [modules, setModules] = useState<any[]>([])
+    const [countries, setCountries] = useState<any[]>(countriesList.map(c => ({ id: c.iso2, name: c.name, iso2: c.iso2 })))
+    const [currencies, setCurrencies] = useState<any[]>(currenciesList.map(c => ({ id: c.code, name: c.name, code: c.code, symbol: c.symbol })))
+    const [modules, setModules] = useState<any[]>(modulesList.map(m => ({ id: m.key, module_key: m.key, name: m.name })))
 
     // Form State
     const [formData, setFormData] = useState({
