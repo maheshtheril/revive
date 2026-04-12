@@ -13,7 +13,7 @@ export const authConfig = {
                 httpOnly: true,
                 sameSite: 'lax',
                 path: '/',
-                secure: false, 
+                secure: isVercel, 
             }
         }
     },
