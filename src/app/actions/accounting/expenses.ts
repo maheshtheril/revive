@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
 import { AccountingService } from "@/lib/services/accounting"
+import { serialize } from "@/lib/utils"
 
 // ... imports
 
@@ -16,6 +17,7 @@ export async function recordExpense(data: {
     date: Date;
     method?: string; // defaulting to 'cash'
     reference?: string;
+    journalId?: string;
 }) {
     const session = await auth();
     const companyId = session?.user?.companyId;
@@ -108,6 +110,7 @@ export async function recordExpense(data: {
                             category_name: categoryName,
                             category_code: account.code
                         },
+                        journal_id: data.journalId,
                     }
                 });
 
@@ -154,7 +157,8 @@ export async function recordExpense(data: {
                             category_name: categoryName,
                             category_code: account.code
                         },
-                        created_at: data.date
+                        created_at: data.date,
+                        journal_id: data.journalId,
                     }
                 });
             }
@@ -186,7 +190,7 @@ export async function recordExpense(data: {
         revalidatePath('/hms/accounting/expenses');
         revalidatePath('/hms/accounting/payments');
 
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
 
     } catch (error: any) {
         console.error("Error recording expense:", error);

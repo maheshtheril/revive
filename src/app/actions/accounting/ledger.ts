@@ -3,6 +3,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { serialize } from "@/lib/utils"
 
 export async function getAccountLedger(accountId: string, filters?: {
     startDate?: Date;
@@ -61,7 +62,7 @@ export async function getAccountLedger(accountId: string, filters?: {
             select: { name: true, code: true, type: true, id: true }
         });
 
-        return { success: true, data: lines, account };
+        return { success: true, data: serialize(lines), account };
 
     } catch (error: any) {
         console.error("Error fetching ledger:", error);

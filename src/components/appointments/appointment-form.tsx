@@ -1,7 +1,11 @@
 'use client'
 
 import { createAppointment, updateAppointmentDetails } from "@/app/actions/appointment"
-import { ArrowLeft, Calendar, Clock, FileText, CheckCircle, MapPin, Video, Phone, AlertCircle, Stethoscope, IndianRupee, Save } from "lucide-react"
+import { ArrowLeft, Calendar, Clock, FileText, CheckCircle, MapPin, Video, Phone, AlertCircle, Stethoscope, IndianRupee, Save, Zap, ChevronRight } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { ChevronDown, Edit } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { PatientDoctorSelectors } from "@/components/appointments/patient-doctor-selectors"
 import { CreatePatientForm } from "@/components/hms/create-patient-form"
@@ -61,24 +65,36 @@ export function AppointmentForm({
     const [selectedPatientData, setSelectedPatientData] = useState<any>(null)
     const [showNewPatientModal, setShowNewPatientModal] = useState(false)
     const [selectedClinicianId, setSelectedClinicianId] = useState('')
-    const [selectedDate, setSelectedDate] = useState('')
-    const [suggestedTime, setSuggestedTime] = useState('')
+    const [selectedDate, setSelectedDate] = useState(() => {
+        if (initialDate) return initialDate;
+        if (editingAppointment?.start_time) {
+            const d = new Date(editingAppointment.start_time);
+            return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+        }
+        const now = new Date();
+        return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
+    })
+    const [suggestedTime, setSuggestedTime] = useState(() => {
+        if (initialTime && initialTime.length >= 5) return initialTime;
+        if (editingAppointment?.start_time) {
+            const d = new Date(editingAppointment.start_time);
+            return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        }
+        const slotMs = 15 * 60 * 1000;
+        const nowMs = new Date().getTime();
+        const nowRound = new Date(Math.ceil(nowMs / slotMs) * slotMs);
+        return `${nowRound.getHours().toString().padStart(2, '0')}:${nowRound.getMinutes().toString().padStart(2, '0')}`;
+    })
+    const [isLateHours, setIsLateHours] = useState(false)
     const [isMounted, setIsMounted] = useState(false)
 
     // Sync state on mount and when editingAppointment changes
+    // Sync state on mount and when editingAppointment changes
     useEffect(() => {
         setIsMounted(true)
-        if (!editingAppointment) {
-            setSelectedPatientId(initialPatientId || '')
-            setSelectedDate(initialDate || new Date().toISOString().split('T')[0])
-            setSuggestedTime(initialTime || '')
-            return
+        if (editingAppointment) {
+            setNotes(editingAppointment.notes || '')
         }
-        
-        setSelectedPatientId(editingAppointment.patient?.id || editingAppointment.patient_id || '')
-        setSelectedClinicianId(editingAppointment.clinician?.id || editingAppointment.clinician_id || '')
-        setSelectedDate(new Date(editingAppointment.start_time).toISOString().split('T')[0])
-        setSuggestedTime(new Date(editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
     }, [editingAppointment, initialPatientId, initialDate, initialTime])
     const [isMaximized, setIsMaximized] = useState(true)
     const [isListening, setIsListening] = useState(false)
@@ -130,7 +146,11 @@ export function AppointmentForm({
         if (editingAppointment) {
             setSelectedPatientId(editingAppointment.patient?.id || editingAppointment.patient_id || '')
             setSelectedClinicianId(editingAppointment.clinician?.id || editingAppointment.clinician_id || '')
-            setSelectedDate(new Date(editingAppointment.start_time).toISOString().split('T')[0])
+            
+            const editDate = new Date(editingAppointment.start_time);
+            const localEditDate = `${editDate.getFullYear()}-${(editDate.getMonth() + 1).toString().padStart(2, '0')}-${editDate.getDate().toString().padStart(2, '0')}`;
+            setSelectedDate(localEditDate)
+            
             setSuggestedTime(new Date(editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
         }
     }, [editingAppointment])
@@ -294,30 +314,22 @@ export function AppointmentForm({
         const dayEnd = new Date(year, month - 1, dayOfMonth);
         dayEnd.setHours(endH, endM, 0, 0);
 
+        // Round up to nearest slot duration (e.g. 10m, 15m, 20m)
+        const roundedMs = Math.ceil(nextSlotTime.getTime() / slotMs) * slotMs;
+        const finalTime = new Date(roundedMs);
+
+        const hours = finalTime.getHours().toString().padStart(2, '0')
+        const minutes = finalTime.getMinutes().toString().padStart(2, '0')
+        setSuggestedTime(`${hours}:${minutes}`)
+        setIsLateHours(finalTime >= dayEnd && isToday)
+
         // Debug Log to reveal mismatch
         console.log(`Slotting Logic [${selectedDate}]:`, {
             slotDuration,
-            nextSlot: nextSlotTime.toLocaleTimeString(),
+            nextSlot: finalTime.toLocaleTimeString(),
             dayEnd: dayEnd.toLocaleTimeString(),
-            isFullyBooked: nextSlotTime >= dayEnd
+            isFullyBooked: finalTime >= dayEnd
         });
-
-        if (nextSlotTime >= dayEnd && isToday) {
-            setSuggestedTime('Fully Booked')
-        } else {
-            // Round up to nearest slot duration (e.g. 10m, 15m, 20m)
-            const roundedMs = Math.ceil(nextSlotTime.getTime() / slotMs) * slotMs;
-            const finalTime = new Date(roundedMs);
-
-            // If rounding pushed us past dayEnd, mark booked
-            if (finalTime >= dayEnd) {
-                setSuggestedTime('Fully Booked')
-            } else {
-                const hours = finalTime.getHours().toString().padStart(2, '0')
-                const minutes = finalTime.getMinutes().toString().padStart(2, '0')
-                setSuggestedTime(`${hours}:${minutes}`)
-            }
-        }
     }, [selectedClinicianId, selectedDate, appointmentsList, doctors, editingAppointment])
 
     // HMS Settings (Reg Fee, etc.)
@@ -635,36 +647,24 @@ export function AppointmentForm({
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center bg-white/5 border border-white/10 p-1 rounded-xl mr-2 gap-1 px-2">
+                    <div className="flex items-center bg-white/5 border border-white/10 p-1 rounded-xl gap-1 px-2">
                         <button type="button" onClick={onMinimize || onClose} className="p-2 hover:bg-white/10 rounded-lg text-white/50 transition-all"><Minus className="h-4 w-4" /></button>
                         <div className="h-4 w-[1px] bg-white/10" />
                         <button type="button" onClick={() => setIsMaximized(!isMaximized)} className="p-2 hover:bg-white/10 rounded-lg text-white/70 transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
                             {isMaximized ? <Minimize2 className="h-3.5 w-3.5 text-indigo-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
-                            {isMaximized ? 'Dock Terminal' : 'Fullscreen'}
+                            {isMaximized ? 'Dock' : 'Full'}
+                        </button>
+                        <div className="h-4 w-[1px] bg-white/10" />
+                        <button type="button" onClick={onClose} className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 transition-all">
+                            <X className="h-4 w-4" />
                         </button>
                     </div>
-
-                    <button
-                        type="button"
-                        onClick={() => {
-                            const form = document.getElementById('appointment-terminal-form') as HTMLFormElement;
-                            if (form) form.requestSubmit();
-                        }}
-                        disabled={isPending || isLoadingPatient || activeRegStatus.shouldCharge || activeRegStatus.status === 'loading'}
-                        title={isLoadingPatient ? 'Loading patient...' : activeRegStatus.shouldCharge ? 'Collect registration fee first' : ''}
-                        className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-500/20 font-black text-xs uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center gap-3 border border-indigo-400/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
-                    >
-                        {(isPending || isLoadingPatient) ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
-                        {editingAppointment ? 'Update Encounter' : 'Save'}
-                    </button>
-                </div>
             </div>
 
             <form
                 id="appointment-terminal-form"
                 onSubmit={(e) => { e.preventDefault(); handleSubmit(new FormData(e.currentTarget)); }}
-                className="flex flex-col h-[calc(100%-88px)] overflow-hidden bg-white dark:bg-slate-950"
+                className="flex flex-col h-[calc(100%-80px)] bg-white dark:bg-slate-950 relative"
             >
                 {editingAppointment && <input type="hidden" name="id" value={editingAppointment.id} />}
                 <input type="hidden" name="source" value="dashboard" />
@@ -689,7 +689,7 @@ export function AppointmentForm({
                                 <div className="text-right">
                                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-0.5 flex items-center justify-end gap-1">Registration Status</div>
                                     <div className={`text-sm font-black tracking-tight ${activeRegStatus.status === 'loading' ? 'text-slate-400 animate-pulse' : activeRegStatus.status === 'none' ? 'text-slate-300' : activeRegStatus.shouldCharge ? 'text-red-500' : 'text-emerald-500'}`}>
-                                        {activeRegStatus.status === 'loading' ? 'AUDITING...' : activeRegStatus.status === 'none' ? 'UNLINKED' : activeRegStatus.shouldCharge ? 'EXPIRED / DUE' : 'LIFETIME VALID'}
+                                        {activeRegStatus.status === 'loading' ? 'AUDITING...' : activeRegStatus.status === 'none' ? 'UNLINKED' : activeRegStatus.shouldCharge ? 'EXPIRED / DUE' : 'REGISTRATION VALID'}
                                     </div>
                                     {activeRegStatus.status !== 'none' && (
                                         <div className="text-[9px] font-bold text-slate-400 leading-none mt-1 uppercase tracking-tighter">
@@ -772,13 +772,12 @@ export function AppointmentForm({
                                     <input
                                         type="time"
                                         name="time"
-                                        required={suggestedTime !== 'Fully Booked'} // [FIX] Don't require if fully booked (allowing override)
-                                        key={suggestedTime}
-                                        defaultValue={suggestedTime === 'Fully Booked' ? '' : suggestedTime}
-                                        placeholder={suggestedTime === 'Fully Booked' ? 'Overtime/Booked' : ''}
-                                        className={`w-full p-2.5 bg-white dark:bg-slate-950 border ${suggestedTime === 'Fully Booked' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-gray-200 dark:border-slate-700'} rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-medium`}
+                                        required
+                                        value={suggestedTime}
+                                        onChange={(e) => setSuggestedTime(e.target.value)}
+                                        className={`w-full p-2.5 bg-white dark:bg-slate-950 border ${isLateHours ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-gray-200 dark:border-slate-700'} rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-medium`}
                                     />
-                                    {suggestedTime === 'Fully Booked' && (
+                                    {isLateHours && (
                                         <p className="text-[10px] font-black text-amber-600 mt-1 uppercase tracking-widest animate-pulse">⚠️ Late Hours / Fully Booked (Override possible)</p>
                                     )}
                                 </div>
@@ -853,23 +852,55 @@ export function AppointmentForm({
                     </div>
                 </div>
 
-                {/* Secondary Save Trigger (Legacy Consistency) */}
-                <div className="p-4 bg-slate-50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5 flex flex-col items-end gap-2 shrink-0">
-                    {activeRegStatus.shouldCharge && (
-                        <p className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center gap-1.5">
-                            <span>⛔</span>
-                            {activeRegStatus.status === 'expired' ? 'Registration expired — renew fee to enable booking' : 'Registration fee pending — collect fee to enable booking'}
-                        </p>
-                    )}
-                    <button
-                        type="submit"
-                        disabled={isPending || isLoadingPatient || activeRegStatus.shouldCharge || activeRegStatus.status === 'loading'}
-                        title={isLoadingPatient ? 'Loading patient data...' : activeRegStatus.shouldCharge ? 'Collect registration fee first' : ''}
-                        className="px-10 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg shadow-indigo-500/20 font-black text-xs uppercase tracking-widest transition-all active:scale-95 flex items-center gap-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
-                    >
-                        {(isPending || isLoadingPatient) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                        {editingAppointment ? 'Update Record' : 'Finalize & Save'}
-                    </button>
+                {/* Elite Footer: World-Standard Action Hub */}
+                <div className="absolute bottom-0 left-0 right-0 px-10 py-8 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200 dark:border-white/10 flex items-center justify-between z-30 shadow-[0_-20px_60px_-10px_rgba(0,0,0,0.15)]">
+                    <div className="flex items-center gap-6">
+                        <Button 
+                            type="button"
+                            variant="outline"
+                            onClick={onClose}
+                            className="h-16 px-10 rounded-2xl border-slate-200 dark:border-white/10 text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em] hover:bg-slate-100 transition-all active:scale-95 bg-white dark:bg-transparent"
+                        >
+                            Abort Session
+                        </Button>
+
+                        {activeRegStatus.shouldCharge && (
+                            <div className="flex items-center gap-4 px-8 py-4 bg-rose-50 dark:bg-rose-500/10 rounded-2xl border border-rose-100 dark:border-rose-500/20 animate-in fade-in slide-in-from-left-4 duration-500">
+                                <ShieldAlert className="h-6 w-6 text-rose-600 dark:text-rose-400" />
+                                <div className="flex flex-col">
+                                    <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest leading-none mb-1">Financial Pre-Requisite Missing</span>
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Registration Fee Must be Settled First</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-8">
+                        <div className="text-right hidden xl:block">
+                            <div className="text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] leading-none mb-1.5 opacity-40">System Protocol: V10.2</div>
+                            <div className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest italic flex items-center justify-end gap-2">
+                                <BadgeCheck className="h-3.5 w-3.5" /> High-Intensity Mode Active
+                            </div>
+                        </div>
+                        
+                        <Button
+                            type="submit"
+                            disabled={isPending || isLoadingPatient || activeRegStatus.shouldCharge || activeRegStatus.status === 'loading'}
+                            className="h-24 px-20 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[2.5rem] shadow-[0_25px_50px_-12px_rgba(79,70,229,0.5)] font-black text-sm uppercase tracking-[0.4em] transition-all active:scale-[0.98] flex items-center gap-6 border-4 border-white/20 dark:border-white/10 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed group relative overflow-hidden"
+                        >
+                            {(isPending || isLoadingPatient) ? (
+                                <Loader2 className="h-8 w-8 animate-spin" />
+                            ) : (
+                                <div className="flex flex-col items-start">
+                                    <span className="text-[9px] font-bold text-indigo-200/60 mb-0.5 uppercase tracking-widest leading-none">Confirm Engagement</span>
+                                    <span className="flex items-center gap-3">
+                                        {editingAppointment ? 'Update OP Record' : 'Finalize OP Booking'}
+                                        <ChevronRight className="h-5 w-5 group-hover:translate-x-2 transition-transform duration-300 opacity-60" />
+                                    </span>
+                                </div>
+                            )}
+                        </Button>
+                    </div>
                 </div>
             </form>
 

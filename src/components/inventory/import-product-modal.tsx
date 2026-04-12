@@ -22,8 +22,8 @@ export function ImportProductModal({ defaultOpen = false }: { defaultOpen?: bool
     const router = useRouter()
 
     const handleDownloadTemplate = () => {
-        const headers = ["Name", "Sale Price", "MRP", "Purchase Price", "Opening Stock", "Category", "UOM", "SKU", "GST %"];
-        const sampleRow = ["Paracetamol 500mg", "25.00", "30.00", "15.00", "100", "Pharmacy", "STRIP", "", "12"];
+        const headers = ["Name", "Product Type", "Generic Name", "Manufacturer", "Category", "UOM", "Purchase Price", "Sale Price", "MRP", "GST %", "HSN Code", "Opening Stock", "Min Stock", "SKU", "BarCode"];
+        const sampleRow = ["Paracetamol 500mg", "Medicine", "Paracetamol", "GSK Pharma", "Pharmacy", "STRIP", "15.00", "25.00", "30.00", "12", "3004", "100", "10", "PRC-500", "890123456789"];
         const csvContent = [headers.join(','), sampleRow.join(',')].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);

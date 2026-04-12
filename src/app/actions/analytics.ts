@@ -95,25 +95,64 @@ export async function getGlobalAnalytics() {
             }
         })
 
-        // 4. Patient Gender Distribution
-        const genderStats = await prisma.hms_patient.groupBy({
-            by: ['gender'],
-            where: { tenant_id: tenantId },
-            _count: { id: true }
+        // 5. Revenue by Category (Last 30 Days)
+        const recentInvoices = await prisma.hms_invoice.findMany({
+            where: {
+                tenant_id: tenantId,
+                status: 'paid',
+                created_at: { gte: subMonths(now, 1) }
+            },
+            include: {
+                hms_invoice_lines: {
+                    include: {
+                        hms_product: {
+                            include: {
+                                hms_product_category_rel: {
+                                    include: {
+                                        hms_product_category: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         })
 
-        const genderData = genderStats.map(g => ({
-            name: g.gender || 'Other',
-            value: g._count.id
-        }))
+        const categoryMap = new Map<string, { amount: number, count: number }>()
+        recentInvoices.forEach(inv => {
+            inv.hms_invoice_lines.forEach(line => {
+                const category = line.hms_product?.hms_product_category_rel?.[0]?.hms_product_category?.name || 'Uncategorized'
+                const amount = Number(line.net_amount || 0)
+                const current = categoryMap.get(category) || { amount: 0, count: 0 }
+                categoryMap.set(category, { 
+                    amount: current.amount + amount, 
+                    count: current.count + 1 
+                })
+            })
+        })
 
-        // 5. Overall Stats
+        const categoryData = Array.from(categoryMap.entries())
+            .map(([name, data]) => ({ name, value: data.amount, count: data.count }))
+            .sort((a, b) => b.value - a.value)
+
+        // 6. Overall Stats
         const totalRevenue = revenueData.reduce((sum, item) => sum + item.revenue, 0)
-        const [totalPatients, totalInvoices, totalAppointments] = await Promise.all([
+        const [totalPatients, totalInvoices, totalAppointments, genderStats] = await Promise.all([
             prisma.hms_patient.count({ where: { tenant_id: tenantId } }),
             prisma.hms_invoice.count({ where: { tenant_id: tenantId, status: 'paid' } }),
-            prisma.hms_appointments.count({ where: { tenant_id: tenantId } })
+            prisma.hms_appointments.count({ where: { tenant_id: tenantId } }),
+            prisma.hms_patient.groupBy({
+                by: ['gender'],
+                where: { tenant_id: tenantId },
+                _count: { id: true }
+            })
         ])
+ 
+        const genderData = genderStats.map(stat => ({
+            name: stat.gender || 'Unknown',
+            value: stat._count.id
+        }))
 
         return {
             success: true,
@@ -122,6 +161,7 @@ export async function getGlobalAnalytics() {
                 appointmentData,
                 topDoctors,
                 genderData,
+                categoryData,
                 stats: {
                     totalPatients,
                     totalInvoices,

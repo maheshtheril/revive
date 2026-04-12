@@ -5,16 +5,21 @@ import { generateInvoicePDFBase64 } from "@/lib/utils/pdf-generator";
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: Promise<{ id: string }> }
+    context: { params: Promise<{ id: string }> }
 ) {
+    console.log(">>> [PDF-API-ENTRY] Hit the route handler");
     try {
+        const params = await context.params;
+        const id = params.id;
+        
         const session = await auth();
         if (!session?.user?.tenantId) {
+            console.warn(">>> [PDF-API] Unauthorized access attempt");
             return new NextResponse("Unauthorized", { status: 401 });
         }
-
-        const { id } = await params;
         const autoPrint = request.nextUrl.searchParams.get('autoPrint') === 'true';
+
+        console.log(`[PDF-API] Attempting to generate PDF for ID: ${id} | Tenant: ${session.user.tenantId}`);
 
         const invoice = await prisma.hms_invoice.findUnique({
             where: {
@@ -33,6 +38,13 @@ export async function GET(
         });
 
         if (!invoice) {
+            // DIAGNOSTIC PROBE: Check if ID exists AT ALL in any tenant
+            const existsAnywhere = await prisma.hms_invoice.findUnique({ where: { id: id } });
+            if (existsAnywhere) {
+                console.error(`[PDF-API] SECURITY BLOCK: Invoice ${id} exists but belongs to tenant ${existsAnywhere.tenant_id}, not ${session.user.tenantId}`);
+            } else {
+                console.error(`[PDF-API] NOT FOUND: Invoice ${id} does not exist in the database.`);
+            }
             return new NextResponse("Invoice not found", { status: 404 });
         }
 

@@ -183,7 +183,7 @@ export function ProductTableClient({
 
                 {meta && meta.totalPages > 1 && (
                     <div className="p-6 border-t border-gray-100 flex items-center justify-between bg-slate-50/50">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sector {meta.page} of {meta.totalPages}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sector {meta.page} of {meta.totalPages} • {meta.total?.toLocaleString() || 0} Total Registry Nodes</p>
                         <div className="flex gap-2">
                             <Link
                                 href={currentPage > 1 ? `?page=${currentPage - 1}&query=${query || ''}` : '#'}

@@ -2,7 +2,7 @@
 
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { User, Stethoscope } from 'lucide-react'
-import Link from 'next/link'
+import { searchPatients } from '@/app/actions/patient-search'
 
 interface Patient {
     id: string
@@ -122,8 +122,32 @@ export function PatientDoctorSelectors({
                         <SearchableSelect
                             options={patientOptions}
                             onSearch={async (q) => {
-                                const lower = q.toLowerCase()
-                                return patientOptions.filter(p => p.searchString.includes(lower))
+                                console.log("[DEBUG] PATIENT ONSEARCH CALL:", q);
+                                if (!q) return patientOptions;
+                                try {
+                                    const results = await searchPatients(q);
+                                    console.log("[DEBUG] SEARCH RESULTS:", results?.length);
+                                    if (!results || results.length === 0) return [];
+                                    
+                                    return results.map(p => {
+                                        const phoneRaw = p.phone || (p.contact as any)?.phone || (p.contact as any)?.mobile || '';
+                                        const phoneFormatted = phoneRaw ? ` • ${phoneRaw}` : '';
+                                        return {
+                                            id: p.id,
+                                            label: `${p.first_name} ${p.last_name || ''}`.trim(),
+                                            subLabel: `${p.patient_number || 'No ID'} • ${p.gender || 'Unknown'}${phoneFormatted}`,
+                                            searchString: `${p.first_name || ''} ${p.last_name || ''} ${p.patient_number || ''} ${phoneRaw}`.toLowerCase()
+                                        }
+                                    });
+                                } catch (err) {
+                                    console.error("[DEBUG] Search failed:", err);
+                                    // Robust local fallback
+                                    const query = q.toLowerCase();
+                                    return patientOptions.filter(p => 
+                                        p.label.toLowerCase().includes(query) || 
+                                        (p.subLabel || "").toLowerCase().includes(query)
+                                    );
+                                }
                             }}
                             value={selectedPatientId}
                             onChange={(id) => onPatientSelect?.(id || '')}

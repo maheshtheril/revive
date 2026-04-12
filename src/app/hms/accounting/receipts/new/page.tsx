@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { upsertPayment } from '@/app/actions/accounting/payments';
-import { searchPatients } from '@/app/actions/accounting/helpers';
+import { searchPatients, searchJournals } from '@/app/actions/accounting/helpers';
+import { getAccounts } from '@/app/actions/accounting/chart-of-accounts';
 import {
     ArrowLeft, Save, Loader2, Calendar, CreditCard, User,
     Receipt, FileText, CheckCircle2, AlertCircle
@@ -14,7 +15,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
-import { ClassicVoucherEditor } from '@/components/accounting/classic-voucher-editor';
+import { TallyPaymentForm } from '@/components/accounting/tally-voucher-form';
 
 export default function NewReceiptPage() {
     const router = useRouter();
@@ -80,11 +81,16 @@ export default function NewReceiptPage() {
 
     if (classicMode) {
         return (
-            <ClassicVoucherEditor
+            <TallyPaymentForm
                 type="receipt"
                 onSave={handleSavePayload}
                 onCancel={() => setClassicMode(false)}
                 patientsSearch={searchPatients}
+                journalsSearch={searchJournals}
+                accountsSearch={async (q: string) => {
+                    const res = await getAccounts(q);
+                    return res.success ? res.data : [];
+                }}
                 currency="₹"
             />
         );

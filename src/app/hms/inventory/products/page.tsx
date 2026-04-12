@@ -38,6 +38,11 @@ export default async function ProductListPage({
                 </div>
             </div>
 
+            {/* Smart Stats Summary */}
+            <Suspense fallback={<div className="h-24 bg-gray-50 animate-pulse rounded-2xl"></div>}>
+                <ProductStatsSummary query={query} />
+            </Suspense>
+
             {/* Filter Bar */}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 items-center justify-between">
                 <div className="relative w-full md:w-96">
@@ -138,6 +143,47 @@ async function ProductTable({ query, currentPage }: { query?: string, currentPag
             currentPage={currentPage}
         />
     )
+}
+
+// ----------------------------------------------------
+// Server Component: Fetches Stats independently
+// ----------------------------------------------------
+async function ProductStatsSummary({ query }: { query?: string }) {
+    const { meta } = await getProductsPremium(query, 1);
+    
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="h-12 w-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 group-hover:scale-110 transition-transform">
+                    <Package className="h-6 w-6" />
+                </div>
+                <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Products</p>
+                    <h3 className="text-2xl font-black text-slate-900">{meta.total?.toLocaleString() || 0} Nodes</h3>
+                </div>
+            </div>
+            
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="h-12 w-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 group-hover:scale-110 transition-transform">
+                    <Filter className="h-6 w-6" />
+                </div>
+                <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Results</p>
+                    <h3 className="text-2xl font-black text-slate-900">{query ? 'Filtered' : 'Global'} View</h3>
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 group hover:shadow-md transition-all">
+                <div className="h-12 w-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
+                    <Search className="h-6 w-6" />
+                </div>
+                <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sector Page</p>
+                    <h3 className="text-2xl font-black text-slate-900">{meta.page} of {meta.totalPages}</h3>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 // ----------------------------------------------------

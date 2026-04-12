@@ -3,7 +3,7 @@
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { getHMSSettings, getPaymentGatewaySettings } from "@/app/actions/settings"
-import { getInitialInvoiceData, getTaxConfiguration } from "@/app/actions/billing"
+import { getInitialInvoiceData, getTaxConfiguration, getBillableItems } from "@/app/actions/billing"
 import { getUOMs } from "@/app/actions/inventory"
 import BillingClientEntry from "./client-entry"
 
@@ -19,11 +19,12 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
     const { patientId, appointmentId, medicines, items } = sp;
 
     // 1. Parallel Data Fetching for Maximum Speed
-    const [taxRes, uomsRes, gatewayRes, hmsSettingsRes] = await Promise.all([
+    const [taxRes, uomsRes, gatewayRes, hmsSettingsRes, itemsRes] = await Promise.all([
         getTaxConfiguration(),
         getUOMs(),
         getPaymentGatewaySettings(),
-        getHMSSettings()
+        getHMSSettings(),
+        getBillableItems()
     ]);
 
     // 2. Resolve Incoming Intent (Prescriptions, Items, etc)
@@ -45,24 +46,31 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
         console.log("[BILLING-PAGE] Failed to parse items from URL:", e);
     }
 
-    const initialItems = [...initialMedicines, ...itemsFromUrl];
-
     // 3. Conditional Data Fetching
     let draftInvoice = null;
+    let combinedItemsFromUrl = [...initialMedicines, ...itemsFromUrl];
+
     if (appointmentId) {
-        const apptData = await getInitialInvoiceData(appointmentId as string, session.user.tenantId);
+        const apptData = await getInitialInvoiceData(appointmentId as string);
         if (apptData?.success && apptData.data) {
-            draftInvoice = apptData.data;
+            draftInvoice = (apptData.data as any).initialInvoice || apptData.data;
+            if ((apptData.data as any).initialItems) {
+                combinedItemsFromUrl = [...combinedItemsFromUrl, ...(apptData.data as any).initialItems];
+            }
+        }
+    } else if (patientId) {
+        // [RCM-FIX] If we only have a patientId, check for existing registration invoices
+        const { getOpenRegistrationInvoice } = await import("@/app/actions/billing");
+        const regData = await getOpenRegistrationInvoice(patientId as string);
+        if (regData.success && regData.data) {
+            draftInvoice = regData.data;
         }
     }
 
-    const effectivePatientId = (patientId as string) || (draftInvoice as any)?.patientId || '';
+    const effectivePatientId = (patientId as string) || (draftInvoice as any)?.patient_id || '';
 
-    // 4. Consolidate Items (URL + Prescription/Nursing items)
-    const consolidatedMedicines = [
-        ...initialItems,
-        ...(draftInvoice as any)?.initialItems || []
-    ];
+    // 4. Consolidate Items
+    const consolidatedMedicines = combinedItemsFromUrl;
 
     // 5. Fetch Patients (Optimized)
     const patientList = await prisma.hms_patient.findMany({
@@ -89,7 +97,7 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
             phone: (p.contact as any)?.phone || (p.contact as any)?.mobile || '',
             patient_number: p.patient_number
         })))),
-        billableItems: [], // Placeholder as real items come from SearchableSelect's filter
+        billableItems: JSON.parse(JSON.stringify(itemsRes?.success ? itemsRes.data : [])),
         taxConfig: JSON.parse(JSON.stringify(taxRes?.success ? taxRes.data : { defaultTax: null, taxRates: [] })),
         uoms: JSON.parse(JSON.stringify(uomsRes || [])),
         gatewayConfig: JSON.parse(JSON.stringify(gatewayRes?.success ? gatewayRes.settings : null)),

@@ -17,7 +17,19 @@ export class AccountingService {
             const invoice = await prisma.hms_invoice.findUnique({
                 where: { id: invoiceId },
                 include: {
-                    hms_invoice_lines: true,
+                    hms_invoice_lines: {
+                        include: {
+                            hms_product: {
+                                include: {
+                                    hms_product_category_rel: {
+                                        include: {
+                                            hms_product_category: true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
                     hms_patient: true,
                     hms_invoice_payments: true
                 }
@@ -70,17 +82,30 @@ export class AccountingService {
                 const journalLines: any[] = [];
 
                 // Credit: Sales
+                // Credit: Sales (Consolidate by Account to keep JEs clean but detailed)
+                const revenueByAccountMap = new Map<string, number>();
+
                 for (const line of invoice.hms_invoice_lines) {
                     const netAmount = Number(line.net_amount || 0);
-                    if (netAmount > 0) {
-                        journalLines.push({
-                            account_id: defaultSalesAccountId,
-                            debit: 0,
-                            credit: netAmount,
-                            description: `${patientName} | Sales - ${line.description || invoice.invoice_number}`,
-                            metadata: { source: 'auto' }
-                        });
-                    }
+                    if (netAmount <= 0) continue;
+
+                    // Resolve Specific Income Account for this line (Categorized Sales)
+                    const category = line.hms_product?.hms_product_category_rel?.[0]?.hms_product_category;
+                    const specificAccountId = category?.income_account_id || defaultSalesAccountId;
+
+                    revenueByAccountMap.set(specificAccountId!, (revenueByAccountMap.get(specificAccountId!) || 0) + netAmount);
+                }
+
+                // Add Consolidated Revenue Lines
+                for (const [accId, amount] of revenueByAccountMap.entries()) {
+                    const accObj = await prisma.accounts.findUnique({ where: { id: accId }, select: { name: true } });
+                    journalLines.push({
+                        account_id: accId,
+                        debit: 0,
+                        credit: amount,
+                        description: `${patientName} | Sales (${accObj?.name || 'Grouped'}) - ${invoice.invoice_number}`,
+                        metadata: { source: 'auto' }
+                    });
                 }
 
                 // Credit: Tax
@@ -305,37 +330,50 @@ export class AccountingService {
 
             if (!settings) throw new Error("Accounting settings not configured.");
 
-            // --- DYNAMIC PAYMENT METHOD MAPPING ---
-            const mappingRecord = await prisma.hms_settings.findFirst({
-                where: {
-                    company_id: payment.company_id,
-                    tenant_id: payment.tenant_id!,
-                    key: 'payment_method_mapping'
-                }
-            });
-            const mapping = (mappingRecord?.value as any) || {};
-            const paymentMethod = (payment.method || 'cash').toLowerCase();
-            const mappedAccountId = mapping[paymentMethod];
-
+            // --- DYNAMIC PAYMENT METHOD MAPPING (World-Standard Journal Priority) ---
             let moneyAccountId = null;
-            if (mappedAccountId) {
-                const mappedAccount = await prisma.accounts.findUnique({ where: { id: mappedAccountId } });
-                moneyAccountId = mappedAccount?.id || null;
+
+            if (payment.journal_id) {
+                const selectedJournal = await prisma.journals.findUnique({
+                    where: { id: payment.journal_id },
+                    select: { default_credit_account_id: true, default_debit_account_id: true }
+                });
+                if (selectedJournal) {
+                    moneyAccountId = (type === 'outbound') ? selectedJournal.default_credit_account_id : selectedJournal.default_debit_account_id;
+                }
             }
 
             if (!moneyAccountId) {
-                const cashAccount = await prisma.accounts.findFirst({
-                    where: { company_id: payment.company_id, code: '1610' }
-                }) || await prisma.accounts.create({
-                    data: { tenant_id: payment.tenant_id!, company_id: payment.company_id, name: 'Cash on Hand', code: '1610', type: 'Asset', is_active: true }
+                const mappingRecord = await prisma.hms_settings.findFirst({
+                    where: {
+                        company_id: payment.company_id,
+                        tenant_id: payment.tenant_id!,
+                        key: 'payment_method_mapping'
+                    }
                 });
+                const mapping = (mappingRecord?.value as any) || {};
+                const paymentMethod = (payment.method || 'cash').toLowerCase();
+                const mappedAccountId = mapping[paymentMethod];
 
-                const bankAccount = await prisma.accounts.findFirst({
-                    where: { company_id: payment.company_id, code: '1710' }
-                }) || await prisma.accounts.create({
-                    data: { tenant_id: payment.tenant_id!, company_id: payment.company_id, name: 'Bank Account - Primary', code: '1710', type: 'Asset', is_active: true }
-                });
-                moneyAccountId = (paymentMethod === 'cash') ? cashAccount.id : bankAccount.id;
+                if (mappedAccountId) {
+                    const mappedAccount = await prisma.accounts.findUnique({ where: { id: mappedAccountId } });
+                    moneyAccountId = mappedAccount?.id || null;
+                }
+
+                if (!moneyAccountId) {
+                    const cashAccount = await prisma.accounts.findFirst({
+                        where: { company_id: payment.company_id, code: '1610' }
+                    }) || await prisma.accounts.create({
+                        data: { tenant_id: payment.tenant_id!, company_id: payment.company_id, name: 'Cash on Hand', code: '1610', type: 'Asset', is_active: true }
+                    });
+
+                    const bankAccount = await prisma.accounts.findFirst({
+                        where: { company_id: payment.company_id, code: '1710' }
+                    }) || await prisma.accounts.create({
+                        data: { tenant_id: payment.tenant_id!, company_id: payment.company_id, name: 'Bank Account - Primary', code: '1710', type: 'Asset', is_active: true }
+                    });
+                    moneyAccountId = (paymentMethod === 'cash') ? cashAccount.id : bankAccount.id;
+                }
             }
 
             const amount = Number(payment.amount);

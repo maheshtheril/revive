@@ -10,7 +10,7 @@ export default function NewDoctorPage() {
                     <ArrowLeft className="h-5 w-5 text-gray-600" />
                 </Link>
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-800">Add New Doctor</h1>
+                    <h1 className="text-2xl font-bold text-gray-800">Add New Clinician</h1>
                     <p className="text-gray-500">Register a new clinical staff member.</p>
                 </div>
             </div>
@@ -67,7 +67,7 @@ export default function NewDoctorPage() {
                                     name="role"
                                     type="text"
                                     placeholder="e.g. Doctor, Nurse, Surgeon"
-                                    defaultValue="Doctor"
+                                    defaultValue="Clinician"
                                     required
                                     className="w-full pl-10 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                 />
@@ -93,7 +93,7 @@ export default function NewDoctorPage() {
 
                     <div className="pt-4 flex gap-4">
                         <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium">
-                            Register Doctor
+                            Register Clinician
                         </button>
                         <Link href="/hms/doctors" className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium">
                             Cancel

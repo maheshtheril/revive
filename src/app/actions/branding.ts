@@ -63,6 +63,7 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
                 app_name: tenant.app_name || "Ziona ERP",
                 logo_url: tenant.logo_url || (tenant.company_settings?.[0]?.company?.logo_url) || "/logo-ziona.svg",
                 name: tenant.name || "Ziona Solutions",
+                app_url: tenant.app_url || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
                 isPublic
             };
         }
@@ -75,6 +76,7 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
                 app_name: true,
                 logo_url: true,
                 name: true,
+                app_url: true,
                 metadata: true,
                 company_settings: {
                     select: {
@@ -95,6 +97,7 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
             app_name: tenant?.app_name || "Ziona ERP",
             logo_url: tenant?.logo_url || (tenant?.company_settings?.[0]?.company?.logo_url) || "/logo-ziona.svg",
             name: tenant?.name || "Ziona Solutions",
+            app_url: tenant?.app_url || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
             isPublic
         };
 

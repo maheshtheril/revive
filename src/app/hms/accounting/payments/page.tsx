@@ -158,7 +158,11 @@ export default function PaymentsPage() {
                                         const typeLabel = isVendor ? 'Vendor' : (meta?.category_name || 'Expense');
                                         
                                         return (
-                                            <tr key={p.id} className="hover:bg-[#002b2b] cursor-pointer group border-b border-[#006666]">
+                                            <tr 
+                                                key={p.id} 
+                                                onClick={() => router.push(`/hms/accounting/payments/${p.id}/edit`)}
+                                                className="hover:bg-[#002b2b] cursor-pointer group border-b border-[#006666]"
+                                            >
                                                 <td className="px-4 py-2 border-r border-[#006666]">{safeFormat(p.date || p.created_at, 'dd-MMM-yyyy').toUpperCase()}</td>
                                                 <td className="px-4 py-2 border-r border-[#006666] font-bold">{p.payment_number}</td>
                                                 <td className="px-4 py-2 border-r border-[#006666]">

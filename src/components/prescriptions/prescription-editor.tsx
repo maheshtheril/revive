@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useToast } from '@/components/ui/use-toast'
 import { sharePrescriptionWhatsapp } from '@/app/actions/prescription'
 import { getLabReportForAppointment } from '@/app/actions/lab'
+import { getProductAvailableUOMs } from '@/app/actions/product-uom'
+import { generatePrescriptionPDFBase64 } from '@/lib/utils/prescription-pdf-generator'
 
 interface PrescriptionEditorProps {
     isModal?: boolean
@@ -42,6 +44,8 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
     const [modalDosage, setModalDosage] = useState('1-0-1')
     const [modalDays, setModalDays] = useState('5')
     const [modalTiming, setModalTiming] = useState('After Food')
+    const [modalUom, setModalUom] = useState('Unit')
+    const [availableUOMs, setAvailableUOMs] = useState<any[]>([])
 
     // SCRIBBLE / HANDWRITING MODAL STATE
     const [scribbleModalOpen, setScribbleModalOpen] = useState(false)
@@ -497,14 +501,32 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
         }
     }
 
-    const openMedicineModal = (med: any, editIdx: number | null = null) => {
+    const openMedicineModal = async (med: any, editIdx: number | null = null) => {
         setCurrentMedicine(med)
         setEditingIndex(editIdx)
+        
+        // Fetch Available UOMs for this specific product
+        if (med.id) {
+            const res = await getProductAvailableUOMs(med.id)
+            if (res.success && res.data) {
+                setAvailableUOMs(res.data)
+                // Default to first UOM
+                setModalUom(res.data[0]?.uom || 'Unit')
+            } else {
+                setAvailableUOMs([{ uom: 'Unit', factor: 1, isBase: true }])
+                setModalUom('Unit')
+            }
+        } else {
+            setAvailableUOMs([{ uom: 'Unit', factor: 1, isBase: true }])
+            setModalUom('Unit')
+        }
+
         if (editIdx !== null) {
             const existing = selectedMedicines[editIdx]
             setModalDosage(existing.dosage)
             setModalDays(existing.days)
             setModalTiming(existing.timing || 'After Food')
+            if (existing.uom) setModalUom(existing.uom)
         } else {
             setModalDosage('1-0-1')
             setModalDays('5')
@@ -521,7 +543,8 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
             name: currentMedicine?.name || '',
             dosage: modalDosage,
             days: modalDays,
-            timing: modalTiming
+            timing: modalTiming,
+            uom: modalUom
         }
 
         if (editingIndex !== null) {
@@ -612,8 +635,46 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                     })
                     router.refresh()
                 } else {
-                    // Trigger Print
-                    window.print();
+                    // Trigger World Standard PDF Print
+                    toast({ title: "Generating Prescription", description: "Preparing High-Fidelity PDF..." });
+                    
+                    try {
+                        const companyRes = await fetch('/api/company');
+                        const companyData = await companyRes.json();
+                        
+                        // Prepare full data for PDF
+                        const fullData = {
+                            ...(data.prescription || {}),
+                            medicines: selectedMedicines,
+                            labTests: selectedLabs,
+                            hms_patient: patientInfo || { first_name: 'Cash', last_name: 'Patient' },
+                            plan: finalTexts.plan || '',
+                            company_id: companyData?.company?.id,
+                            tenant_id: companyData?.company?.tenant_id
+                        };
+
+                        const pdfBase64 = await generatePrescriptionPDFBase64(fullData, companyData?.company);
+
+                        // Professional IFrame Printing (Cleaner than window.open)
+                        const blob = await (await fetch(`data:application/pdf;base64,${pdfBase64}`)).blob();
+                        const url = URL.createObjectURL(blob);
+                        
+                        const printFrame = document.createElement('iframe');
+                        printFrame.style.display = 'none';
+                        document.body.appendChild(printFrame);
+                        printFrame.src = url;
+                        printFrame.onload = () => {
+                            printFrame.contentWindow?.print();
+                            // Cleanup after print dialog
+                            setTimeout(() => {
+                                document.body.removeChild(printFrame);
+                                URL.revokeObjectURL(url);
+                            }, 5000);
+                        };
+                    } catch (pdfErr) {
+                        console.error("PDF Generation failed, falling back to window.print", pdfErr);
+                        window.print();
+                    }
                 }
             } else {
                 throw new Error(data.error || 'Unknown error');
@@ -656,12 +717,12 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
             if (res.success) {
                 toast({
                     title: "WhatsApp",
-                    description: String(res.message || "Sent successfully."),
+                    description: (res as any).message || "Sent successfully.",
                 });
             } else {
                 toast({
                     title: "Share Failed",
-                    description: String(res.error || "Could not share prescription"),
+                    description: (res as any).error || "Could not share prescription",
                     variant: "destructive"
                 });
             }
@@ -1125,18 +1186,10 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                     <Button
                         onClick={() => savePrescription(false)}
                         disabled={isSaving}
-                        className="bg-slate-900 text-white hover:bg-slate-800 font-bold rounded-xl shadow-lg shadow-slate-900/20 px-6"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-lg shadow-indigo-500/20 px-8 flex items-center gap-2"
                     >
                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                         Save Prescription
-                    </Button>
-                    <Button
-                        onClick={() => savePrescription(true)}
-                        disabled={isSaving}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-lg shadow-indigo-500/20 px-8 flex items-center gap-2"
-                    >
-                        <Save className="h-4 w-4" />
-                        Save
                     </Button>
                 </div>
             </div>
@@ -1350,6 +1403,43 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                                                 ))}
                                             </div>
                                         </div>
+                                        {/* Unit of Measure Selection */}
+                                        <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100/50">
+                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-4 flex items-center gap-2">
+                                                <Package className="h-4 w-4" /> Prescribe in Unit (UOM)
+                                            </label>
+                                            <div className="flex flex-wrap gap-3">
+                                                {availableUOMs.length > 0 ? (
+                                                    availableUOMs.map((u: any) => (
+                                                        <button
+                                                            key={u.uom}
+                                                            type="button"
+                                                            onClick={() => setModalUom(u.uom)}
+                                                            className={`px-6 py-3 rounded-xl font-bold border-2 transition-all flex items-center gap-2 ${modalUom === u.uom
+                                                                ? 'bg-blue-600 text-white border-blue-600 shadow-lg'
+                                                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'}`}
+                                                        >
+                                                            {u.uom}
+                                                            {u.factor !== 1 && <span className="text-[10px] opacity-70">x{u.factor}</span>}
+                                                        </button>
+                                                    ))
+                                                ) : (
+                                                    ['Tablet', 'Capsule', 'Syp (ML)', 'Strip', 'Box', 'Vial', 'Unit'].map(u => (
+                                                        <button
+                                                            key={u}
+                                                            type="button"
+                                                            onClick={() => setModalUom(u)}
+                                                            className={`px-6 py-3 rounded-xl font-bold border-2 transition-all ${modalUom === u
+                                                                ? 'bg-blue-600 text-white border-blue-600 shadow-lg'
+                                                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'}`}
+                                                        >
+                                                            {u}
+                                                        </button>
+                                                    ))
+                                                )}
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 font-bold mt-4 uppercase tracking-tighter">Smallest dispensable unit is usually "Tablet" or "ML".</p>
+                                        </div>
 
                                     </div>
                                 </div>
@@ -1368,7 +1458,7 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                 )}
             </AnimatePresence>
         </div>
-    )
+    );
 
     if (isModal) {
         return (

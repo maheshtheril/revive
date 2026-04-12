@@ -100,12 +100,15 @@ export function SearchableSelect({
     // Initial value handling
     // Initial value handling: sync internal state when the value prop changes
     React.useEffect(() => {
+        // [AUDIT] If we are focused and open, DO NOT sync. The user is in control.
         if (open) return;
 
         if (!value) {
             setSelectedOption(null);
             const targetQuery = valueLabel || "";
-            if (query !== targetQuery) setQuery(targetQuery);
+            if (query !== targetQuery) {
+                setQuery(targetQuery);
+            }
             return;
         }
 
@@ -128,7 +131,8 @@ export function SearchableSelect({
                 setQuery(targetQuery);
             }
         }
-    }, [value, valueLabel, propOptions]); // DO NOT rely on internal state here to avoid loops.
+    }, [value, valueLabel, propOptions, open]);
+
 
     // Close on disable
     React.useEffect(() => {
@@ -144,8 +148,8 @@ export function SearchableSelect({
                 const rect = containerRef.current?.getBoundingClientRect();
                 if (rect) {
                     setPosition({
-                        top: rect.bottom + window.scrollY,
-                        left: rect.left + window.scrollX,
+                        top: rect.bottom,
+                        left: rect.left,
                         width: rect.width,
                     });
                 }
@@ -176,9 +180,12 @@ export function SearchableSelect({
                 setOpen(false);
             }
         };
-        document.addEventListener('mousedown', handleClickOutside);
+
+        if (open) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
+    }, [open]);
 
     // Scroll active item into view
     React.useEffect(() => {
@@ -200,11 +207,15 @@ export function SearchableSelect({
 
     const performSearch = useDebouncedCallback(async (searchTerm: string) => {
         setLoading(true);
+        // [MOD] Clear previous options immediately to show looking state
+        setOptions([]); 
         try {
+            console.log("CLIENT-SIDE SEARCH TRIGGERED:", searchTerm);
             const results = await onSearch(searchTerm);
+            console.log("CLIENT-SIDE RESULTS RECEIVED:", results.length);
             setOptions(results);
         } catch (err) {
-            console.error(err);
+            console.error("CLIENT-SIDE SEARCH ERROR:", err);
             setOptions([]);
         } finally {
             setLoading(false);
@@ -241,11 +252,12 @@ export function SearchableSelect({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        // Bubble up to parent if provided
+        // [WORLD CLASS] High-Speed Shortcut Management
         if (onKeyDown) onKeyDown(e);
 
         if (!open) {
             if (e.key === 'ArrowDown' || e.key === 'Enter') {
+                e.preventDefault();
                 setOpen(true);
                 performSearch(query);
             }
@@ -263,13 +275,22 @@ export function SearchableSelect({
                 break;
             case 'Enter':
                 e.preventDefault();
-                if (options[activeIndex]) {
-                    handleSelect(options[activeIndex]);
-                } else if (onCreate && query && options.length === 0) {
+                e.stopPropagation(); // Stop Radix from interfering
+                
+                // [FIX] Auto-select logic for high-speed counter
+                const currentPool = options.length > 0 ? options : propOptions;
+                const match = currentPool[activeIndex] || currentPool[0];
+                
+                if (match) {
+                    handleSelect(match);
+                } else if (onCreate && query.length > 1) {
                     handleCreate();
+                } else {
+                  setOpen(false); // At least close if no items to keep moving
                 }
                 break;
             case 'Escape':
+                e.preventDefault();
                 setOpen(false);
                 break;
         }
@@ -290,7 +311,7 @@ export function SearchableSelect({
         <div
             className={`
                 ${usePortal ? 'fixed' : 'absolute'} 
-                z-[99999] mt-1 overflow-hidden rounded-xl py-1 text-base shadow-2xl ring-1 ring-black/5 focus:outline-none sm:text-sm 
+                z-[9999] mt-1 overflow-hidden rounded-xl py-1 text-base shadow-2xl ring-1 ring-black/5 focus:outline-none sm:text-sm 
                 ${isDark ? 'bg-neutral-900 border border-white/10 text-white shadow-black' : 'bg-white border border-gray-100 text-gray-900 shadow-lg'}
                 ${usePortal ? '' : 'w-full top-full left-0'}
             `}
@@ -418,21 +439,35 @@ export function SearchableSelect({
                                 ref={inputRef}
                                 id={inputId}
                                 type="text"
-                                className={`w-full border-none p-0 focus:ring-0 bg-transparent ${variant === 'ghost' ? `${isDark ? 'text-white dark:text-white' : 'text-gray-900 dark:text-white'} font-inherit placeholder:text-inherit placeholder:opacity-30` : `text-sm ${isDark ? 'text-white dark:text-white' : 'text-gray-900 dark:text-white'} placeholder:text-gray-400 dark:placeholder:text-neutral-600`}`}
-                                placeholder={selectedOption && variant === 'default' ? selectedOption.label : placeholder}
+                                className={`w-full border-none p-0 focus:ring-0 bg-transparent ring-2 ring-indigo-500/30 rounded-sm px-2 ${variant === 'ghost' ? `${isDark ? 'text-[#ffffcc] font-black' : 'text-gray-900 font-bold'} font-inherit placeholder:text-inherit/60` : `text-sm ${isDark ? 'text-white' : 'text-gray-900'} placeholder:text-gray-400`}`}
+                                placeholder={selectedOption ? selectedOption.label : placeholder}
                                 value={query}
                                 onChange={handleInputChange}
+                                onPointerDown={() => !open && setOpen(true)}
                                 onKeyDown={handleKeyDown}
                                 onFocus={() => {
                                     if (!disabled) {
                                         setOpen(true);
-                                        performSearch(query);
+                                        // Fetch immediately on focus if query is empty for better DX
+                                        if (!query) {
+                                            onSearch("").then(res => setOptions(res));
+                                        } else {
+                                            performSearch(query);
+                                        }
                                     }
                                 }}
                                 autoFocus={autoFocus}
                                 disabled={disabled}
-                                onBlur={() => {
-                                    setOpen(false);
+                                onBlur={(e) => {
+                                    // [WORLD CLASS] Only close if focus truly moves outside the component tree
+                                    const nextFocus = e.relatedTarget as Node;
+                                    const isInside = containerRef.current?.contains(nextFocus) || 
+                                                     listRef.current?.parentElement?.contains(nextFocus);
+                                    
+                                    if (!isInside) {
+                                      // Use a tiny timeout to allow click events on items to process first
+                                      setTimeout(() => setOpen(false), 200);
+                                    }
                                 }}
                                 autoComplete="off"
                             />

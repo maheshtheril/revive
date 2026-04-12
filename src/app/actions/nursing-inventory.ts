@@ -11,6 +11,7 @@ export type ConsumeStockData = {
     quantity: number
     patientId: string
     encounterId: string
+    uom?: string
     notes?: string
 }
 
@@ -81,26 +82,41 @@ export async function consumeStock(data: ConsumeStockData) {
             if (!product) throw new Error("Product not found")
 
             // B. Create Stock Move (Outbound)
-            await tx.$executeRaw`
-                INSERT INTO hms_stock_move (
-                    id, tenant_id, company_id, product_id, 
-                    location_from, location_to, qty, uom, 
-                    move_type, source, source_reference, created_by
-                ) VALUES (
-                    gen_random_uuid(),
-                    CAST(${tenantId} AS uuid),
-                    CAST(${companyId} AS uuid),
-                    CAST(${data.productId} AS uuid),
-                    CAST(${locationId || null} AS uuid),
-                    NULL,
-                    ${data.quantity},
-                    ${product.uom || 'Unit'},
-                    'out',
-                    'Nursing Consumption (Pending)',
-                    CAST(${data.encounterId || null} AS uuid),
-                    CAST(${userId || null} AS uuid)
-                )
-            `;
+            let finalQty = data.quantity;
+            const targetUom = data.uom || product.uom || 'Unit';
+
+            // IF UOM IS DIFFERENT THAN PRODUCT BASE UOM, CONVERT
+            if (data.uom && data.uom !== product.uom) {
+                const conv = await tx.hms_product_uom_conversion.findFirst({
+                    where: { product_id: product.id, from_uom: data.uom, to_uom: product.uom }
+                });
+                if (conv) {
+                    finalQty = data.quantity * Number(conv.factor);
+                }
+            }
+
+                await tx.$executeRaw`
+                    INSERT INTO hms_stock_move (
+                        id, tenant_id, company_id, product_id, 
+                        location_from, location_to, qty, uom, 
+                        move_type, source, source_reference, created_by,
+                        cost
+                    ) VALUES (
+                        gen_random_uuid(),
+                        CAST(${tenantId} AS uuid),
+                        CAST(${companyId} AS uuid),
+                        CAST(${data.productId} AS uuid),
+                        CAST(${locationId || null} AS uuid),
+                        NULL,
+                        ${data.quantity},
+                        ${targetUom},
+                        'out',
+                        'Nursing Consumption (Pending)',
+                        CAST(${data.encounterId || null} AS uuid),
+                        CAST(${userId || null} AS uuid),
+                        ${Number(product.price || 0)}
+                    )
+                `;
 
             // C. Create Stock Ledger (History)
             await tx.$executeRaw`
@@ -117,7 +133,7 @@ export async function consumeStock(data: ConsumeStockData) {
                     CAST(${data.encounterId || null} AS uuid),
                     'out',
                     ${data.quantity},
-                    ${product.uom || 'Unit'},
+                    ${targetUom},
                     CAST(${locationId || null} AS uuid),
                     ${`Patient: ${data.patientId}`},
                     ${JSON.stringify({ notes: data.notes || '', patient_id: data.patientId })}::jsonb
@@ -139,7 +155,7 @@ export async function consumeStock(data: ConsumeStockData) {
                 // Update existing
                 await tx.$executeRaw`
                     UPDATE hms_stock_levels 
-                    SET quantity = quantity - CAST(${data.quantity} AS numeric),
+                    SET quantity = quantity - CAST(${finalQty} AS numeric),
                         updated_at = NOW()
                     WHERE id::text = CAST(${levels[0].id} AS text)
                 `;
@@ -154,7 +170,7 @@ export async function consumeStock(data: ConsumeStockData) {
                         CAST(${companyId} AS uuid),
                         CAST(${data.productId} AS uuid),
                         CAST(${locationId} AS uuid),
-                        CAST(${-data.quantity} AS numeric),
+                        CAST(${-finalQty} AS numeric),
                         NOW(),
                         0
                     )
@@ -176,7 +192,9 @@ export async function consumeStock(data: ConsumeStockData) {
 export type ConsumptionItem = {
     productId: string
     quantity: number
+    uom?: string
     notes?: string
+    price?: number // [NEW] Support manual rate entry for clinical items
 }
 
 export type ConsumeBulkData = {
@@ -267,12 +285,26 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                 const product = productMap.get(item.productId);
                 if (!product) throw new Error(`Product ID ${item.productId} not found`)
 
+                // CLINICAL INTELLIGENCE: UOM CONVERSION
+                let finalQty = item.quantity;
+                const targetUom = item.uom || product.uom || 'Unit';
+
+                if (item.uom && item.uom !== product.uom) {
+                    const conv = await tx.hms_product_uom_conversion.findFirst({
+                        where: { product_id: product.id, from_uom: item.uom, to_uom: product.uom }
+                    });
+                    if (conv) {
+                        finalQty = item.quantity * Number(conv.factor);
+                    }
+                }
+
                 // Create Stock Move using Raw SQL for better error debugging
                 await tx.$executeRaw`
                     INSERT INTO hms_stock_move (
                         id, tenant_id, company_id, product_id, 
                         location_from, location_to, qty, uom, 
-                        move_type, source, source_reference, created_by
+                        move_type, source, source_reference, created_by,
+                        cost
                     ) VALUES (
                         gen_random_uuid(),
                         CAST(${tenantId} AS uuid),
@@ -281,15 +313,16 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         CAST(${locationId || null} AS uuid),
                         NULL,
                         ${item.quantity},
-                        ${product.uom || 'Unit'},
+                        ${targetUom},
                         'out',
                         'Nursing Consumption (Pending)',
                         CAST(${data.encounterId || null} AS uuid),
-                        CAST(${userId || null} AS uuid)
+                        CAST(${userId || null} AS uuid),
+                        ${Number(item.price) || Number(product.price || 0)}
                     )
                 `;
 
-                // Create Stock Ledger using Raw SQL
+                // Create Stock Ledger with custom price in metadata
                 await tx.$executeRaw`
                     INSERT INTO hms_stock_ledger (
                         id, tenant_id, company_id, product_id,
@@ -304,10 +337,14 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         CAST(${data.encounterId || null} AS uuid),
                         'out',
                         ${item.quantity},
-                        ${product.uom || 'Unit'},
+                        ${targetUom},
                         CAST(${locationId || null} AS uuid),
                         ${`Patient: ${data.patientId}`},
-                        ${JSON.stringify({ notes: item.notes || '', patient_id: data.patientId })}::jsonb
+                        ${JSON.stringify({ 
+                            notes: item.notes || '', 
+                            patient_id: data.patientId,
+                            custom_price: item.price // [WORLD CLASS] Preserve manual rate entry for billing
+                        })}::jsonb
                     )
                 `;
 
@@ -325,7 +362,7 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                 if (levels.length > 0) {
                     await tx.$executeRaw`
                         UPDATE hms_stock_levels 
-                        SET quantity = quantity - CAST(${item.quantity} AS numeric),
+                        SET quantity = quantity - CAST(${finalQty} AS numeric),
                             updated_at = NOW()
                         WHERE id::text = CAST(${levels[0].id} AS text)
                     `;
@@ -339,7 +376,7 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                             CAST(${companyId} AS uuid),
                             CAST(${item.productId} AS uuid),
                             CAST(${locationId} AS uuid),
-                            CAST(${-item.quantity} AS numeric),
+                            CAST(${-finalQty} AS numeric),
                             NOW(),
                             0
                         )

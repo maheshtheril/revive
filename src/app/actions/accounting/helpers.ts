@@ -88,6 +88,7 @@ export async function searchAccounts(query: string): Promise<SearchOption[]> {
             where: {
                 company_id: session.user.companyId,
                 is_active: true,
+                is_group: false,
                 OR: [
                     { name: { contains: query, mode: 'insensitive' } },
                     { code: { contains: query, mode: 'insensitive' } }
@@ -109,10 +110,37 @@ export async function searchAccounts(query: string): Promise<SearchOption[]> {
     }
 }
 
+export async function searchJournals(query: string): Promise<SearchOption[]> {
+    const session = await auth();
+    if (!session?.user?.companyId) return [];
+
+    try {
+        const journals = await prisma.journals.findMany({
+            where: {
+                company_id: session.user.companyId,
+                name: { contains: query, mode: 'insensitive' },
+                type: { in: ['bank', 'cash'] }
+            },
+            take: 20,
+            orderBy: { name: 'asc' },
+            select: { id: true, name: true, type: true, code: true }
+        });
+
+        return journals.map(j => ({
+            id: j.id,
+            label: j.name,
+            subLabel: `${j.type.toUpperCase()} | ${j.code}`
+        }));
+    } catch (error: any) {
+        console.error("Search journals error:", error);
+        return [];
+    }
+}
+
 /**
  * Fetches all outstanding (unpaid/partially paid) invoices for a specific partner.
  */
-export async function getOutstandingInvoices(partnerId: string) {
+export async function getOutstandingInvoices(partnerId: string, includeIds: string[] = []) {
     const session = await auth();
     if (!session?.user?.companyId) return { error: "Unauthorized" };
 
@@ -122,9 +150,12 @@ export async function getOutstandingInvoices(partnerId: string) {
                 company_id: session.user.companyId,
                 patient_id: partnerId,
                 status: 'posted',
-                outstanding: { gt: 0 }
+                OR: [
+                    { outstanding: { gt: 0 } },
+                    { id: { in: includeIds } }
+                ]
             },
-            orderBy: { issued_at: 'asc' } // Oldest first (FIFO)
+            orderBy: { issued_at: 'asc' } 
         });
 
         return {
@@ -147,7 +178,7 @@ export async function getOutstandingInvoices(partnerId: string) {
 /**
  * Fetches all outstanding (unpaid/partially paid) purchase bills for a specific supplier.
  */
-export async function getOutstandingPurchaseBills(supplierId: string) {
+export async function getOutstandingPurchaseBills(supplierId: string, includeIds: string[] = []) {
     const session = await auth();
     if (!session?.user?.companyId) return { error: "Unauthorized" };
 
@@ -161,8 +192,11 @@ export async function getOutstandingPurchaseBills(supplierId: string) {
             orderBy: { invoice_date: 'asc' }
         });
 
-        // Filter for truly outstanding ones
-        const outstanding = bills.filter(b => Number(b.total_amount || 0) > Number(b.paid_amount || 0));
+        // Filter for truly outstanding ones OR ones we specifically need to include (for editing)
+        const outstanding = bills.filter(b => 
+            (Number(b.total_amount || 0) > Number(b.paid_amount || 0)) || 
+            includeIds.includes(b.id)
+        );
 
         return {
             success: true,

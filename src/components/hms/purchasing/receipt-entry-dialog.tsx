@@ -16,7 +16,8 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { SearchableSelect, type Option } from "@/components/ui/searchable-select";
 import { Toaster } from "@/components/ui/toaster";
-import { getSuppliersList, getProductsPremium, getProduct, findOrCreateProduct, findOrCreateProductsBatch, getUOMs, findOrCreateUOMsBatch } from "@/app/actions/inventory";
+import { getUOMs as getUOMsCore } from "@/app/actions/inventory";
+import { getSuppliersList, getProductsPremium, getProduct, findOrCreateProduct, findOrCreateProductsBatch, getUOMs, findOrCreateUOMsBatch } from "@/app/actions/inventory-search";
 import { getPendingPurchaseOrders, createPurchaseReceipt, getPurchaseOrder, getPurchaseReceipt, updatePurchaseReceipt } from "@/app/actions/receipt";
 import { motion } from "framer-motion";
 import { getCompanyDetails } from "@/app/actions/purchase";

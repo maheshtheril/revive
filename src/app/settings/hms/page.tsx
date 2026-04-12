@@ -12,7 +12,7 @@ export default async function HMSSettingsPage() {
     const session = await auth()
     if (!session?.user?.id) redirect('/login')
 
-    const [res, doctors, gatewayRes, whatsappRes, pdfRes] = await Promise.all([
+    const [res, doctors, gatewayRes, whatsappRes, pdfRes, company] = await Promise.all([
         getHMSSettings(),
         prisma.hms_clinicians.findMany({
             where: { company_id: session.user.companyId!, is_active: true },
@@ -25,7 +25,11 @@ export default async function HMSSettingsPage() {
         }),
         getPaymentGatewaySettings(session.user.companyId!, session.user.tenantId),
         getWhatsAppSettings(session.user.companyId!, session.user.tenantId),
-        getPDFSettings(session.user.companyId!, session.user.tenantId)
+        getPDFSettings(session.user.companyId!, session.user.tenantId),
+        prisma.company.findUnique({
+            where: { id: session.user.companyId! },
+            select: { name: true, logo_url: true, metadata: true }
+        })
     ]);
 
     if (!res.success) {
@@ -59,6 +63,7 @@ export default async function HMSSettingsPage() {
                 whatsappSettings={whatsappRes.success ? whatsappRes.settings : null}
                 pdfSettings={pdfRes.success ? pdfRes.settings : null}
                 aiSettings={res.aiSettings}
+                company={company}
             />
         </div>
     )

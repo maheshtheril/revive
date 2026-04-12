@@ -9,6 +9,20 @@ import {
 } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import { QRCodeSVG } from 'qrcode.react'
+import { createInvoice, updateInvoice, cancelInvoice, createQuickPatient, getPatientOutstandingBalance, getPatientLedger, getNextVoucherNumber, shareInvoiceWhatsapp } from '@/app/actions/billing'
+import { getPDFConfig, getHMSSettings } from '@/app/actions/settings';
+import { getBestBatch, getProductBatches, getProductsPremium, getProduct } from '@/app/actions/inventory'
+import { SearchableSelect } from '@/components/ui/searchable-select'
+import { searchPatients } from '@/app/actions/patient-search'
+import { useToast } from '@/components/ui/use-toast'
+import { useSession } from 'next-auth/react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
+import { format } from "date-fns"
+import { useRouter, useSearchParams } from 'next/navigation'
+import { BatchSelectorDialog } from "./batch-selector-dialog"
 
 // ------------------------------------------------------------------------------------------------
 // POS DEVICE SERVICE (INLINED TO RESOLVE CIRCULAR/EVALUATION ERRORS)
@@ -46,25 +60,12 @@ class POSDeviceService {
         } catch (err: any) { return { success: false, error: 'Communication error' }; }
     }
 }
+
 function getPOSService(): any {
     if (typeof window === 'undefined') return { getStatus: () => 'offline', autoDiscover: () => Promise.resolve(false) };
     if (!posServiceInstance) posServiceInstance = new POSDeviceService();
     return posServiceInstance;
 }
-
-import { createInvoice, updateInvoice, cancelInvoice, createQuickPatient, getPatientOutstandingBalance, getPatientLedger, getNextVoucherNumber, shareInvoiceWhatsapp } from '@/app/actions/billing'
-import { getPDFConfig, getHMSSettings } from '@/app/actions/settings';
-import { getBestBatch, getProductBatches, getProductsPremium, getProduct } from '@/app/actions/inventory'
-import { SearchableSelect } from '@/components/ui/searchable-select'
-import { useToast } from '@/components/ui/use-toast'
-import { useSession } from 'next-auth/react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
-import { format } from "date-fns"
-import { useRouter, useSearchParams } from 'next/navigation'
-import { BatchSelectorDialog } from "./batch-selector-dialog"
 
 export function CompactInvoiceEditor({ 
   patients = [], 
@@ -106,7 +107,11 @@ export function CompactInvoiceEditor({
   const defaultTaxId = (safeTaxConfig.defaultTax as any)?.id || '';
 
   const [isMounted, setIsMounted] = useState(false)
-  useEffect(() => { setIsMounted(true) }, [])
+  const [time, setTime] = useState('')
+  useEffect(() => { 
+    setIsMounted(true);
+    setTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+  }, [])
 
     // Robust Line Item State (PRE-INITIALIZED FOR DEPENDENCY REASONS)
     const [lines, setLines] = useState<any[]>(() => {
@@ -137,6 +142,24 @@ export function CompactInvoiceEditor({
                         item_type: l.product_id ? (safeBillableItems.find(bi => bi.id === l.product_id)?.type || 'item') : 'item',
                         isFromInvoice: true
                     }))
+            }
+
+            // 2. Integration: Merge initialMedicines from props (Consultations/Prescriptions)
+            if (initialMedicines && initialMedicines.length > 0) {
+                const medLines = initialMedicines.map((m: any, idx: number) => ({
+                    id: `med-${idx}-${Date.now()}`,
+                    product_id: m.id || m.product_id || '',
+                    description: m.name || m.description || 'Unknown Medicine',
+                    quantity: Number(m.quantity || 1),
+                    unit_price: Number(m.price || m.unit_price || 0),
+                    uom: m.uom || 'PCS',
+                    tax_rate_id: m.tax_rate_id || defaultTaxId,
+                    tax_amount: 0,
+                    discount_amount: 0,
+                    item_type: m.type || 'item',
+                    fromSource: true
+                }));
+                combinedLines = [...combinedLines, ...medLines];
             }
 
             if (combinedLines.length > 0) return combinedLines;
@@ -396,6 +419,15 @@ export function CompactInvoiceEditor({
   // High-Speed Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      // F5: Collect Payment
+      if (e.key === 'F5') {
+        e.preventDefault();
+        const settleBtn = document.getElementById('settle-button');
+        if (settleBtn && !settleBtn.hasAttribute('disabled')) {
+          settleBtn.click();
+        }
+      }
+
       // F2: Focus Rate on current/last line
       if (e.key === 'F2') {
         e.preventDefault();
@@ -404,6 +436,12 @@ export function CompactInvoiceEditor({
         if (rateInput) (rateInput as HTMLInputElement).focus();
       }
       
+      // Escape: Close Modal
+      if (e.key === 'Escape' && isPaymentModalOpen) {
+        e.preventDefault();
+        setIsPaymentModalOpen(false);
+      }
+
       // Alt+S: Settle
       if (e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -442,37 +480,37 @@ export function CompactInvoiceEditor({
   }, [safeTaxRates, safeBillableItems]);
 
 
-      // [CLEAN-UI] Filtered sync for initial props
-      if (initialInvoice?.hms_invoice_lines) {
-        // [WORLD CLASS] Lock on to the invoice if it arrived asynchronously
-        if (initialInvoice && !activeInvoice) {
-          console.log("[INVOICE-SYNC] Locking on to asynchronously arrived invoice:", initialInvoice.invoice_number);
-          setActiveInvoice(initialInvoice);
-        }
+  // [CLEAN-UI] Filtered sync for initial props
+  useEffect(() => {
+    if (initialInvoice?.hms_invoice_lines && !activeInvoice) {
+      // [WORLD CLASS] Lock on to the invoice if it arrived asynchronously
+      console.log("[INVOICE-SYNC] Locking on to asynchronously arrived invoice:", initialInvoice.invoice_number);
+      setActiveInvoice(initialInvoice);
 
-        const combined = initialInvoice.hms_invoice_lines
-          .filter((l: any) => {
-            const desc = l.description?.toLowerCase() || '';
-            const isMarker = (desc.includes('(nursing)') || desc.includes('(doctor)') || desc.includes('(prescription)')) && (Number(l.unit_price) === 0);
-            return !isMarker;
-          })
-          .map((l: any, idx: number) => ({
-            id: l.id || `line-async-${idx}-${Date.now()}`,
-            product_id: l.product_id || '',
-            description: l.description,
-            quantity: Number(l.quantity),
-            uom: l.uom || 'PCS',
-            unit_price: Number(l.unit_price),
-            tax_rate_id: l.tax_rate_id,
-            tax_amount: Number(l.tax_amount),
-            discount_amount: Number(l.discount_amount),
-            base_price: l.unit_price,
-            item_type: l.product_id ? (safeBillableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
-            isFromInvoice: true
-          }));
+      const combined = initialInvoice.hms_invoice_lines
+        .filter((l: any) => {
+          const desc = l.description?.toLowerCase() || '';
+          const isMarker = (desc.includes('(nursing)') || desc.includes('(doctor)') || desc.includes('(prescription)')) && (Number(l.unit_price) === 0);
+          return !isMarker;
+        })
+        .map((l: any, idx: number) => ({
+          id: l.id || `line-async-${idx}-${Date.now()}`,
+          product_id: l.product_id || '',
+          description: l.description,
+          quantity: Number(l.quantity),
+          uom: l.uom || 'PCS',
+          unit_price: Number(l.unit_price),
+          tax_rate_id: l.tax_rate_id,
+          tax_amount: Number(l.tax_amount),
+          discount_amount: Number(l.discount_amount),
+          base_price: l.unit_price,
+          item_type: l.product_id ? (safeBillableItems.find((bi: any) => bi.id === l.product_id)?.type || 'item') : 'item',
+          isFromInvoice: true
+        }));
 
-        if (combined.length > 0) setLines(combined);
-      }
+      if (combined.length > 0) setLines(combined);
+    }
+  }, [initialInvoice, activeInvoice, safeBillableItems]);
 
   // Sync Tax Amounts on Mount for initial items
   useEffect(() => {
@@ -516,7 +554,6 @@ export function CompactInvoiceEditor({
 
   const [payments, setPayments] = useState<Payment[]>([])
   const [isFinalizing, setIsFinalizing] = useState(false)
-  const [showUPIQR, setShowUPIQR] = useState<{ amount: number, vpa: string } | null>(null)
   const [activePaymentAmount, setActivePaymentAmount] = useState<string>('')
   const [globalDiscount, setGlobalDiscount] = useState(Number(initialInvoice?.total_discount || 0))
 
@@ -1335,7 +1372,7 @@ export function CompactInvoiceEditor({
 
 
         {/* ... Rest of header content ... */}
-        <div className="flex items-center justify-between px-6 py-2 border-b border-[#006666] bg-[#004d4d] z-20 no-print">
+        <div className="flex items-center justify-between px-6 py-2 border-b border-[#006666] bg-[#004d4d] z-[200] no-print">
           <div className="flex items-center gap-4">
             <div>
               <h2 className="text-[12px] font-black text-[#ffffcc] tracking-tight truncate">FINANCIAL BILLING TERMINAL - Ziona HMS v4.5</h2>
@@ -1404,15 +1441,23 @@ export function CompactInvoiceEditor({
                   <SearchableSelect
                     value={selectedPatientId}
                     valueLabel={selectedPatientLabel}
-                    options={displayedPatientOptions}
+                    options={patientOptions}
                     onChange={id => setSelectedPatientId(id || '')}
                     onCreate={q => { setQuickPatientName(q); setIsQuickPatientOpen(true); return Promise.resolve(null); }}
-                    onSearch={async q => {
-                      const query = (q || "").toLowerCase();
-                      return patientOptions.filter(p =>
-                        (p.label || "").toLowerCase().includes(query) ||
-                        (p.subLabel || "").toLowerCase().includes(query)
-                      );
+                    onSearch={async (q) => {
+                      if (!q) return patientOptions;
+                      try {
+                        const results = await searchPatients(q);
+                        if (!results || results.length === 0) return [];
+                        return results.map(p => ({
+                          id: p.id,
+                          label: `${p.first_name} ${p.last_name || ''}`.trim(),
+                          subLabel: `${p.phone || (p.contact as any)?.phone || (p.contact as any)?.mobile || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`
+                        }));
+                      } catch (err) {
+                        console.error("Search failed:", err);
+                        return [];
+                      }
                     }}
                     placeholder="IDENTIFY PATIENT..."
                     disabled={isPaymentModalOpen || loading}
@@ -1455,6 +1500,16 @@ export function CompactInvoiceEditor({
                 value={date}
                 onChange={e => setDate(e.target.value)}
                 className="bg-transparent border-none text-[10px] font-black text-[#ffffcc] focus:ring-0 cursor-pointer p-0"
+              />
+            </div>
+            <div className="h-3 w-[1px] bg-[#006666]" />
+            <div className="flex items-center gap-2 group">
+              <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">TIME:</span>
+              <input
+                type="time"
+                value={time}
+                onChange={e => setTime(e.target.value)}
+                className="bg-transparent border-none text-[10px] font-black text-[#ffffcc] focus:ring-0 cursor-pointer p-0 w-16"
               />
             </div>
             <div className="h-3 w-[1px] bg-[#006666]" />
@@ -1840,7 +1895,7 @@ export function CompactInvoiceEditor({
         </div>
 
         {/* 3. Global Control Bar */}
-        <div className="bg-white dark:bg-[#0c1222] border-t border-slate-100 dark:border-slate-800 px-10 py-6 z-20">
+        <div className="bg-white dark:bg-[#0c1222] border-t border-slate-100 dark:border-slate-800 px-10 py-6 z-[200]">
           <div className="max-w-[1400px] mx-auto flex flex-col xl:flex-row justify-between items-center gap-8">
 
               <div className="flex gap-10">
@@ -1921,7 +1976,7 @@ export function CompactInvoiceEditor({
                       <div className="flex items-center gap-4">
                         <div className="flex flex-col items-end leading-none gap-1">
                           <span className="text-[10px] text-white opacity-40 font-black tracking-[0.2em] uppercase">READY FOR SETTLEMENT</span>
-                          <span>COLLECT PAYMENT</span>
+                          <span>COLLECT PAYMENT [F5]</span>
                         </div>
                         <ArrowRight className="h-8 w-8 group-hover:translate-x-2 transition-transform" />
                       </div>
@@ -2113,9 +2168,6 @@ export function CompactInvoiceEditor({
                             return;
                           }
 
-                          if (m.id === 'upi') {
-                            setShowUPIQR({ amount: amt, vpa: 'hospital@upi' }); // Default VPA, ideally from settings
-                          }
                           setPayments(prev => {
                             const newPayments: Payment[] = [...prev, { method: m.id as any, amount: amt } as Payment];
                             const currentTotalPaid = newPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -2441,59 +2493,6 @@ export function CompactInvoiceEditor({
         </Dialog>
 
 
-        {/* UPI QR MODAL */}
-        <Dialog open={!!showUPIQR} onOpenChange={() => setShowUPIQR(null)}>
-          <DialogContent className="z-[500] max-w-sm p-0 bg-white dark:bg-[#0a0f1e] rounded-[2.5rem] border-none shadow-[0_50px_100px_rgba(99,102,241,0.2)] overflow-hidden">
-            <DialogHeader className="sr-only">
-              <DialogTitle>UPI Payment</DialogTitle>
-              <DialogDescription>Scan the QR code to complete your UPI payment.</DialogDescription>
-            </DialogHeader>
-            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-8 text-center relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-                <div className="absolute top-[-50%] left-[-50%] w-[200%] h-[200%] animate-spin-slow bg-[radial-gradient(circle,white_0%,transparent_70%)]" />
-              </div>
-              <div className="relative z-10">
-                <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md inline-flex mb-4">
-                  <QrCode className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="text-xl font-black text-white italic tracking-tighter uppercase mb-1">UPI Smart Pay</h3>
-                <p className="text-[10px] font-black text-indigo-100 uppercase tracking-widest opacity-80">Scan with any UPI App</p>
-              </div>
-            </div>
-
-            <div className="p-10 flex flex-col items-center gap-8">
-              <div className="p-4 bg-white rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-slate-50 relative group">
-                {showUPIQR && (
-                  <QRCodeSVG
-                    value={`upi://pay?pa=${showUPIQR.vpa}&pn=Hospital&am=${showUPIQR.amount}&cu=INR&tn=Invoice`}
-                    size={220}
-                    level="H"
-                    includeMargin={true}
-                  />
-                )}
-                <div className="absolute inset-0 bg-indigo-600/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl pointer-events-none" />
-              </div>
-
-              <div className="text-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Settlement Amount</p>
-                <p className="text-4xl font-black text-slate-900 dark:text-white tracking-tighter italic">
-                  {currency}{showUPIQR?.amount.toFixed(2)}
-                </p>
-              </div>
-
-              <button
-                onClick={() => setShowUPIQR(null)}
-                className="w-full h-14 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all"
-              >
-                Done / Paid
-              </button>
-
-              <p className="text-[9px] font-bold text-slate-400 max-w-[200px] text-center uppercase tracking-tight leading-relaxed">
-                Please verify payment success on your mobile / machine before closing this terminal.
-              </p>
-            </div>
-          </DialogContent>
-        </Dialog>
 
         {/* CRITICAL ERROR DIALOG */}
         <Dialog open={isErrorDialogOpen} onOpenChange={setIsErrorDialogOpen}>

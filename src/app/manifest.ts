@@ -24,15 +24,15 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
                     purpose: 'any',
                 },
                 {
-                    src: `${logoUrl}?v=1.0.5`,
+                    src: '/branding/ziona_logo.png',
                     sizes: '192x192',
-                    type: logoUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/png',
-                    purpose: 'maskable',
+                    type: 'image/png',
+                    purpose: 'any',
                 },
                 {
-                    src: `${logoUrl}?v=1.0.5`,
+                    src: '/branding/ziona_logo.png',
                     sizes: '512x512',
-                    type: logoUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/png',
+                    type: 'image/png',
                     purpose: 'maskable',
                 },
             ],
@@ -42,29 +42,23 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
         return {
             name: "Ziona ERP",
             short_name: "Ziona",
-            description: 'Ziona - Enterprise Hospital Management System',
+            description: 'Ziona Antigravity OS - The Unified Enterprise Management System',
             start_url: '/',
             display: 'standalone',
             background_color: '#000000',
             theme_color: '#4f46e5',
             icons: [
                 {
-                    src: '/logo-ziona.svg?v=1.0.5',
+                    src: '/logo-ziona.svg',
                     sizes: 'any',
                     type: 'image/svg+xml',
                     purpose: 'any',
                 },
                 {
-                    src: '/logo-ziona.svg?v=1.0.5',
-                    sizes: '192x192',
-                    type: 'image/svg+xml',
-                    purpose: 'maskable',
-                },
-                {
-                    src: '/logo-ziona.svg?v=1.0.5',
+                    src: '/ziona.png',
                     sizes: '512x512',
-                    type: 'image/svg+xml',
-                    purpose: 'maskable',
+                    type: 'image/png',
+                    purpose: 'any',
                 }
             ],
         }

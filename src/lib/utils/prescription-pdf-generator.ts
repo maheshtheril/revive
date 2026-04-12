@@ -5,196 +5,157 @@ export async function generatePrescriptionPDFBase64(prescription: any, company?:
     try {
         const doc = new jsPDF('p', 'pt', 'a4');
         const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
 
-        // --- Branding & Configuration ---
-        const config = await getPDFConfig(prescription.company_id!, prescription.tenant_id!);
-        const alignment = config?.headerAlignment || 'right';
-        const showLogo = config?.showLogo ?? true;
+        // --- CALIBRATION: Designer (800px) to PDF (595pt) ---
+        const scale = pageWidth / 800; 
+
+        // --- Branding & Prism Architecture ---
+        const config = await getPDFConfig(prescription.company_id!, prescription.tenant_id!, 'prescription');
+        const coords = config?.coordinates;
+        const margin = 50 * scale;
         const logoUrl = company?.logo_url;
-
-        let headerY = 60;
-        const margin = 50;
-        const contentWidth = pageWidth - (margin * 2);
-
-        // Hospital Details
-        const companyName = company?.name || 'Hospital Management System';
+        const companyName = company?.name || 'Ziona Antigravity HMS';
         const meta = company?.metadata as any;
-        const address = meta?.address || 'Healthcare Excellence';
-        const contactStr = (meta?.email || meta?.phone)
-            ? `${meta?.email || ''}${meta?.email && meta?.phone ? ' | ' : ''}${meta?.phone || ''}`
-            : 'Premium Healthcare Services';
 
-        // 1. Draw Title (PRESCRIPTION) - always top left
-        doc.setTextColor(68, 68, 68);
-        doc.setFontSize(14); // Reduced from 24
-        doc.setFont('helvetica', 'bold');
-        doc.text('PRESCRIPTION', margin, headerY);
+        // --- Block Renderer Utility ---
+        const renderBlock = (key: string, content: string, overrides?: any, style: 'normal' | 'bold' | 'black' = 'normal') => {
+            const block = { ...(coords?.[key] || {}), ...overrides };
+            if (block.showSection === false) return null;
 
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.text(`Date: ${new Date(prescription.created_at).toLocaleDateString()}`, margin, headerY + 15);
+            const fSize = (block.fontSize || 10) * scale;
+            const x = (block.x || 50) * scale;
+            const y = (block.y || 100) * scale;
+            const color = block.color || '#0f172a';
 
-        // 2. Draw Logo if enabled
-        let logoHeight = 0;
-        if (showLogo && logoUrl) {
-            try {
-                let logoX = margin;
-                if (alignment === 'right') logoX = pageWidth - margin - 60;
-                else if (alignment === 'center') logoX = (pageWidth / 2) - 30;
+            doc.setFontSize(fSize);
+            doc.setTextColor(color);
+            doc.setFont('helvetica', style === 'bold' ? 'bold' : style === 'black' ? 'black' : 'normal');
+            
+            if (block.backgroundColor) {
+                const pad = (block.padding || 0) * scale;
+                doc.setFillColor(block.backgroundColor);
+                const textWidth = doc.getTextWidth(content);
+                doc.rect(x - pad, y - fSize - (pad/2), textWidth + (pad * 2), fSize + pad, 'F');
+            }
 
-                const logoBase64 = await fetchImageAsBase64(logoUrl);
-                if (logoBase64) {
-                    doc.addImage(logoBase64, 'PNG', logoX, headerY - 30, 60, 60, undefined, 'FAST');
-                    logoHeight = 40;
-                }
-            } catch (e) {
-                console.error("[Prescription-Logo] Failed to embed logo:", e);
+            const splitContent = doc.splitTextToSize(content, (block.width || 700) * scale);
+            doc.text(splitContent, x, y + fSize);
+            return y + (fSize * splitContent.length) + 10;
+        };
+
+        // 1. Branding Header
+        if (logoUrl) {
+            const logoBase = await fetchImageAsBase64(logoUrl);
+            if (logoBase) {
+                const lSize = (config?.logoSize || 60) * scale;
+                doc.addImage(logoBase, 'PNG', (coords?.logo?.x || 50) * scale, (coords?.logo?.y || 50) * scale, lSize, lSize);
             }
         }
 
-        // 3. Draw Branding Info
-        const brandX = alignment === 'right' ? pageWidth - margin : (alignment === 'center' ? pageWidth / 2 : margin);
-        const textAlign = alignment;
+        renderBlock('name', companyName.toUpperCase(), { x: 150, y: 50, fontSize: 24 }, 'bold');
+        renderBlock('address', meta?.address || 'Premium Healthcare Protocol', { x: 150, y: 85, fontSize: 9, color: '#64748b' });
+        renderBlock('phone', `Ph: ${meta?.phone || ''} | ${meta?.email || ''}`, { x: 150, y: 110, fontSize: 8, color: '#64748b' });
 
-        doc.setTextColor(79, 70, 229); // Indigo-600
-        doc.setFontSize(config?.hospitalNameSize || 12); // Reduced from 14
-        doc.setFont('helvetica', 'bold');
+        renderBlock('docTitle', 'MEDICAL PRESCRIPTION', { x: 520, y: 50, backgroundColor: '#059669', color: '#ffffff', padding: 12, fontSize: 11 }, 'black');
 
-        let brandY = headerY + logoHeight;
-        if (alignment === 'center') brandY = headerY + 60;
-        if (alignment === 'left') brandY = headerY + 70;
+        // 2. Patient Metadata
+        const pt = prescription.hms_patient || {};
+        const ptFull = `${pt.first_name || ''} ${pt.last_name || ''}`.trim() || 'CASH PATIENT';
+        const docName = prescription.doctor?.name || 'Authorized Doctor';
 
-        doc.text(companyName, brandX, brandY, { align: textAlign });
+        renderBlock('patientName', ptFull.toUpperCase(), { x: 50, y: 200, fontSize: 18 }, 'bold');
+        renderBlock('patientId', `MRN: ${pt.patient_number || '####'} | AGE: ${pt.age || '-'}Y | ${pt.gender || '--'}`, { x: 50, y: 225, fontSize: 9, color: '#64748b' });
 
-        doc.setTextColor(102, 102, 102);
-        doc.setFontSize(config?.addressSize || 8); // Reduced from 10
-        doc.setFont('helvetica', 'normal');
-        doc.text(address, brandX, brandY + 12, { align: textAlign });
+        renderBlock('doctor', docName.toUpperCase(), { x: 520, y: 200, fontSize: 11 }, 'bold');
+        renderBlock('department', prescription.department || 'CLINIC', { x: 520, y: 215, fontSize: 8, color: '#059669' }, 'bold');
 
-        if (config?.showContactInfo !== false) {
-            doc.text(contactStr, brandX, brandY + 22, { align: textAlign });
-        }
+        // 3. Clinical Findings (The RX Core)
+        let clinicalY = 280 * scale;
 
-        // Divider
-        doc.setDrawColor(238, 238, 238);
-        const dividerY = Math.max(brandY + 35, 115);
-        doc.line(margin, dividerY, pageWidth - margin, dividerY);
-
-        // --- Patient Info ---
-        doc.setTextColor(153, 153, 153);
-        doc.setFontSize(8);
-        doc.text('PATIENT', margin, dividerY + 20);
-
+        // Rx Symbol
         doc.setTextColor(0, 0, 0);
-        doc.setFontSize(10); // Reduced from 12
+        doc.setFontSize(40 * scale);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${prescription.hms_patient?.first_name} ${prescription.hms_patient?.last_name}`, margin, dividerY + 35);
+        doc.text('℞', margin, clinicalY + (20 * scale));
 
-        doc.setTextColor(102, 102, 102);
-        doc.setFontSize(8);
+        clinicalY += 40 * scale;
+
+        // Medication Table
+        const tableY = (coords?.table?.y || 400) * scale;
+        doc.setFillColor(15, 23, 42);
+        doc.rect(margin, tableY, pageWidth - (margin * 2), 22 * scale, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8 * scale);
+        doc.setFont('helvetica', 'bold');
+        doc.text('MEDICATION', margin + 10, tableY + (14 * scale));
+        doc.text('DOSAGE', 300 * scale, tableY + (14 * scale));
+        doc.text('PERIOD', 400 * scale, tableY + (14 * scale));
+        doc.text('TIMING', 480 * scale, tableY + (14 * scale));
+
+        let currentY = tableY + (35 * scale);
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(9 * scale);
         doc.setFont('helvetica', 'normal');
-        doc.text(`Age/Gender: ${prescription.hms_patient?.age || 'N/A'} / ${prescription.hms_patient?.gender || 'N/A'}`, margin, dividerY + 47);
 
-        const patientMeta = prescription.hms_patient?.metadata as any;
-        if (patientMeta?.registration_expiry) {
-            const expiryStr = new Date(patientMeta.registration_expiry).toLocaleDateString();
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(220, 38, 38); // Red-600
-            doc.text(`Registration Valid Till: ${expiryStr}`, margin, dividerY + 59);
-            doc.setTextColor(102, 102, 102);
-            doc.setFont('helvetica', 'normal');
-        }
-
-        // --- Clinical Findings ---
-        let currentY = 210;
-        const sections = [
-            { label: 'Vitals', value: prescription.vitals },
-            { label: 'Presenting Complaint', value: prescription.complaint },
-            { label: 'Examination', value: prescription.examination },
-            { label: 'Diagnosis', value: prescription.diagnosis }
-        ];
-
-        sections.forEach(section => {
-            if (section.value && section.value.trim()) {
-                doc.setFont('helvetica', 'bold');
-                doc.setFontSize(9);
-                doc.setTextColor(68, 68, 68);
-                doc.text(section.label.toUpperCase(), 50, currentY);
-
-                doc.setFont('helvetica', 'normal');
-                doc.setFontSize(10);
-                doc.setTextColor(51, 51, 51);
-
-                const splitText = doc.splitTextToSize(section.value, pageWidth - 100);
-                doc.text(splitText, 50, currentY + 15);
-
-                currentY += (splitText.length * 12) + 35;
+        const meds = Array.isArray(prescription.medicines) ? prescription.medicines : (prescription.prescription_items || []);
+        
+        meds.forEach((item: any, idx: number) => {
+            if (idx % 2 === 0) {
+                doc.setFillColor(248, 250, 252);
+                doc.rect(margin, currentY - (12 * scale), pageWidth - (margin * 2), 22 * scale, 'F');
             }
+
+            const name = item.hms_product?.name || item.name || 'Generic Medicine';
+            const dosage = item.dosage || `${item.morning || 0}-${item.afternoon || 0}-${item.evening || 0}-${item.night || 0}`;
+            const duration = `${item.days || item.duration || '-'} Days`;
+            const timing = item.timing || 'Post-Meal';
+
+            doc.text(name.toUpperCase(), margin + 10, currentY);
+            doc.text(dosage, 300 * scale, currentY);
+            doc.text(duration, 400 * scale, currentY);
+            doc.text(timing, 480 * scale, currentY);
+
+            currentY += 22 * scale;
         });
 
-        // --- Rx Symbol ---
-        doc.setFontSize(28);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(79, 70, 229);
-        doc.text('Rx', 50, currentY);
-        currentY += 30;
+        // 4. Advice / Lab
+        if (prescription.plan || prescription.labTests?.length > 0) {
+            currentY += 40 * scale;
+            if (prescription.plan) {
+                doc.setFont('helvetica', 'bold');
+                doc.text('ADVICE / PLAN:', margin, currentY);
+                doc.setFont('helvetica', 'normal');
+                const splitAdvice = doc.splitTextToSize(prescription.plan, pageWidth - (margin * 2));
+                doc.text(splitAdvice, margin, currentY + (15 * scale));
+                currentY += (splitAdvice.length * 12) + (30 * scale);
+            }
 
-        // --- Medicines Table ---
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(68, 68, 68);
-        doc.text('Medicine', 50, currentY);
-        doc.text('Dosage', 250, currentY);
-        doc.text('Duration', 400, currentY);
-        doc.text('Timing', 480, currentY);
-
-        doc.setDrawColor(238, 238, 238);
-        doc.line(50, currentY + 7, pageWidth - 50, currentY + 7);
-        currentY += 25;
-
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(51, 51, 51);
-
-        prescription.prescription_items.forEach((item: any) => {
-            const medName = item.hms_product?.name || 'Medicine';
-            const dosage = `${item.morning}-${item.afternoon}-${item.evening}-${item.night}`;
-            const duration = `${item.days} Days`;
-            const timing = item.timing || 'After Food';
-
-            const splitMedName = doc.splitTextToSize(medName, 180);
-            doc.text(splitMedName, 50, currentY);
-            doc.text(dosage, 250, currentY);
-            doc.text(duration, 400, currentY);
-            doc.text(timing, 480, currentY);
-
-            currentY += Math.max(splitMedName.length * 12, 20) + 10;
-        });
-
-        // --- Plan/Notes ---
-        if (prescription.plan && prescription.plan.trim()) {
-            currentY += 20;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.setTextColor(68, 68, 68);
-            doc.text('ADVICE / PLAN', 50, currentY);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(51, 51, 51);
-            const splitPlan = doc.splitTextToSize(prescription.plan, pageWidth - 100);
-            doc.text(splitPlan, 50, currentY + 15);
+            if (prescription.labTests?.length > 0) {
+                doc.setFont('helvetica', 'bold');
+                doc.text('INVESTIGATIONS ORDERED:', margin, currentY);
+                doc.setFont('helvetica', 'normal');
+                prescription.labTests.forEach((lab: any, i: number) => {
+                    doc.text(`${i+1}. ${lab.name || lab}`, margin + 10, currentY + ((i+1) * 15 * scale));
+                });
+            }
         }
 
-        // --- Footer ---
-        doc.setFontSize(8);
-        doc.setTextColor(153, 153, 153);
-        const footerText1 = 'This is a computer generated prescription.';
-        const footerText2 = `Generated on ${new Date().toLocaleString()}`;
+        // 5. Signature Area (Fixed Bottom)
+        const sigY = pageHeight - (120 * scale);
+        doc.setDrawColor(203, 213, 225);
+        doc.line(pageWidth - margin - (180 * scale), sigY, pageWidth - margin, sigY);
+        doc.setFont('helvetica', 'bold');
+        doc.text(docName.toUpperCase(), pageWidth - margin - (90 * scale), sigY + (15 * scale), { align: 'center' });
+        doc.setFontSize(7 * scale);
+        doc.setTextColor(148, 163, 184);
+        doc.text('AUTHORIZED CLINICAL SIGNATURE', pageWidth - margin - (90 * scale), sigY + (25 * scale), { align: 'center' });
 
-        doc.text(footerText1, pageWidth / 2, 780, { align: 'center' });
-        doc.text(footerText2, pageWidth / 2, 795, { align: 'center' });
+        // Global Footer
+        doc.setTextColor(148, 163, 184);
+        doc.text(`ZIONA HMS WORLD STANDARD RX ENGINE | DATE: ${new Date().toLocaleString()}`, pageWidth / 2, pageHeight - (20 * scale), { align: 'center' });
 
-        const pdfBase64 = doc.output('datauristring').split(',')[1];
-        return pdfBase64;
+        return doc.output('datauristring').split(',')[1];
     } catch (err) {
         throw err;
     }

@@ -31,21 +31,21 @@ export function PremiumPrintWrapper({ children, printMode = 'standard', headerHe
                     #print-area {
                         margin: 0 !important;
                         border: none !important;
-                        padding-top: ${isLetterhead ? `${headerHeight}cm` : '15mm'} !important;
-                        padding-left: 15mm !important;
-                        padding-right: 15mm !important;
-                        padding-bottom: 15mm !important;
-                        width: 100% !important;
+                        padding-top: ${isLetterhead ? headerHeight + 'cm' : '0'} !important;
+                        padding-left: 0 !important;
+                        padding-right: 0 !important;
+                        padding-bottom: 0 !important;
+                        width: 210mm !important;
+                        height: 297mm !important;
                         max-width: none !important;
                         box-shadow: none !important;
-                        height: 297mm;
                     }
                 }
                 
                 #print-area {
                     max-width: 890px;
                     margin: 20px auto;
-                    padding-top: ${isLetterhead ? `${headerHeight}cm` : '40px'};
+                    padding-top: ${headerHeight}cm;
                     padding-left: 40px;
                     padding-right: 40px;
                     padding-bottom: 40px;

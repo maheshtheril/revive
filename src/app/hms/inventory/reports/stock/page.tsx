@@ -43,7 +43,10 @@ import {
     getCategories,
     exportStockReportToExcel
 } from '@/app/actions/inventory';
-import { repairStockQuantities } from '@/app/actions/stock-healer';
+import { 
+    repairStockQuantities, 
+    repairMissingPrices 
+} from '@/app/actions/stock-healer';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 
@@ -53,6 +56,7 @@ export default function StockReportPremium() {
     // State
     const [loading, setLoading] = useState(true);
     const [healing, setHealing] = useState(false);
+    const [priceHealing, setPriceHealing] = useState(false);
     const [data, setData] = useState<any[]>([]);
     const [categories, setCategories] = useState<any[]>([]);
     const [meta, setMeta] = useState<any>({
@@ -111,6 +115,18 @@ export default function StockReportPremium() {
             toast.error(res.error || "Repair failed");
         }
         setHealing(false);
+    };
+
+    const handlePriceHeal = async () => {
+        setPriceHealing(true);
+        const res = await repairMissingPrices();
+        if (res.success) {
+            toast.success(res.message);
+            loadData();
+        } else {
+            toast.error(res.error || "Price repair failed");
+        }
+        setPriceHealing(false);
     };
 
     useEffect(() => {
@@ -217,7 +233,16 @@ export default function StockReportPremium() {
                         className="text-amber-600 hover:bg-amber-50 font-black text-[10px] uppercase tracking-widest border border-amber-100 h-9"
                     >
                         {healing ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <AlertTriangle className="h-3 w-3 mr-2" />}
-                        Database Sync (Force)
+                        Sync Quantities
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        onClick={handlePriceHeal}
+                        disabled={priceHealing}
+                        className="text-indigo-600 hover:bg-indigo-50 font-black text-[10px] uppercase tracking-widest border border-indigo-100 h-9"
+                    >
+                        {priceHealing ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <DollarSign className="h-3 w-3 mr-2" />}
+                        Repair Prices
                     </Button>
                     <Button
                         onClick={handleExport}

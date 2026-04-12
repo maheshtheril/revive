@@ -91,7 +91,7 @@ export function BillingActions({ invoiceId, invoiceNumber }: BillingActionsProps
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                    <Link href={`/api/billing/${invoiceId}/pdf`} target="_blank" className="cursor-pointer flex items-center gap-2">
+                    <Link href={`/api/invoice-printer/${invoiceId}`} target="_blank" className="cursor-pointer flex items-center gap-2">
                         <Printer className="h-4 w-4 text-gray-500" />
                         Print
                     </Link>

@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ClassicVoucherEditor } from '@/components/accounting/classic-voucher-editor';
+import { TallyPaymentForm } from '@/components/accounting/tally-voucher-form';
 import { upsertPayment } from '@/app/actions/accounting/payments';
-import { searchSuppliers, getOutstandingPurchaseBills } from '@/app/actions/accounting/helpers';
+import { searchSuppliers, getOutstandingPurchaseBills, searchJournals } from '@/app/actions/accounting/helpers';
 import { getAccounts } from '@/app/actions/accounting/chart-of-accounts';
 
 export default function NewPaymentPage() {
@@ -16,8 +16,8 @@ export default function NewPaymentPage() {
     };
 
     return (
-        <div className="h-screen w-full bg-[#002b2b]">
-            <ClassicVoucherEditor
+        <div className="h-screen w-full bg-[#003333]">
+            <TallyPaymentForm
                 type="payment"
                 onSave={handleSave}
                 onCancel={() => router.back()}
@@ -26,6 +26,7 @@ export default function NewPaymentPage() {
                   const res = await getAccounts(q);
                   return res.success ? res.data : [];
                 }}
+                journalsSearch={searchJournals}
                 getBills={getOutstandingPurchaseBills}
                 currency="₹"
             />

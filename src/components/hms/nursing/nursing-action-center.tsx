@@ -361,10 +361,9 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
                 </DialogContent>
             </Dialog>
 
-            {/* Modal for Usage */}
             <Dialog open={!!selectedUsageTask} onOpenChange={(open) => !open && setSelectedUsageTask(null)}>
-                <DialogContent className="max-w-4xl p-6 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 overflow-hidden">
-                    <DialogHeader>
+                <DialogContent className="max-w-[95vw] lg:max-w-6xl h-[90vh] flex flex-col p-0 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 overflow-hidden">
+                    <DialogHeader className="sr-only">
                         <DialogTitle>Record Consumption for {selectedUsageTask?.patient_name}</DialogTitle>
                     </DialogHeader>
                     {selectedUsageTask && (

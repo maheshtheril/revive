@@ -51,13 +51,18 @@ export default async function AccountingSettingsPage() {
     })
 
     // 3. Fetch Tax Rates
-    const taxRates = await prisma.tax_rates.findMany({
+    const rawTaxRates = await prisma.tax_rates.findMany({
         where: {
             is_active: true
         },
         orderBy: { rate: 'asc' },
         select: { id: true, name: true, rate: true }
     })
+
+    const taxRates = rawTaxRates.map(tr => ({
+        ...tr,
+        rate: Number(tr.rate || 0)
+    }))
 
     // 4. Fetch Journals (NEW)
     const journals = await prisma.journals.findMany({

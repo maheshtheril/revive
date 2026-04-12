@@ -1,11 +1,18 @@
-
 import { prisma } from "@/lib/prisma"
+import crypto from "crypto"
+
+// Runtime cache to prevent redundant seeding on every request
+let isAccountingMenuSeeded = false;
 
 export async function ensureAccountingMenu() {
+    if (isAccountingMenuSeeded) return;
+    isAccountingMenuSeeded = true; // Lock immediately to prevent parallel hammering
+    
     try {
         // --- ADMIN CONFIG NOW HANDLED IN ensureAdminMenus ---
-
+        
         // 2.5 Ensure 'Dashboard' exists in Accounting Module
+        await ensureAccountingDashboard();
         // 2. SEED REPORTS
         await ensureLedgerReports();
         
@@ -15,6 +22,7 @@ export async function ensureAccountingMenu() {
         // 4. SEED MASTERS
         await ensureAccountingMasters();
 
+        isAccountingMenuSeeded = true;
     } catch (e) {
         console.error("Failed to auto-seed menu:", e);
     }
@@ -108,7 +116,11 @@ async function ensureLedgerReports() {
 }
 
 
+let isAdminMenuSeeded = false;
+
 export async function ensureAdminMenus() {
+    if (isAdminMenuSeeded) return;
+    isAdminMenuSeeded = true; // Lock immediately
     try {
         const adminItems = [
             { key: 'users', label: 'Users', url: '/settings/users', icon: 'Users', sort: 90, permission: 'users:view' },
@@ -175,6 +187,7 @@ export async function ensureAdminMenus() {
                 // Continue to next item
             }
         }
+        isAdminMenuSeeded = true;
     } catch (e) {
         console.error("Failed to seed admin menus:", e);
     }
@@ -390,7 +403,11 @@ export async function ensureCrmMenus() {
     }
 }
 
+let isHmsMenuSeeded = false;
+
 export async function ensureHmsMenus() {
+    if (isHmsMenuSeeded) return;
+    isHmsMenuSeeded = true; // Lock immediately
     try {
         const hmsItems = [
             { key: 'hms-dashboard', label: 'HMS Dashboard', url: '/hms/dashboard', icon: 'LayoutDashboard', sort: 10, permission: 'hms:admin' },
@@ -398,7 +415,7 @@ export async function ensureHmsMenus() {
             { key: 'hms-reception', label: 'Reception', url: '/hms/reception/dashboard', icon: 'MonitorCheck', sort: 12, permission: 'hms:dashboard:reception' },
             { key: 'hms-patients', label: 'Patients', url: '/hms/patients', icon: 'UserCircle', sort: 20, permission: 'patients:view' },
             { key: 'hms-appointments', label: 'Appointments', url: '/hms/appointments', icon: 'Calendar', sort: 30, permission: 'appointments:view' },
-            { key: 'hms-doctors', label: 'Doctors', url: '/hms/doctors', icon: 'Stethoscope', sort: 40, permission: 'hms:admin' },
+            { key: 'hms-doctors', label: 'Staff Registry', url: '/hms/doctors', icon: 'Stethoscope', sort: 40, permission: 'hms:admin' },
             { key: 'hms-doctor-dash', label: 'Doctor Dashboard', url: '/hms/doctor/dashboard', icon: 'AppWindow', sort: 41, permission: 'hms:dashboard:doctor' },
             { key: 'hms-nursing', label: 'Nursing Station', url: '/hms/nursing/dashboard', icon: 'Activity', sort: 45, permission: 'hms:dashboard:nurse' },
             { key: 'hms-lab', label: 'Laboratory', url: '/hms/lab', icon: 'FlaskConical', sort: 46, permission: 'lab:view' },
@@ -477,12 +494,17 @@ export async function ensureHmsMenus() {
                 }
             }
         }
+        isHmsMenuSeeded = true;
     } catch (e) {
         console.error("Failed to seed HMS menus:", e);
     }
 }
 
+let isPurchasingMenuSeeded = false;
+
 export async function ensurePurchasingMenus() {
+    if (isPurchasingMenuSeeded) return;
+    isPurchasingMenuSeeded = true; // Lock immediately
     try {
         // 1. Ensure 'Procurement' Parent Exists
         let procParent = await prisma.menu_items.findFirst({ where: { key: 'inv-procurement' } });
@@ -668,7 +690,26 @@ export async function ensurePurchasingMenus() {
             });
         }
 
+        isPurchasingMenuSeeded = true;
     } catch (e) {
         console.error("Failed to seed Purchasing menus:", e);
+    }
+}
+async function ensureAccountingDashboard() {
+    const existing = await prisma.menu_items.findFirst({ where: { key: 'acc-dashboard' } });
+    if (!existing) {
+        await prisma.menu_items.create({
+            data: {
+                label: 'Financial Overview',
+                url: '/hms/accounting',
+                key: 'acc-dashboard',
+                module_key: 'finance',
+                icon: 'LayoutDashboard',
+                sort_order: 1,
+                is_global: true,
+                permission_code: 'billing:view'
+            }
+        });
+        console.log("Auto-seeded Accounting Dashboard");
     }
 }

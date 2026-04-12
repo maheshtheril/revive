@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { exec } from "child_process"
+import { serialize } from "@/lib/utils"
 
 export async function getJournalEntries(filters?: {
     startDate?: Date;
@@ -63,7 +64,7 @@ export async function getJournalEntries(filters?: {
                 orderBy: { created_at: 'desc' },
                 take: 100
             });
-            return { success: true, data: entries };
+            return { success: true, data: serialize(entries) };
         } catch (dbError: any) {
             console.warn("Full journal fetch failed (likely pending migration), retrying with safe columns...", dbError.message);
 
@@ -92,7 +93,7 @@ export async function getJournalEntries(filters?: {
                     orderBy: { created_at: 'desc' },
                     take: 100
                 });
-                return { success: true, data: safeEntries };
+                return { success: true, data: serialize(safeEntries) };
             } catch (fallbackError: any) {
                 console.error("Standard fallback failed too. Trying bare minimum...", fallbackError.message);
 
@@ -109,18 +110,14 @@ export async function getJournalEntries(filters?: {
                     });
 
                     // If we got here, we have IDs but maybe no data. Return empty to avoid UI crash on missing props.
-                    // Actually, if we return objects with only ID, UI might crash accessing entry.date.
-                    // So better to return EMPTY array if we are this desperate.
                     return { success: true, data: [] };
                 } catch (criticalError: any) {
                     // LEVEL 4: SELF HEALING & GRACEFUL EXIT
                     console.error("CRITICAL DB MISMATCH. Triggering Auto-Heal.", criticalError.message);
 
                     // Fire-and-forget migration (Self-Healing)
-                    // We use setTimeout to detach it from the request loop
                     setTimeout(() => {
                         try {
-                            // exec is already imported at the top, no need for require('child_process') here
                             exec('npx prisma migrate deploy', (err: any, stdout: any, stderr: any) => {
                                 if (err) console.error("Auto-heal failed:", stderr);
                                 else console.log("Auto-heal success:", stdout);
@@ -133,6 +130,74 @@ export async function getJournalEntries(filters?: {
                 }
             }
         }
+    } catch (error: any) {
+        console.error("Error fetching journal entries:", error);
+        return { error: error.message };
+    }
+}
+
+export async function getJournals(typeFilter?: ('cash' | 'bank' | 'general' | 'sale' | 'purchase')[]) {
+    const session = await auth();
+    if (!session?.user?.companyId) return { error: "Unauthorized" };
+
+    try {
+        const where: any = {
+            company_id: session.user.companyId,
+        };
+
+        if (typeFilter && typeFilter.length > 0) {
+            where.type = { in: typeFilter };
+        }
+
+        let journals = await prisma.journals.findMany({
+            where,
+            orderBy: { name: 'asc' }
+        });
+
+        // SELF-HEALING: Auto-create basic Cash/Bank journals if missing
+        if (journals.length === 0 && (!typeFilter || typeFilter.includes('cash') || typeFilter.includes('bank'))) {
+            console.log("No journals found. Creating defaults...");
+            
+            const cashAcc = await prisma.accounts.findFirst({ where: { company_id: session.user.companyId, code: '1610' } });
+            const bankAcc = await prisma.accounts.findFirst({ where: { company_id: session.user.companyId, code: '1710' } });
+
+            if (cashAcc) {
+                await prisma.journals.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: session.user.tenantId!,
+                        company_id: session.user.companyId,
+                        name: 'Main Cash',
+                        code: 'CASH',
+                        type: 'cash',
+                        default_credit_account_id: cashAcc.id,
+                        default_debit_account_id: cashAcc.id
+                    }
+                });
+            }
+            if (bankAcc) {
+                await prisma.journals.create({
+                    data: {
+                        id: crypto.randomUUID(),
+                        tenant_id: session.user.tenantId!,
+                        company_id: session.user.companyId,
+                        name: 'Bank - Primary',
+                        code: 'BANK',
+                        type: 'bank',
+                        default_credit_account_id: bankAcc.id,
+                        default_debit_account_id: bankAcc.id
+                    }
+                });
+            }
+
+            // RE-FETCH
+            journals = await prisma.journals.findMany({
+                where,
+                orderBy: { name: 'asc' }
+            });
+        }
+
+        return { success: true, data: serialize(journals) };
     } catch (error: any) {
         console.error("Error fetching journals:", error);
         return { error: error.message };

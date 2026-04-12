@@ -71,7 +71,7 @@ export function DoctorsClientPage({ doctors, stats, departments, roles, speciali
                     <div className="flex items-center gap-4">
                         <div>
                             <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-                                Staff Directory <span className="text-xs text-red-500">[v2.0]</span>
+                                Clinicians & Staff <span className="text-xs text-red-500">[v2.0]</span>
                             </h1>
                             <p className="text-slate-500 dark:text-slate-400 mt-1">
                                 Manage master list of doctors, nurses, and administrative personnel.
@@ -84,7 +84,7 @@ export function DoctorsClientPage({ doctors, stats, departments, roles, speciali
                         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-sm"
                     >
                         <Plus className="h-4 w-4" />
-                        Register Staff
+                        Register Clinician
                     </button>
                 </div>
 
@@ -187,7 +187,7 @@ export function DoctorsClientPage({ doctors, stats, departments, roles, speciali
                                 {/* Staff Info - Smarter Prefix Logic */}
                                 <div className="mb-4">
                                     <h3 className="text-xl font-black text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">
-                                        {doc.hms_roles?.is_clinical ? 'Dr. ' : ''}{doc.first_name} {doc.last_name}
+                                        {doc.salutation || (doc.hms_roles?.is_clinical ? 'Dr. ' : '')}{doc.first_name} {doc.last_name}
                                     </h3>
                                     <div className="flex flex-col">
                                         <p className="text-sm font-bold text-blue-600">

@@ -56,8 +56,8 @@ export default async function DoctorDashboardPage({
                         <div className="h-16 w-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center mx-auto mb-4">
                             <Stethoscope className="h-8 w-8 text-white" />
                         </div>
-                        <h2 className="text-2xl font-black">Welcome, Doctor!</h2>
-                        <p className="text-blue-100 mt-2">Let's set up your clinical workspace.</p>
+                        <h2 className="text-2xl font-black">Welcome to Clinician Portal</h2>
+                        <p className="text-blue-100 mt-2">Let's set up your institutional profile.</p>
                     </div>
                     <div className="p-8 space-y-6">
                         <div className="text-slate-500 text-sm">
@@ -191,7 +191,7 @@ export default async function DoctorDashboardPage({
 
     return (
         <DoctorDashboardClient
-            doctorName={`Dr. ${clinician.first_name} ${clinician.last_name}`}
+            doctorName={`${clinician.salutation || 'Dr.'} ${clinician.first_name} ${clinician.last_name}`}
             doctorId={session.user.id}
             appointments={formattedAppointments}
             stats={stats}

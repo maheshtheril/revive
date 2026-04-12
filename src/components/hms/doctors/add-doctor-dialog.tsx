@@ -207,12 +207,25 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
                                             <GraduationCap className="h-4 w-4 text-indigo-500" />
                                             Professional Profile
                                         </h3>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <div className="col-span-1">
+                                                <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider text-indigo-500">Salutation</label>
+                                                <select name="salutation" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-black text-sm text-indigo-600 appearance-none">
+                                                    <option value="Dr.">Dr.</option>
+                                                    <option value="Mr.">Mr.</option>
+                                                    <option value="Ms.">Ms.</option>
+                                                    <option value="Mrs.">Mrs.</option>
+                                                    <option value="Prof.">Prof.</option>
+                                                    <option value="Nurse">Nurse</option>
+                                                    <option value="Sister">Sister</option>
+                                                    <option value="Brother">Brother</option>
+                                                </select>
+                                            </div>
+                                            <div className="col-span-1">
                                                 <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">First Name <span className="text-red-500">*</span></label>
                                                 <input type="text" name="first_name" required className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm" />
                                             </div>
-                                            <div>
+                                            <div className="col-span-1">
                                                 <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Last Name <span className="text-red-500">*</span></label>
                                                 <input type="text" name="last_name" required className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm" />
                                             </div>

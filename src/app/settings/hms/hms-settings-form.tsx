@@ -2,12 +2,16 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings, updateAISettings, resetWhatsAppSession } from "@/app/actions/settings"
-import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2 } from "lucide-react"
+import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings, setAsDefaultTemplate, deletePDFTemplate, renamePDFCategory, updateAISettings, resetWhatsAppSession } from "@/app/actions/settings"
+import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2, Layout } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { Label } from "@/components/ui/label"
+import { PremiumPrintHeader } from "@/components/print/premium-print-header"
+import { VisualInvoiceDesigner } from "@/components/print/visual-header-designer"
+import { VisualOpSlipDesigner } from "@/components/print/visual-op-slip-designer"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 
-export function HMSSettingsForm({ settings, products, doctors = [], gatewaySettings, whatsappSettings, pdfSettings, aiSettings }: { settings: any, products: any[], doctors?: any[], gatewaySettings?: any, whatsappSettings?: any, pdfSettings?: any, aiSettings?: any }) {
+export function HMSSettingsForm({ settings, products, doctors = [], gatewaySettings, whatsappSettings, pdfSettings, aiSettings, company }: { settings: any, products: any[], doctors?: any[], gatewaySettings?: any, whatsappSettings?: any, pdfSettings?: any, aiSettings?: any, company: any }) {
     const router = useRouter()
     const { toast } = useToast()
     const [loading, setLoading] = useState(false)
@@ -30,6 +34,8 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [opSlipVitalsPosition, setOpSlipVitalsPosition] = useState<'left' | 'right'>(settings.opSlipVitalsPosition || 'right')
     const [opSlipVitalsList, setOpSlipVitalsList] = useState<string[]>(settings.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'])
     const [opSlipRxStyle, setOpSlipRxStyle] = useState<'centered_small' | 'large_left' | 'none'>(settings.opSlipRxStyle || 'centered_small')
+    const [opSlipCoordinates, setOpSlipCoordinates] = useState(settings.opSlipCoordinates || null)
+    const [useCustomOpSlipLayout, setUseCustomOpSlipLayout] = useState(!!settings.opSlipCoordinates)
 
     // Bridge Status
     const [bridgeStatus, setBridgeStatus] = useState<{ connected: boolean, hasQr: boolean } | null>(null)
@@ -61,6 +67,15 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [pdfShowContactInfo, setPdfShowContactInfo] = useState(pdfSettings?.showContactInfo ?? true)
     const [pdfAutoPrint, setPdfAutoPrint] = useState(pdfSettings?.autoPrint ?? false)
     const [pdfShowTaxInvoiceTitle, setPdfShowTaxInvoiceTitle] = useState(pdfSettings?.showTaxInvoiceTitle ?? true)
+    const [pdfPrimaryColor, setPdfPrimaryColor] = useState(pdfSettings?.primaryColor || '#4f46e5')
+    const [pdfBankDetails, setPdfBankDetails] = useState(pdfSettings?.bankDetails || '')
+    const [pdfLogoLayout, setPdfLogoLayout] = useState<'beside' | 'stack'>(pdfSettings?.logoLayout || 'beside');
+    const [pdfLogoPosition, setPdfLogoPosition] = useState<'left' | 'center' | 'right'>(pdfSettings?.logoPosition || 'left');
+    const [pdfLogoSize, setPdfLogoSize] = useState(pdfSettings?.logoSize || 80);
+    const [pdfCoordinates, setPdfCoordinates] = useState(pdfSettings?.coordinates || null);
+    const [useCustomLayout, setUseCustomLayout] = useState(!!pdfSettings?.coordinates);
+    const [showVisualDesigner, setShowVisualDesigner] = useState(false);
+    const [designerTab, setDesignerTab] = useState<'invoice' | 'op_slip'>('invoice');
 
     // AI Settings Mirror
     const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
@@ -82,6 +97,8 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         setBillPreprintedLetterhead(settings.billPreprintedLetterhead ?? false);
         setBillHeaderHeight(settings.billHeaderHeight || '4.5');
         setAllowRateEdit(settings.allowRateEdit ?? true);
+        setOpSlipCoordinates(settings.opSlipCoordinates || null);
+        setUseCustomOpSlipLayout(!!settings.opSlipCoordinates);
     }, [settings]);
 
     useEffect(() => {
@@ -107,15 +124,38 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
 
     useEffect(() => {
         if (pdfSettings) {
-            setPdfHeaderAlignment(pdfSettings.headerAlignment || 'right');
-            setPdfShowLogo(pdfSettings.showLogo ?? true);
-            setPdfHospitalNameSize(pdfSettings.hospitalNameSize || 16);
-            setPdfAddressSize(pdfSettings.addressSize || 10);
-            setPdfShowContactInfo(pdfSettings.showContactInfo ?? true);
-            setPdfAutoPrint(pdfSettings.autoPrint ?? false);
-            setPdfShowTaxInvoiceTitle(pdfSettings.showTaxInvoiceTitle ?? true);
+            // NEW WORLD SYNC: Resolve active templates for both financial and clinical
+            const billId = pdfSettings.usageDefaults?.['sale_bill'];
+            const opId = pdfSettings.usageDefaults?.['op_slip'];
+            
+            const billTemplate = pdfSettings.templates?.find((t: any) => t.id === billId);
+            const opTemplate = pdfSettings.templates?.find((t: any) => t.id === opId);
+
+            // 1. Financial Sync (Sale Bill)
+            const billConfig = billTemplate?.config || pdfSettings; 
+            setPdfHeaderAlignment(billConfig.headerAlignment || 'right');
+            setPdfShowLogo(billConfig.showLogo ?? true);
+            setPdfHospitalNameSize(billConfig.hospitalNameSize || 16);
+            setPdfAddressSize(billConfig.addressSize || 10);
+            setPdfShowContactInfo(billConfig.showContactInfo ?? true);
+            setPdfAutoPrint(billConfig.autoPrint ?? false);
+            setPdfShowTaxInvoiceTitle(billConfig.showTaxInvoiceTitle ?? true);
+            setPdfPrimaryColor(billConfig.primaryColor || '#4f46e5');
+            setPdfBankDetails(billConfig.bankDetails || '');
+            setPdfLogoLayout(billConfig.logoLayout || 'beside');
+            setPdfLogoPosition(billConfig.logoPosition || 'left');
+            setPdfLogoSize(billConfig.logoSize || 80);
+            
+            const billCoords = billTemplate?.config?.coordinates || billTemplate?.config || pdfSettings.coordinates || null;
+            setPdfCoordinates(billCoords);
+            setUseCustomLayout(!!billCoords);
+
+            // 2. Clinical Sync (OP Slip)
+            const opCoords = opTemplate?.config?.coordinates || opTemplate?.config || settings.opSlipCoordinates || null;
+            setOpSlipCoordinates(opCoords);
+            setUseCustomOpSlipLayout(!!opCoords);
         }
-    }, [pdfSettings]);
+    }, [pdfSettings, settings.opSlipCoordinates]);
 
     useEffect(() => {
         if (aiSettings) {
@@ -258,14 +298,37 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     token: whatsappToken || undefined,
                     autoSendBill: whatsappAutoSendBill
                 }),
+                // Save active templates for both usage types
                 updatePDFSettings({
-                    headerAlignment: pdfHeaderAlignment,
-                    showLogo: pdfShowLogo,
-                    hospitalNameSize: pdfHospitalNameSize,
-                    addressSize: pdfAddressSize,
-                    showContactInfo: pdfShowContactInfo,
-                    autoPrint: pdfAutoPrint,
-                    showTaxInvoiceTitle: pdfShowTaxInvoiceTitle
+                    id: pdfSettings?.usageDefaults?.['sale_bill'] || 'default_bill',
+                    name: pdfSettings?.templates?.find((t: any) => t.id === pdfSettings?.usageDefaults?.['sale_bill'])?.name || 'Standard Bill',
+                    usage: 'sale_bill',
+                    config: {
+                        headerAlignment: pdfHeaderAlignment,
+                        showLogo: pdfShowLogo,
+                        hospitalNameSize: pdfHospitalNameSize,
+                        addressSize: pdfAddressSize,
+                        showContactInfo: pdfShowContactInfo,
+                        autoPrint: pdfAutoPrint,
+                        showTaxInvoiceTitle: pdfShowTaxInvoiceTitle,
+                        primaryColor: pdfPrimaryColor,
+                        bankDetails: pdfBankDetails,
+                        logoLayout: pdfLogoLayout,
+                        logoPosition: pdfLogoPosition,
+                        logoSize: pdfLogoSize,
+                        coordinates: pdfCoordinates
+                    },
+                    isDefault: true
+                }),
+                updatePDFSettings({
+                    id: pdfSettings?.usageDefaults?.['op_slip'] || 'default_op',
+                    name: pdfSettings?.templates?.find((t: any) => t.id === pdfSettings?.usageDefaults?.['op_slip'])?.name || 'Standard OP',
+                    usage: 'op_slip',
+                    config: {
+                        coordinates: opSlipCoordinates,
+                        logoSize: pdfLogoSize // Share logo size for consistency
+                    },
+                    isDefault: true
                 }),
                 updateAISettings({
                     enabled: aiEnabled,
@@ -702,232 +765,182 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     </div>
                 </div>
 
-                {/* Print Settings (OP Slip) */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm group">
-                    <div className="flex items-center gap-4 mb-4">
-                        <div className="h-10 w-10 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <Stethoscope className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                {/* Universal Branding Hub - ONE PLACE FOR ALL hospital stationery */}
+                <div className="md:col-span-2 bg-white dark:bg-slate-900 border-4 border-indigo-500/20 dark:border-indigo-500/10 rounded-[2.5rem] p-8 shadow-2xl shadow-indigo-500/5 relative overflow-hidden group">
+                    <div className="absolute -top-12 -right-12 h-64 w-64 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700" />
+                    
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
+                        <div className="flex items-center gap-6">
+                            <div className="h-20 w-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center shadow-xl shadow-indigo-500/40 transform group-hover:rotate-6 transition-transform">
+                                <Layout className="h-10 w-10 text-white" />
+                            </div>
+                            <div>
+                                <h3 className="font-black text-3xl text-slate-900 dark:text-white italic tracking-tighter uppercase">Universal Branding Studio</h3>
+                                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em] mt-1 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-full w-fit">Multi-Format Stationery Engine</p>
+                            </div>
                         </div>
-                        <div>
-                            <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 rounded-md">Print Settings</span>
-                            </div>
-                            <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">OP Slip Layout</h3>
-                        </div>
-                    </div>
-                    <div className="flex flex-col gap-4 mt-2">
-                        <label className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors">
-                            <div className="flex-1">
-                                <div className="font-bold text-slate-800 dark:text-slate-100 uppercase text-xs">A4 OP Slip: Preprinted Letterhead</div>
-                                <div className="text-[10px] text-slate-500 mt-1 font-bold">Use this if your doctor's prescriptions are on physical hospital paper.</div>
-                            </div>
-                            <input
-                                type="checkbox"
-                                checked={opSlipPreprintedLetterhead}
-                                onChange={(e) => setOpSlipPreprintedLetterhead(e.target.checked)}
-                                className="h-5 w-5 accent-indigo-600 rounded border-slate-300 dark:border-slate-700"
-                            />
-                        </label>
-                        {opSlipPreprintedLetterhead && (
-                            <div className="flex items-center gap-4 p-4 bg-indigo-50/50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/30 rounded-xl">
-                                <span className="text-[10px] font-bold text-indigo-500 uppercase">Margin Top:</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={opSlipHeaderHeight}
-                                    onChange={(e) => setOpSlipHeaderHeight(e.target.value)}
-                                    className="w-20 px-3 py-1 bg-white dark:bg-slate-800 border-2 border-indigo-200 rounded-lg font-bold text-center"
-                                />
-                                <span className="text-[10px] font-bold text-indigo-400">cm</span>
-                            </div>
-                        )}
 
-                        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-100 italic">Vitals Printing</h4>
-                                    <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Include nurse entry fields</p>
+                        <div className="flex flex-col items-center gap-4">
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${useCustomLayout ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
+                                    {useCustomLayout ? 'Studio Active' : 'Default Engine'}
                                 </div>
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" checked={opSlipShowVitals} onChange={(e) => setOpSlipShowVitals(e.target.checked)} className="sr-only peer" />
-                                    <div className="w-10 h-5 bg-slate-200 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
-                                </label>
                             </div>
 
-                            {opSlipShowVitals && (
-                                <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                                    {/* Vitals List Selector */}
-                                    <div className="flex flex-wrap gap-2">
-                                        {['BP', 'Pulse', 'SPO2', 'Temp', 'Respiration', 'Weight', 'Height', 'BMI'].map(v => (
-                                            <button
-                                                key={v}
-                                                type="button"
-                                                onClick={() => {
-                                                    if (opSlipVitalsList.includes(v)) setOpSlipVitalsList(opSlipVitalsList.filter(x => x !== v))
-                                                    else setOpSlipVitalsList([...opSlipVitalsList, v])
+                            <Dialog open={showVisualDesigner} onOpenChange={setShowVisualDesigner}>
+                                <DialogTrigger asChild>
+                                    <button 
+                                        type="button"
+                                        className="px-12 py-5 bg-indigo-600 text-white rounded-[2rem] text-sm font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/40 hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all border-b-4 border-indigo-800"
+                                    >
+                                        OPEN BRANDING STUDIO
+                                    </button>
+                                </DialogTrigger>
+                                <DialogContent className="max-w-[98vw] w-fit h-[95vh] bg-slate-100 dark:bg-slate-950 p-0 border-0 flex flex-col shadow-2xl overflow-hidden rounded-[3rem]">
+                                    <DialogHeader className="p-4 bg-white border-b border-slate-100 shrink-0">
+                                        <div className="flex justify-between items-center pr-10">
+                                            <div className="flex items-center gap-8">
+                                                <div>
+                                                    <DialogTitle className="text-2xl font-black italic text-slate-900 tracking-tighter uppercase">Universal branding hub</DialogTitle>
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">Hospital Stationery Engine v6.0</p>
+                                                </div>
+                                                
+                                                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
+                                                    <button 
+                                                        onClick={() => setDesignerTab('invoice')}
+                                                        className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${designerTab === 'invoice' ? 'bg-white text-indigo-600 shadow-xl' : 'text-slate-500'}`}
+                                                    >
+                                                        <FileText className="h-4 w-4" />
+                                                        Financial Invoice
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setDesignerTab('op_slip')}
+                                                        className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${designerTab === 'op_slip' ? 'bg-white text-emerald-600 shadow-xl' : 'text-slate-500'}`}
+                                                    >
+                                                        <Stethoscope className="h-4 w-4" />
+                                                        Clinical OP Slip
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex items-center gap-4">
+                                                <div className="hidden md:flex flex-col items-end mr-4">
+                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Save Protection</span>
+                                                    <span className="text-[11px] font-black text-emerald-500">SYSTEM READY</span>
+                                                </div>
+                                                <button 
+                                                    onClick={() => setShowVisualDesigner(false)} 
+                                                    className="px-8 py-3 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all hover:bg-black shadow-xl active:scale-95"
+                                                >
+                                                    Finalize Layout
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </DialogHeader>
+
+                                    <div className="flex-1 overflow-auto p-4 md:p-12 flex justify-center bg-slate-100 dark:bg-slate-950">
+                                        {designerTab === 'invoice' ? (
+                                            <VisualInvoiceDesigner 
+                                                company={company}
+                                                bankDetails={pdfBankDetails}
+                                                usageDefaults={pdfSettings?.usageDefaults}
+                                                templates={pdfSettings?.templates}
+                                                settings={{ 
+                                                    logoSize: pdfLogoSize, 
+                                                    hospitalNameSize: pdfHospitalNameSize, 
+                                                    addressSize: pdfAddressSize, 
+                                                    showLogo: pdfShowLogo, 
+                                                    showContactInfo: pdfShowContactInfo,
+                                                    coordinates: pdfCoordinates 
                                                 }}
-                                                className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border ${opSlipVitalsList.includes(v) ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-slate-50 text-slate-400 border-slate-100'}`}
-                                            >
-                                                {v}
-                                            </button>
-                                        ))}
+                                                onSave={(coords, usage) => {
+                                                    if (usage === 'sale_bill') {
+                                                        setPdfCoordinates(coords);
+                                                        if (!useCustomLayout) setUseCustomLayout(true);
+                                                    }
+                                                }}
+                                                onSaveTemplate={async (name, config, usage, id) => {
+                                                    const res = await updatePDFSettings({
+                                                        id: id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tmp-${Date.now()}`),
+                                                        name,
+                                                        usage,
+                                                        config: { coordinates: config },
+                                                        isDefault: (id === pdfSettings?.usageDefaults?.[usage] || !id || id === pdfSettings?.activeTemplateId)
+                                                    });
+                                                    if (res.success) {
+                                                        toast({ title: "Template Saved", description: `'${name}' updated.` });
+                                                        router.refresh();
+                                                    }
+                                                }}
+                                                onSetDefault={async (id, usage) => {
+                                                    const res = await setAsDefaultTemplate(id, usage);
+                                                    if (res.success) {
+                                                        const t = pdfSettings?.templates?.find((tmp: any) => tmp.id === id);
+                                                        if (t) setPdfCoordinates(t.config?.coordinates || t.config);
+                                                        toast({ title: "Primary Layout Set" });
+                                                        router.refresh();
+                                                    }
+                                                }}
+                                            />
+                                        ) : (
+                                            <VisualOpSlipDesigner 
+                                                company={company}
+                                                templates={pdfSettings?.templates}
+                                                usageDefaults={pdfSettings?.usageDefaults}
+                                                settings={{ coordinates: opSlipCoordinates, logoSize: pdfLogoSize }}
+                                                onSave={(v) => {
+                                                    setOpSlipCoordinates(v);
+                                                    if (!useCustomOpSlipLayout) setUseCustomOpSlipLayout(true);
+                                                }}
+                                                onSaveTemplate={async (name, config, usage, id) => {
+                                                    const res = await updatePDFSettings({
+                                                        id: id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tmp-${Date.now()}`),
+                                                        name,
+                                                        usage: 'op_slip',
+                                                        config: { coordinates: config },
+                                                        isDefault: true
+                                                    });
+                                                    if (res.success) {
+                                                        toast({ title: "Clinical Template Active", description: "This layout is now your hospital's standard OP Slip." });
+                                                        router.refresh();
+                                                    }
+                                                }}
+                                                onSetDefault={async (id) => {
+                                                    const res = await setAsDefaultTemplate(id, 'op_slip');
+                                                    if (res.success) {
+                                                        const t = pdfSettings?.templates?.find((tmp: any) => tmp.id === id);
+                                                        if (t) setOpSlipCoordinates(t.config?.coordinates || t.config);
+                                                        toast({ title: "Clinical Layout Active" });
+                                                        router.refresh();
+                                                    }
+                                                }}
+                                                onDeleteTemplate={async (id) => {
+                                                    const res = await deletePDFTemplate(id);
+                                                    if (res.success) {
+                                                        toast({ title: "Template Purged" });
+                                                        router.refresh();
+                                                    }
+                                                }}
+                                            />
+                                        )}
                                     </div>
+                                </DialogContent>
+                            </Dialog>
+                        </div>
+                    </div>
 
-                                    {/* Position Toggle */}
-                                    <div className="flex items-center gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl">
-                                        <button
-                                            type="button"
-                                            onClick={() => setOpSlipVitalsPosition('left')}
-                                            className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] transition-all ${opSlipVitalsPosition === 'left' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                                        >
-                                            Vitals Left
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setOpSlipVitalsPosition('right')}
-                                            className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] transition-all ${opSlipVitalsPosition === 'right' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
-                                        >
-                                            Vitals Right
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-                                <h4 className="text-xs font-black uppercase text-slate-800 dark:text-slate-100 italic mb-3">Rx Symbol Style</h4>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => setOpSlipRxStyle('centered_small')}
-                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${opSlipRxStyle === 'centered_small' ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-100 opacity-60'}`}
-                                    >
-                                        <span className="text-xs font-black uppercase tracking-tight">Centered</span>
-                                        <span className="text-[8px] font-bold text-slate-400 uppercase italic">Elite Subtle</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setOpSlipRxStyle('large_left')}
-                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${opSlipRxStyle === 'large_left' ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-100 opacity-60'}`}
-                                    >
-                                        <span className="text-xs font-black uppercase tracking-tight">Standard Left</span>
-                                        <span className="text-[8px] font-bold text-slate-400 uppercase italic">Classic Clinical</span>
-                                    </button>
-                                </div>
-                            </div>
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10 font-black uppercase text-[9px] tracking-widest text-slate-400">
+                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
+                            <CheckCircle className="h-4 w-4 text-emerald-500" />
+                            <span>Draggable Clinical Blocks</span>
                         </div>
-                    </div>
-                </div>
-
-                {/* Print Settings (Tax Invoice / Bills) */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm group">
-                    <div className="flex items-center gap-4 mb-4">
-                        <div className="h-10 w-10 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <Printer className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
+                            <CheckCircle className="h-4 w-4 text-emerald-500" />
+                            <span>Coordinate High-Fidelity</span>
                         </div>
-                        <div>
-                            <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] bg-emerald-50 dark:bg-emerald-900/40 px-2 py-0.5 rounded-md">Print Settings</span>
-                            </div>
-                            <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">Bill / Invoice Layout</h3>
-                        </div>
-                    </div>
-                    <div className="flex flex-col gap-4 mt-2">
-                        <label className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors">
-                            <div className="flex-1">
-                                <div className="font-bold text-slate-800 dark:text-slate-100 uppercase text-xs">A4 Bill: Preprinted Letterhead</div>
-                                <div className="text-[10px] text-slate-500 mt-1 font-bold">Use this if your invoices are on physical hospital paper.</div>
-                            </div>
-                            <input
-                                type="checkbox"
-                                checked={billPreprintedLetterhead}
-                                onChange={(e) => setBillPreprintedLetterhead(e.target.checked)}
-                                className="h-5 w-5 accent-emerald-600 rounded border-slate-300 dark:border-slate-700"
-                            />
-                        </label>
-                        {billPreprintedLetterhead && (
-                            <div className="flex items-center gap-4 p-4 bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl">
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase">Margin Top:</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={billHeaderHeight}
-                                    onChange={(e) => setBillHeaderHeight(e.target.value)}
-                                    className="w-20 px-3 py-1 bg-white dark:bg-slate-800 border-2 border-emerald-200 rounded-lg font-bold text-center"
-                                />
-                                <span className="text-[10px] font-bold text-emerald-400">cm</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-                
-                {/* World Class High-Speed Billing settings */}
-                <div className="bg-gradient-to-r from-emerald-50 to-white dark:from-emerald-950/20 dark:to-slate-900 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl p-6 shadow-sm group">
-                    <div className="flex items-center gap-4 mb-4">
-                        <div className="h-10 w-10 bg-emerald-600 rounded-xl flex items-center justify-center">
-                            <Sparkles className="h-5 w-5 text-white" />
-                        </div>
-                        <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic lowercase tracking-tight">High-Speed Billing</h3>
-                    </div>
-                    <div className="flex flex-col gap-4">
-                        <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl hover:shadow-md transition-all">
-                            <div className="flex flex-col gap-1">
-                                <span className="text-xs font-black uppercase tracking-widest text-slate-800 dark:text-slate-200">Allow Rate Manipulation</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase italic">Permit Editing Prices in Billing</span>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" checked={allowRateEdit} onChange={(e) => setAllowRateEdit(e.target.checked)} className="sr-only peer" />
-                                <div className="w-11 h-6 bg-slate-100 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                {/* PDF Print Layout */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm group">
-                    <div className="flex items-center gap-4 mb-6">
-                        <div className="h-10 w-10 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl flex items-center justify-center">
-                            <FileText className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-                        </div>
-                        <h3 className="font-black text-lg text-slate-800 dark:text-slate-100 italic">PDF Print Layout</h3>
-                    </div>
-                    <div className="space-y-6">
-                        <div className="grid grid-cols-3 gap-2">
-                            {['left' as const, 'center' as const, 'right' as const].map(pos => (
-                                <button key={pos} type="button" onClick={() => setPdfHeaderAlignment(pos)} className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${pdfHeaderAlignment === pos ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-slate-100 dark:border-slate-800 opacity-60'}`}>
-                                    {pos === 'left' ? <AlignLeft className="h-4 w-4" /> : pos === 'center' ? <AlignCenter className="h-4 w-4" /> : <AlignRight className="h-4 w-4" />}
-                                    <span className="text-[10px] font-black uppercase">{pos}</span>
-                                </button>
-                            ))}
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <span className="text-[10px] font-black uppercase text-slate-400">Hospital Name Size</span>
-                                <input type="range" min="12" max="24" value={pdfHospitalNameSize} onChange={(e) => setPdfHospitalNameSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
-                                <div className="text-center text-[10px] font-bold text-indigo-600">{pdfHospitalNameSize}px</div>
-                            </div>
-                            <div className="space-y-2">
-                                <span className="text-[10px] font-black uppercase text-slate-400">Address Size</span>
-                                <input type="range" min="8" max="14" value={pdfAddressSize} onChange={(e) => setPdfAddressSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
-                                <div className="text-center text-[10px] font-bold text-indigo-600">{pdfAddressSize}px</div>
-                            </div>
-                        </div>
-                        <div className="flex flex-col gap-2">
-                            <label className="flex items-center gap-3 text-xs font-bold italic text-slate-700 dark:text-slate-300 cursor-pointer">
-                                <input type="checkbox" checked={pdfShowLogo} onChange={(e) => setPdfShowLogo(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
-                                Show Hospital Logo
-                            </label>
-                            <label className="flex items-center gap-3 text-xs font-bold italic text-slate-700 dark:text-slate-300 cursor-pointer">
-                                <input type="checkbox" checked={pdfShowContactInfo} onChange={(e) => setPdfShowContactInfo(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
-                                Show Contact Details
-                            </label>
-                            <label className="flex items-center gap-3 text-xs font-bold italic text-slate-700 dark:text-slate-300 cursor-pointer">
-                                <input type="checkbox" checked={pdfAutoPrint} onChange={(e) => setPdfAutoPrint(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
-                                Auto-print Bill after Save
-                            </label>
-                            <label className="flex items-center gap-3 text-xs font-bold italic text-indigo-500 cursor-pointer bg-indigo-50/50 dark:bg-indigo-900/20 p-2 rounded-lg">
-                                <input type="checkbox" checked={pdfShowTaxInvoiceTitle} onChange={(e) => setPdfShowTaxInvoiceTitle(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
-                                Show "TAX INVOICE" Title
-                            </label>
+                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
+                            <CheckCircle className="h-4 w-4 text-indigo-500" />
+                            <span>Precision Audit Trail</span>
                         </div>
                     </div>
                 </div>

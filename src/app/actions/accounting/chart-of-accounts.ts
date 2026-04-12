@@ -15,7 +15,8 @@ export async function getAccounts(search?: string, typeFilter?: string[]) {
     try {
         const where: any = {
             company_id: session.user.companyId,
-            is_active: true
+            is_active: true,
+            is_group: false
         };
 
         if (search) {

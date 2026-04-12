@@ -135,7 +135,8 @@ export async function POST(request: NextRequest) {
                 await tx.$executeRaw`
                     INSERT INTO prescription_items (
                         id, prescription_id, medicine_id, 
-                        morning, afternoon, evening, night, days, created_at
+                        morning, afternoon, evening, night, days, 
+                        uom, uom_id, created_at
                     ) VALUES (
                         gen_random_uuid(),
                         CAST(${pId} AS uuid),
@@ -145,6 +146,8 @@ export async function POST(request: NextRequest) {
                         ${dosageParts[2] || 0},
                         ${dosageParts[3] || 0},
                         ${parseInt(med.days) || 3},
+                        ${med.uom || 'Unit'},
+                        CAST(${med.uom_id || null} AS uuid),
                         NOW()
                     )
                 `;

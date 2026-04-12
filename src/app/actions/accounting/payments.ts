@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
 import { v4 as uuidv4 } from 'uuid'
+import { serialize } from "@/lib/utils"
 // hms_invoice_status removed (now String)
 import { AccountingService } from "@/lib/services/accounting"
 import { ensureDefaultAccounts } from "@/lib/account-seeder"
@@ -74,7 +75,7 @@ export async function getPayments(type: PaymentType, search?: string, dateFilter
             return { ...p, partner_name: partnerName };
         }));
 
-        return { success: true, data: enriched };
+        return { success: true, data: serialize(enriched) };
     } catch (error: any) {
         console.error("Error fetching payments:", error);
         return { error: error.message };
@@ -130,6 +131,68 @@ export async function getExpenseAccounts() {
     }
 }
 
+export async function getPayment(id: string) {
+    const session = await auth();
+    if (!session?.user?.companyId) return { error: "Unauthorized" };
+
+    try {
+        const payment = await prisma.payments.findUnique({
+            where: { id },
+            include: { payment_lines: true }
+        });
+
+        if (!payment) return { error: "Payment not found" };
+
+        // Enrich names
+        let partnerName = '';
+        if (payment.partner_id) {
+            const pMeta = payment.metadata as any;
+            if (pMeta?.type === 'inbound') {
+                const pat = await prisma.hms_patient.findUnique({ where: { id: payment.partner_id }, select: { first_name: true, last_name: true } });
+                if (pat) partnerName = `${pat.first_name} ${pat.last_name}`;
+            } else {
+                const sup = await prisma.hms_supplier.findUnique({ where: { id: payment.partner_id }, select: { name: true } });
+                if (sup) partnerName = sup.name;
+            }
+        }
+
+        let journalName = '';
+        if (payment.journal_id) {
+            const jr = await prisma.journals.findUnique({ where: { id: payment.journal_id }, select: { name: true } });
+            if (jr) journalName = jr.name;
+        }
+
+        const lines = await Promise.all((payment.payment_lines || []).map(async (l: any) => {
+            const meta = l.metadata as any;
+            let accountName = '';
+            if (meta?.account_id) {
+                const acc = await prisma.accounts.findUnique({ where: { id: meta.account_id }, select: { name: true } });
+                if (acc) accountName = acc.name;
+            }
+            return {
+                id: l.id,
+                accountId: meta?.account_id,
+                accountName,
+                amount: l.amount.toString(),
+                description: meta?.description
+            };
+        }));
+
+        return { 
+            success: true, 
+            data: { 
+                ...serialize(payment),
+                partnerName,
+                journalName,
+                enrichedLines: lines
+            } 
+        };
+    } catch (error: any) {
+        console.error("Error fetching payment:", error);
+        return { error: error.message };
+    }
+}
+
 // ... (imports remain)
 
 export async function upsertPayment(data: {
@@ -145,6 +208,7 @@ export async function upsertPayment(data: {
     allocations?: { invoiceId: string; amount: number }[];
     lines?: { accountId: string; amount: number; description?: string }[];
     payeeName?: string;
+    journalId?: string;
 }) {
     const session = await auth();
     let companyId = session?.user?.companyId;
@@ -183,7 +247,8 @@ export async function upsertPayment(data: {
                 payee_name: data.payeeName,
                 category_name: categoryName
             },
-            created_at: data.date
+            created_at: data.date,
+            journal_id: data.journalId,
         };
 
         const result = await prisma.$transaction(async (tx) => {
@@ -378,7 +443,7 @@ export async function upsertPayment(data: {
 
         revalidatePath(data.type === 'inbound' ? '/hms/accounting/receipts' : '/hms/accounting/payments');
         revalidatePath('/hms/reception/dashboard');
-        return { success: true, data: result };
+        return { success: true, data: serialize(result) };
 
     } catch (error: any) {
         console.error("Error saving payment:", error);

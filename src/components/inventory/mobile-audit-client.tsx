@@ -468,7 +468,7 @@ export function MobileAuditClient({ categories, uoms = [] }: { categories: any[]
                                                     value={batch.cost}
                                                     onChange={(e) => updateBatch(batch.id, 'cost', e.target.value)}
                                                     placeholder="Cost..."
-                                                    className="h-10 rounded-xl font-bold font-mono text-emerald-600 bg-emerald-50/20 border-emerald-100"
+                                                    className="h-10 rounded-xl font-bold font-mono text-emerald-600 bg-emerald-50/20 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/40"
                                                 />
                                             </div>
 
@@ -481,7 +481,7 @@ export function MobileAuditClient({ categories, uoms = [] }: { categories: any[]
                                                     value={batch.mrp}
                                                     onChange={(e) => updateBatch(batch.id, 'mrp', e.target.value)}
                                                     placeholder="0.00"
-                                                    className="h-10 bg-white rounded-xl font-bold font-mono text-indigo-600 border-indigo-100"
+                                                    className="h-10 bg-white dark:bg-zinc-950 rounded-xl font-bold font-mono text-indigo-600 dark:text-indigo-400 border-indigo-100 dark:border-indigo-900/50"
                                                 />
                                             </div>
 
@@ -492,7 +492,7 @@ export function MobileAuditClient({ categories, uoms = [] }: { categories: any[]
                                                     value={batch.salePrice}
                                                     onChange={(e) => updateBatch(batch.id, 'salePrice', e.target.value)}
                                                     placeholder="0.00"
-                                                    className="h-10 bg-white rounded-xl font-bold font-mono"
+                                                    className="h-10 bg-white dark:bg-zinc-950 rounded-xl font-bold font-mono text-slate-900 dark:text-zinc-100"
                                                 />
                                             </div>
 
@@ -503,7 +503,7 @@ export function MobileAuditClient({ categories, uoms = [] }: { categories: any[]
                                                     value={batch.qty}
                                                     onChange={(e) => updateBatch(batch.id, 'qty', e.target.value)}
                                                     placeholder="0"
-                                                    className="h-12 rounded-xl font-black text-green-600 bg-green-50/50 border-green-100 shadow-sm text-lg"
+                                                    className="h-12 rounded-xl font-black text-green-600 dark:text-green-400 bg-green-50/50 dark:bg-green-950/30 border-green-100 dark:border-green-900/40 shadow-sm text-lg"
                                                 />
                                             </div>
                                         </div>

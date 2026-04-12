@@ -58,6 +58,7 @@ export function CreatePatientForm({
     const [registrationProductName, setRegistrationProductName] = useState(propName);
     const [registrationProductDescription, setRegistrationProductDescription] = useState(propDesc);
     const [enableCardIssuanceSetting, setEnableCardIssuanceSetting] = useState(true);
+    const [disableRegistrationBillingSetting, setDisableRegistrationBillingSetting] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -71,6 +72,10 @@ export function CreatePatientForm({
                     setRegistrationProductName(res.settings.registrationProductName);
                     setRegistrationProductDescription(res.settings.registrationProductDescription);
                     setEnableCardIssuanceSetting(res.settings.enableCardIssuance);
+                    setDisableRegistrationBillingSetting(res.settings.disableRegistrationBilling);
+                    if (res.settings.disableRegistrationBilling) {
+                        setChargeRegistration(false);
+                    }
                 }
             } catch (err) {
                 console.error("Failed to sync HMS settings:", err);
@@ -140,7 +145,7 @@ export function CreatePatientForm({
     };
 
     const regStatus = checkRegistrationStatus();
-    const [chargeRegistration, setChargeRegistration] = useState(hideBilling ? false : regStatus.shouldCharge);
+    const [chargeRegistration, setChargeRegistration] = useState(hideBilling || disableRegistrationBillingSetting ? false : regStatus.shouldCharge);
     const [waiveFee, setWaiveFee] = useState(false);
 
 
@@ -648,8 +653,8 @@ export function CreatePatientForm({
                     {/* Premium Footer */}
                     <div className="px-5 py-4 bg-white dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between z-10 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] shrink-0">
                         <div className="flex items-center gap-6">
-                            {/* ID Card Checkbox */}
-                            {enableCardIssuanceSetting && (
+                            {/* ID Card Checkbox - Only show if both local and global setting allow it */}
+                            {enableCardIssuanceSetting && !disableRegistrationBillingSetting && (
                                 <label className="group flex items-center gap-3 cursor-pointer p-1 px-3 rounded-lg hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
                                     <div className="relative flex items-center">
                                         <input

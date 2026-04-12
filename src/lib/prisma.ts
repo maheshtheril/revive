@@ -1,3 +1,4 @@
+// [BUST CACHE] Force refresh after schema update
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
@@ -11,9 +12,9 @@ const prismaClientSingleton = () => {
   // keepAlive prevents TCP timeout on idle connections, reducing Neon cold-starts
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: 5000,  // Reduced from 10s — fail fast, don't hang the user
-    idleTimeoutMillis: 10000,       // Release idle connections quickly
-    max: isLocal ? 10 : 3,                         // Increased for local dev to avoid exhaustion
+    connectionTimeoutMillis: 30000, // Increased to 30s — survival mode for slow DBs
+    idleTimeoutMillis: 60000,       // Keep connections warm for 60s
+    max: isLocal ? 20 : 5,          // Increased local pool to 20 for power users
     keepAlive: true,                // Keeps TCP connection warm to reduce Neon wake-up time
     ssl: isLocal ? false : { rejectUnauthorized: false }
   });

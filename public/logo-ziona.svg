@@ -1,55 +1,16 @@
 <svg width="512" height="512" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="shaper-1" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#06b6d4" />
-      <stop offset="100%" stop-color="#3b82f6" />
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.4" />
     </linearGradient>
-    <linearGradient id="shaper-2" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8b5cf6" />
-      <stop offset="100%" stop-color="#db2777" />
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#059669" stop-opacity="0.5" />
     </linearGradient>
-    <linearGradient id="shaper-3" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#10b981" />
-      <stop offset="100%" stop-color="#059669" />
-    </linearGradient>
-    
-    <filter id="glass-glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
-    </filter>
   </defs>
-
-  <!-- Crystalline Shards forming a 'Z' -->
-  <g filter="url(#glass-glow)">
-    <!-- Top Plate -->
-    <path d="M20 25C20 22.2386 22.2386 20 25 20H75C77.7614 20 80 22.2386 80 25V28C80 30.7614 77.7614 33 75 33H35L20 25Z" fill="url(#shaper-1)" opacity="0.9">
-       <animateTransform attributeName="transform" type="translate" values="0,0; 0,-4; 0,0" dur="4s" repeatCount="indefinite" />
-    </path>
-
-    <!-- Diagonal Bridge -->
-    <path d="M78 28L35 78C33.5 79.5 31 79.5 29.5 78L22 72L65 22L78 28Z" fill="url(#shaper-2)" opacity="0.8">
-       <animateTransform attributeName="transform" type="translate" values="0,0; 2,-2; 0,0" dur="4s" repeatCount="indefinite" begin="0.5s" />
-    </path>
-
-    <!-- Bottom Plate -->
-    <path d="M25 67H65L80 75V78C80 80.7614 77.7614 83 75 83H25C22.2386 83 20 80.7614 20 78V75C20 72.2386 22.2386 70 25 70L25 67Z" fill="url(#shaper-3)" opacity="0.9">
-       <animateTransform attributeName="transform" type="translate" values="0,0; 0,4; 0,0" dur="4s" repeatCount="indefinite" begin="1s" />
-    </path>
-  </g>
-
-  <!-- Ambient Orbitals -->
-  <circle cx="15" cy="45" r="3" fill="#06b6d4">
-    <animate attributeName="opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite" />
-    <animateTransform attributeName="transform" type="translate" values="0,0; -5,10; 0,0" dur="8s" repeatCount="indefinite" />
-  </circle>
-  
-  <circle cx="85" cy="55" r="2" fill="#10b981">
-    <animate attributeName="opacity" values="0.2;1;0.2" dur="4s" repeatCount="indefinite" />
-    <animateTransform attributeName="transform" type="translate" values="0,0; 5,-10; 0,0" dur="10s" repeatCount="indefinite" />
-  </circle>
-
-  <path d="M50 45L55 50L50 55L45 50L50 45Z" fill="white" opacity="0.4">
-    <animate attributeName="opacity" values="0;0.6;0" dur="5s" repeatCount="indefinite" />
-    <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="15s" repeatCount="indefinite" />
-  </path>
+  <path d="M20 25H80L70 35H30L20 25Z" fill="url(#g1)" />
+  <path d="M80 25L35 75L25 65L70 15L80 25Z" fill="url(#g2)" />
+  <path d="M75 35L30 85L20 75L65 25L75 35Z" fill="#0ea5e9" opacity="0.6" />
+  <path d="M20 75H80L70 85H30L20 75Z" fill="url(#g1)" />
 </svg>

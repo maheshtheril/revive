@@ -26,8 +26,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { recordExpense } from "@/app/actions/accounting/expenses";
 import { upsertPayment } from '@/app/actions/accounting/payments';
-import { getAccounts } from "@/app/actions/accounting/chart-of-accounts";
+import { getJournals } from "@/app/actions/accounting-journals";
 import { searchSuppliers, getOutstandingPurchaseBills } from "@/app/actions/accounting/helpers";
+import { getAccounts } from "@/app/actions/accounting/chart-of-accounts";
 import { cn } from "@/lib/utils";
 
 // Tally Style Schema
@@ -38,7 +39,7 @@ const lineItemSchema = z.object({
 
 const expenseSchema = z.object({
     date: z.date(),
-    sourceAccount: z.string().default('cash'),
+    journalId: z.string().min(1, "Credit Account required"),
     lines: z.array(lineItemSchema).optional(), // Optional for Bill Mode
     narration: z.string().optional()
 })
@@ -63,6 +64,7 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
 
     // General Mode State
     const [accounts, setAccounts] = useState<{ id: string; name: string; code: string; type: string }[]>([])
+    const [journals, setJournals] = useState<{ id: string; name: string; type: string }[]>([])
 
     // Bill Mode State
     const [selectedVendorId, setSelectedVendorId] = useState<string | null>(initialData?.partner_id || null);
@@ -90,6 +92,14 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
         };
         fetchAccounts();
 
+        const fetchJournals = async () => {
+            const res = await getJournals(['cash', 'bank']);
+            if (res.success && res.data) {
+                setJournals(res.data as any);
+            }
+        };
+        fetchJournals();
+
 
         // If editing in bill mode, fetch bills for the vendor
         if (initialData?.partner_id) {
@@ -102,7 +112,7 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
         resolver: zodResolver(expenseSchema),
         defaultValues: {
             date: initialData?.date ? new Date(initialData.date) : (initialData?.created_at ? new Date(initialData.created_at) : new Date()),
-            sourceAccount: initialData?.method || "cash",
+            journalId: initialData?.journal_id || "",
             lines: (initialData?.payment_lines?.length > 0)
                 ? initialData.payment_lines
                     .filter((l: any) => l.metadata?.account_id) // Only take expense lines (not bill allocations)
@@ -183,7 +193,7 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
                     payeeName: payeeName,
                     memo: finalMemo,
                     date: values.date,
-                    method: values.sourceAccount
+                    journalId: values.journalId
                 });
 
                 if (result.success) {
@@ -214,9 +224,9 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
                     type: 'outbound' as const,
                     partner_id: selectedVendorId,
                     amount: totalAllocated,
-                    method: values.sourceAccount,
                     date: values.date,
                     allocations: allocationList,
+                    journalId: values.journalId,
                     memo: values.narration || "Bill Settlement"
                 };
 
@@ -320,23 +330,28 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
                     <form className="space-y-8 max-w-5xl mx-auto pb-6">
 
                         {/* Source Account (Common) */}
-                        <div className="flex items-center gap-4 py-2 border-b border-teal-700/10 pb-6 mb-6">
-                            <span className="font-bold text-teal-900 dark:text-teal-400 w-32 text-right">Credit Account :</span>
-                            <div className="w-[300px]">
-                                <SearchableSelect
-                                    value={form.watch("sourceAccount")}
-                                    onChange={(val) => form.setValue("sourceAccount", val || "cash")}
-                                    options={[
-                                        { id: "bank_transfer", label: "HDFC Bank", subLabel: "Bank Account" },
-                                        { id: "cash", label: "Cash Account", subLabel: "Cash-in-Hand" }
-                                    ]}
-                                    onSearch={async (q) => {
-                                        return [{ id: "bank_transfer", label: "HDFC Bank" }, { id: "cash", label: "Cash Account" }]
-                                            .filter(o => o.label.toLowerCase().includes(q.toLowerCase()));
-                                    }}
-                                    placeholder="Select Source (Bank/Cash)"
-                                    className="bg-white border-b-2 border-teal-700/20 rounded-none focus:ring-0"
-                                />
+                        <div className="flex items-center gap-6 py-4 px-6 border border-teal-700/20 bg-teal-50/30 dark:bg-teal-900/10 rounded-xl mb-8 shadow-sm">
+                            <div className="flex items-center gap-4 flex-1">
+                                <span className="font-extrabold text-teal-900 dark:text-teal-300 w-48 text-right tracking-tight text-sm uppercase">Credit Account (Cash/Bank) :</span>
+                                <div className="w-[450px]">
+                                    <FormField
+                                        control={form.control}
+                                        name="journalId"
+                                        render={({ field }) => (
+                                            <SearchableSelect
+                                                value={field.value}
+                                                onChange={(val) => field.onChange(val || "")}
+                                                options={journals.map(j => ({ id: j.id, label: j.name, subLabel: j.type.toUpperCase() }))}
+                                                onSearch={async (q) => {
+                                                    const res = await getJournals(['cash', 'bank']);
+                                                    return res.success && res.data ? (res.data as any).filter((j: any) => j.name.toLowerCase().includes(q.toLowerCase())).map((j: any) => ({ id: j.id, label: j.name, subLabel: j.type.toUpperCase() })) : [];
+                                                }}
+                                                placeholder="Select Cash / Bank Account..."
+                                                className="bg-white border-b-2 border-teal-700/20 rounded-none focus:ring-0 font-bold"
+                                            />
+                                        )}
+                                    />
+                                </div>
                             </div>
                         </div>
 

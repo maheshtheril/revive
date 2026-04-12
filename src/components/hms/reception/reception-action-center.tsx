@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 import { updateAppointmentStatus } from "@/app/actions/appointment"
+import { searchPatients } from "@/app/actions/patient-search"
 import { getInitialInvoiceData, voidPayment } from "@/app/actions/billing"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/components/ui/use-toast"
@@ -96,6 +97,28 @@ export function ReceptionActionCenter({
     const [selectedAptForBilling, setSelectedAptForBilling] = useState<any>(null)
     const [isPaymentsOpen, setIsPaymentsOpen] = useState(false)
     const [voidingId, setVoidingId] = useState<string | null>(null)
+    const [livePatients, setLivePatients] = useState<any[]>([])
+    const [isSearching, setIsSearching] = useState(false)
+
+    // Live Search for Master Registry
+    useEffect(() => {
+        if (!patientSearchQuery || patientSearchQuery.length < 1) {
+            setLivePatients([])
+            return
+        }
+
+        const timer = setTimeout(async () => {
+            setIsSearching(true)
+            try {
+                const results = await searchPatients(patientSearchQuery)
+                setLivePatients(results)
+            } finally {
+                setIsSearching(false)
+            }
+        }, 500)
+
+        return () => clearTimeout(timer)
+    }, [patientSearchQuery])
 
     // Update time every minute for aging timers
     useEffect(() => {
@@ -205,13 +228,28 @@ export function ReceptionActionCenter({
     })
 
     // Filter Logic for Patients
-    const filteredPatients = patients.filter(p => {
-        const fullName = `${p.first_name} ${p.last_name}`.toLowerCase()
+    const filteredPatients = (() => {
         const q = patientSearchQuery.toLowerCase()
-        const contact = p.contact || {}
-        const phone = contact.phone || contact.mobile || ""
-        return fullName.includes(q) || p.patient_number?.toLowerCase().includes(q) || phone.includes(q)
-    })
+        if (!q) return patients.slice(0, 10) // Show recent patients if no query
+
+        // Start with local patients
+        let filtered = patients.filter(p => {
+            const fullName = `${p.first_name} ${p.last_name}`.toLowerCase()
+            const contact = p.contact || {}
+            const phone = contact.phone || contact.mobile || ""
+            return fullName.includes(q) || p.patient_number?.toLowerCase().includes(q) || phone.includes(q)
+        })
+
+        // Add live results that aren't already in filtered
+        const localIds = new Set(filtered.map(p => p.id))
+        livePatients.forEach(p => {
+            if (!localIds.has(p.id)) {
+                filtered.push(p)
+            }
+        })
+
+        return filtered
+    })()
 
     const handleStatusUpdate = async (id: string, newStatus: string) => {
         setStatusLoading(id)
@@ -255,8 +293,8 @@ export function ReceptionActionCenter({
         { id: 'all', label: 'All Doctors', subLabel: 'Show full schedule' },
         ...doctors.map(d => ({
             id: d.id,
-            label: `Dr. ${d.first_name} ${d.last_name || ''}`.trim() + (doctors.filter(doc => doc.first_name === d.first_name && doc.last_name === d.last_name).length > 1 ? ` (${d.id.slice(-4)})` : ''),
-            subLabel: d.hms_specializations?.[0]?.name || d.role || 'General Practitioner'
+            label: `${d.salutation || 'Dr.'} ${d.first_name} ${d.last_name || ''}`.trim() + (doctors.filter(doc => doc.first_name === d.first_name && doc.last_name === d.last_name).length > 1 ? ` (${d.id.slice(-4)})` : ''),
+            subLabel: d.hms_specializations?.[0]?.name || d.role || 'Institutional Personnel'
         }))
     ]
 
@@ -891,6 +929,7 @@ export function ReceptionActionCenter({
                                 onChange={(e) => setPatientSearchQuery(e.target.value)}
                                 className="pl-9 h-9 text-xs"
                             />
+                            {isSearching && <Loader2 className="absolute right-3 top-2.5 h-4 w-4 text-indigo-500 animate-spin" />}
                         </div>
                         <div className="max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar">
                             {filteredPatients.slice(0, 5).map(p => (
@@ -1033,12 +1072,18 @@ export function ReceptionActionCenter({
 
             <Dialog open={activeModal === 'expense'} onOpenChange={() => setActiveModal(null)}>
                 <DialogContent className="w-screen h-screen max-w-none p-0 overflow-hidden bg-white">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Hospital Expense Management Terminal</DialogTitle>
+                    </DialogHeader>
                     <ExpenseDialog onClose={() => setActiveModal(null)} />
                 </DialogContent>
             </Dialog>
 
             <Dialog open={activeModal === 'shift'} onOpenChange={() => setActiveModal(null)}>
                 <DialogContent className="max-w-3xl p-0">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Staff Shift & Handover Manager</DialogTitle>
+                    </DialogHeader>
                     <ShiftManager />
                 </DialogContent>
             </Dialog>

@@ -112,13 +112,13 @@ export function LabDashboardClient({ labStaffName, orders, stats, patients, bill
                             >
                                 Lab Dashboard <span className="text-xl font-medium text-slate-400 block sm:inline sm:ml-2">| {labStaffName}</span>
                             </motion.h1>
-                            <p className="text-slate-500 dark:text-slate-400 font-medium mt-1 flex flex-col sm:flex-row sm:items-center gap-4">
+                            <div className="text-slate-500 dark:text-slate-400 font-medium mt-1 flex flex-col sm:flex-row sm:items-center gap-4">
                                 <DashboardDateFilter />
                                 <span className="flex items-center gap-2">
                                     <Calendar className="h-4 w-4" />
                                     {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
                                 </span>
-                            </p>
+                            </div>
                         </div>
                     </div>
 

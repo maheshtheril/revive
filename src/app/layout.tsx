@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { AuthProvider } from "@/components/auth-provider";
 import { LocalizationProvider } from "@/contexts/localization-context";
+import { auth } from "@/auth";
 
 // Force dynamic rendering for all pages to prevent build-time database access
 export const dynamic = 'force-dynamic'
@@ -43,15 +44,15 @@ export async function generateMetadata(): Promise<Metadata> {
   const logoUrl = branding?.logo_url || "/logo-ziona.svg";
 
   return {
-    title: `${appName} - Enterprise ERP`,
-    description: `World-class ${appName} Management & ERP System`,
+    title: `${appName} | Antigravity OS`,
+    description: `The unified Antigravity-speed Operating System for ${appName} & Enterprise Management.`,
     icons: {
       icon: [
-        { url: `${logoUrl}?v=1.0.6`, type: "image/svg+xml" },
+        { url: "/ziona.png", type: "image/png" },
       ],
-      shortcut: [`${logoUrl}?v=1.0.6`],
+      shortcut: ["/ziona.png"],
       apple: [
-        { url: `${logoUrl}?v=1.0.6`, sizes: "180x180", type: "image/svg+xml" },
+        { url: "/ziona.png", sizes: "180x180", type: "image/png" },
       ],
     },
     manifest: '/manifest.webmanifest?v=1.0.6',
@@ -74,20 +75,21 @@ export default async function RootLayout({
   // ASYNC SELF-HEALING: We fire this in the background so it doesn't block the UI render.
   // This prevents the 'Blank Screen' issue caused by Prisma pool exhaustion during startup.
   auditAndFixMenuPermissions().catch(e => console.error('[layout] background audit failed:', e));
+  const session = await auth();
 
   return (
     <html lang="en" suppressHydrationWarning className="dark">
       <body
         className={`${inter.variable} ${robotoMono.variable} antialiased`}
       >
-        <AuthProvider>
-          <LocalizationProvider>
-            <ThemeProvider>
+        <ThemeProvider>
+          <AuthProvider session={session}>
+            <LocalizationProvider>
               {children}
               <Toaster />
-            </ThemeProvider>
-          </LocalizationProvider>
-        </AuthProvider>
+            </LocalizationProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

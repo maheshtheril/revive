@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath, unstable_noStore as noStore } from "next/cache"
 import * as crypto from 'crypto'
+import { getUsageDefault } from "@/lib/utils/pdf-defaults"
 
 export type ProfileFormState = {
     message?: string
@@ -206,7 +207,7 @@ export async function updateTenantSettings(data: {
 
         // Only allow updating registration_enabled if the user is a Global Admin (Developer)
         const updatedMeta = { ...currentMeta };
-        if (session.user.isAdmin && data.registrationEnabled !== undefined) {
+        if (session?.user?.isAdmin && data.registrationEnabled !== undefined) {
             updatedMeta.registration_enabled = data.registrationEnabled;
         }
 
@@ -337,6 +338,7 @@ export async function getHMSSettings() {
                 opSlipVitalsPosition: configData.opSlipVitalsPosition || 'right',
                 opSlipVitalsList: configData.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'],
                 opSlipRxStyle: configData.opSlipRxStyle || 'centered_small',
+                opSlipCoordinates: configData.opSlipCoordinates || null,
                 allowRateEdit: configData.allowRateEdit ?? true,
                 feeHistory: feeHistory.map(f => ({
                     id: f.id,
@@ -467,29 +469,49 @@ export async function updateHMSSettings(data: any) {
                 opSlipVitalsPosition: data.opSlipVitalsPosition || 'right',
                 opSlipVitalsList: data.opSlipVitalsList || ['BP', 'Temp', 'SPO2', 'Pulse'],
                 opSlipRxStyle: data.opSlipRxStyle || 'centered_small',
+                opSlipCoordinates: data.opSlipCoordinates || null,
                 lastUpdated: new Date().toISOString()
             });
 
-            console.log(`[HMS SETTINGS SAVE] Wiping old config for ${companyId}`);
-
             // Delete any existing config for this company to avoid unique constraint issues
+            // and ensure we start with a clean state for this key
             await tx.hms_settings.deleteMany({
                 where: { tenant_id: tenantId, company_id: companyId, key: 'registration_config' }
             });
 
-            console.log(`[HMS SETTINGS SAVE] Creating fresh config via Raw SQL for ${companyId}`);
+            console.log(`[HMS SETTINGS SAVE] Re-integrating config for ${companyId}`);
 
-            // USE RAW SQL to bypass any Prisma mapping bugs or null constraint false-positives
-            const configId = (await tx.$queryRaw`SELECT gen_random_uuid()` as any)[0].gen_random_uuid;
+            // ROBUST REPAIR: Ensure the unique constraint exists in the DB if we ever want to move back to native upsert
+            // This is a "silent" fix that helps customer databases stay in sync
+            try {
+                await tx.$executeRaw`
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_hms_settings_tenant_company_key') THEN
+                            ALTER TABLE hms_settings ADD CONSTRAINT uq_hms_settings_tenant_company_key UNIQUE (tenant_id, company_id, key);
+                        END IF;
+                    END $$;
+                `;
+            } catch (e) {
+                console.log("[HMS SETTINGS SAVE] Constraint already exists or insufficient permissions to add it. Continuing...");
+            }
 
-            await tx.$executeRaw`
-                INSERT INTO hms_settings (
-                    id, tenant_id, company_id, key, value, scope, version, is_active, created_at, updated_at, created_by, updated_by
-                ) VALUES (
-                    ${configId}::uuid, ${tenantId}::uuid, ${companyId}::uuid, 'registration_config', ${configValue}::jsonb, 'company', 1, true, now(), now(), ${userId}::uuid, ${userId}::uuid
-                )
-            `;
-            console.log(`[HMS SETTINGS SAVE] Created config ID: ${configId}`);
+            // Create fresh config via Prisma - more maintainable than Raw SQL
+            const config = await tx.hms_settings.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    tenant_id: tenantId,
+                    company_id: companyId,
+                    key: 'registration_config',
+                    value: JSON.parse(configValue),
+                    scope: 'company',
+                    version: 1,
+                    is_active: true,
+                    created_by: userId,
+                    updated_by: userId
+                }
+            });
+            console.log(`[HMS SETTINGS SAVE] Created config ID: ${config.id}`);
 
             // STEP 3: Log Fee History (Audit Trail)
             // Deactivate all old fees for this branch
@@ -1083,34 +1105,79 @@ export async function getPDFSettings(providedCompanyId?: string, providedTenantI
     if (!companyId || !tenantId) return { success: false, error: 'Unauthorized' };
 
     try {
-        let record = await prisma.hms_settings.findFirst({
-            where: {
-                company_id: companyId,
-                tenant_id: tenantId,
-                key: 'pdf_print_config'
-            }
+        console.log(`[ENGINE] Fetching Unified Registry - Co: ${companyId}`);
+        
+        // 1. Fetch Modern Mansion
+        const modernTemplates = await prisma.hms_print_template.findMany({
+            where: { tenant_id: tenantId, company_id: companyId, is_active: true },
+            orderBy: { created_at: 'asc' }
         });
 
-        if (!record) {
-            record = await prisma.hms_settings.findFirst({
-                where: {
-                    tenant_id: tenantId,
-                    key: 'pdf_print_config'
-                }
+        // 2. Fetch Legacy Room
+        const legacyRecord = await prisma.hms_settings.findFirst({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+        });
+
+        let legacyTemplates: any[] = [];
+        let legacyDefaults: any = {};
+        let baseConfig: any = {};
+
+        if (legacyRecord) {
+            const data = legacyRecord.value as any;
+            legacyTemplates = (data.templates || []).map((t: any) => ({
+                ...t,
+                id: (t.id && String(t.id).length > 10) ? t.id : `legacy-${t.id || Math.random().toString(36).substring(7)}`,
+                isLegacy: true
+            }));
+            legacyDefaults = data.usageDefaults || {};
+            baseConfig = data;
+        }
+
+        // 3. The Grand Merge: DEDUPLICATED & NORMALIZED
+        // We prioritize Modern over Legacy. If names match, Modern wins.
+        const usageDefaults: Record<string, string> = {};
+        
+        // 1. Load legacy defaults (normalized)
+        if (legacyDefaults) {
+            Object.entries(legacyDefaults).forEach(([key, val]) => {
+                const normKey = key.toLowerCase().trim().replace(/\s+/g, '_');
+                usageDefaults[normKey] = val as string;
             });
         }
 
-        const data = (record?.value as any) || {};
+        const templatesMap = new Map();
+
+        // Add Legacy first (normalized)
+        legacyTemplates.forEach(t => {
+            const normUsage = (t.usage || 'sale_bill').toLowerCase().trim().replace(/\s+/g, '_');
+            const normName = (t.name || 'Untitled').toLowerCase().trim();
+            const key = `${normUsage}:${normName}`;
+            templatesMap.set(key, { ...t, usage: normUsage });
+        });
+
+        // Modern overrides Legacy (normalized)
+        modernTemplates.forEach(t => {
+            const normUsage = (t.usage || 'sale_bill').toLowerCase().trim().replace(/\s+/g, '_');
+            const normName = (t.name || 'Untitled').toLowerCase().trim();
+            const key = `${normUsage}:${normName}`;
+            templatesMap.set(key, { ...t, usage: normUsage });
+            
+            if (t.is_default) {
+                usageDefaults[normUsage] = t.id;
+            }
+        });
+
+        const allTemplates = Array.from(templatesMap.values());
 
         return {
             success: true,
             settings: {
-                headerAlignment: data.headerAlignment || 'right',
-                showLogo: data.showLogo ?? true,
-                hospitalNameSize: data.hospitalNameSize || 16,
-                addressSize: data.addressSize || 10,
-                showContactInfo: data.showContactInfo ?? true,
-                autoPrint: data.autoPrint ?? false,
+                ...baseConfig, 
+                usageDefaults,
+                templates: allTemplates,
+                modernCount: modernTemplates.length,
+                legacyCount: legacyTemplates.length,
+                pulse: Date.now() // Forcing client-side reactivity
             }
         };
     } catch (error: any) {
@@ -1118,14 +1185,40 @@ export async function getPDFSettings(providedCompanyId?: string, providedTenantI
     }
 }
 
-export async function updatePDFSettings(data: {
-    headerAlignment: 'left' | 'center' | 'right';
-    showLogo: boolean;
-    hospitalNameSize?: number;
-    addressSize?: number;
-    showContactInfo?: boolean;
-    autoPrint: boolean;
-    showTaxInvoiceTitle: boolean;
+export async function getPDFConfig(companyId: string, tenantId: string, usage: string = 'sale_bill') {
+    const res = await getPDFSettings(companyId, tenantId);
+    if (!res.success) return null;
+    
+    const settings = res.settings;
+    const normUsage = (usage || 'sale_bill').toLowerCase().trim().replace(/\s+/g, '_');
+    
+    // Filter templates to only those matching this usage context
+    const usageTemplates = settings.templates?.filter((t: any) => (t.usage || 'sale_bill') === normUsage) || [];
+    
+    // Select the active template from the filtered pool
+    const activeId = settings.usageDefaults?.[normUsage] || usageTemplates[0]?.id || 'default';
+    const activeTemplate = usageTemplates.find((t: any) => t.id === activeId) || usageTemplates[0];
+    
+    // Return a unified config object that the generator expects
+    let coordinates = activeTemplate?.config?.coordinates || activeTemplate?.config || settings.coordinates || {};
+    
+    // Fallback to World Standard if no coordinates defined for this usage
+    if (Object.keys(coordinates).length === 0) {
+        coordinates = getUsageDefault(normUsage);
+    }
+
+    return {
+        ...settings, // Global settings (logoSize, etc.)
+        coordinates
+    };
+}
+
+export async function updatePDFSettings(templateData: {
+    id: string;
+    name: string;
+    usage: string;
+    config: any;
+    isDefault?: boolean;
 }) {
     const session = await auth();
     const companyId = session?.user?.companyId;
@@ -1138,57 +1231,268 @@ export async function updatePDFSettings(data: {
     if (!canManage) return { success: false, error: 'Unauthorized: HMS Admin permission required.' };
 
     try {
-        let existing = await prisma.hms_settings.findFirst({
-            where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+        const usage = (templateData.usage || 'sale_bill').toLowerCase().trim().replace(/\s+/g, '_');
+        const name = (templateData.name || 'Standard Template').trim();
+
+        console.log(`[ENGINE] Persisting template '${name}' to DEDICATED table...`);
+
+        // If explicitly set as default, we must handle the atomic switch later
+        const isDefaultRequested = templateData.isDefault || false;
+
+        // Ensure targetId is a valid UUID for upsert
+        // If it comes from legacy storage it won't be a valid UUID, so we generate a fresh one
+        const isLegacyId = templateData.id?.startsWith('legacy-');
+        const targetId = (templateData.id && !isLegacyId && templateData.id.length > 30) 
+            ? templateData.id 
+            : crypto.randomUUID();
+
+        // SURGICAL MERGE: Prevent wiping out other config fields (like toggles/colors) 
+        // when saving specific parts (like coordinates from Designer)
+        const templateRecord = await prisma.hms_print_template.findUnique({
+            where: { id: targetId },
+            select: { id: true, config: true }
         });
 
-        if (!existing) {
-            existing = await prisma.hms_settings.findFirst({
-                where: { tenant_id: tenantId, key: 'pdf_print_config' }
-            });
+        let finalConfig = templateData.config || {};
+        const existingConfig = templateRecord?.config;
+        
+        if (existingConfig && typeof existingConfig === 'object' && !Array.isArray(existingConfig)) {
+            const currentConfig = existingConfig as Record<string, any>;
+            const newConfig = (templateData.config || {}) as Record<string, any>;
+            
+            // Deep-ish merge for coordinates to be extra safe
+            finalConfig = {
+                ...currentConfig,
+                ...newConfig,
+            };
+
+            // If both have coordinates, we must merge them or let new one win (usually new one wins for coords)
+            if (currentConfig.coordinates && newConfig.coordinates) {
+                finalConfig.coordinates = {
+                    ...currentConfig.coordinates,
+                    ...newConfig.coordinates
+                };
+            }
         }
 
-        const configValue = {
-            ...data,
-            lastUpdated: new Date().toISOString()
-        };
+        // --- PRISMA JSON SAFETY ---
+        // Ensure we don't pass 'undefined' inside the object which Prisma's Json field sometimes rejects
+        const prismaSafeConfig = JSON.parse(JSON.stringify(finalConfig || {}));
 
-        await prisma.$transaction([
-            prisma.hms_settings.deleteMany({
-                where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
-            }),
-            prisma.hms_settings.create({
+        if (templateRecord) {
+            await prisma.hms_print_template.update({
+                where: { id: targetId },
                 data: {
-                    id: crypto.randomUUID(),
+                    name,
+                    usage,
+                    config: prismaSafeConfig,
+                    is_default: isDefaultRequested,
+                    updated_at: new Date(),
+                    updated_by: userId
+                }
+            });
+        } else {
+            await prisma.hms_print_template.create({
+                data: {
+                    id: targetId,
                     tenant_id: tenantId,
                     company_id: companyId,
-                    key: 'pdf_print_config',
-                    value: configValue,
-                    scope: 'company',
-                    is_active: true,
+                    name,
+                    usage,
+                    config: prismaSafeConfig,
+                    is_default: isDefaultRequested,
                     created_by: userId,
                     updated_by: userId
                 }
-            })
-        ]);
+            });
+        }
+
+        // Handle default switch if requested
+        if (isDefaultRequested) {
+            await prisma.hms_print_template.updateMany({
+                where: { 
+                    tenant_id: tenantId, 
+                    company_id: companyId, 
+                    usage, 
+                    id: { not: targetId } 
+                },
+                data: { is_default: false }
+            });
+        }
+
+        // --- SURGICAL LEGACY CLEANUP ---
+        // If this was a legacy template, or we want to ensure no conflicts, 
+        // we strip this usage/template from the old JSON storage.
+        const legacyRecord = await prisma.hms_settings.findFirst({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+        });
+
+        if (legacyRecord) {
+            const legacyData = legacyRecord.value as any;
+            let updated = false;
+
+            // 1. Remove from legacy templates list if it exists by name (best guess for transition)
+            if (legacyData.templates) {
+                const initialCount = legacyData.templates.length;
+                legacyData.templates = legacyData.templates.filter((t: any) => t.name !== name);
+                if (legacyData.templates.length !== initialCount) updated = true;
+            }
+
+            // 2. Remove from usageDefaults if it matches this usage
+            if (legacyData.usageDefaults && legacyData.usageDefaults[usage]) {
+                delete legacyData.usageDefaults[usage];
+                updated = true;
+            }
+
+            if (updated) {
+                await prisma.hms_settings.update({
+                    where: { id: legacyRecord.id },
+                    data: { value: legacyData }
+                });
+                console.log(`[ENGINE] Purged legacy ghost for usage: ${usage}`);
+            }
+        }
 
         revalidatePath('/settings/hms');
-        revalidatePath('/settings/global');
         return { success: true };
     } catch (error: any) {
-        console.error('Failed to save PDF settings:', error);
+        console.error('Failed to save PDF template:', error);
         return { success: false, error: error.message };
     }
 }
 
-export async function getPDFConfig(companyId: string, tenantId: string) {
+export async function deletePDFTemplate(templateId: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { success: false, error: 'Unauthorized' };
+
     try {
-        const record = await prisma.hms_settings.findFirst({
+        if (templateId.startsWith('legacy-')) {
+            console.log(`[ENGINE] Deleting Legacy format: ${templateId}`);
+            const record = await prisma.hms_settings.findFirst({
+                where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+            });
+
+            if (record) {
+                const data = record.value as any;
+                if (data.templates) {
+                    data.templates = data.templates.filter((t: any) => 
+                        !t.id || (t.id && `legacy-${t.id}` !== templateId)
+                    );
+                    await prisma.hms_settings.update({
+                        where: { id: record.id },
+                        data: { value: data }
+                    });
+                }
+            }
+        } else {
+            console.log(`[ENGINE] Deleting Modern format: ${templateId}`);
+            await prisma.hms_print_template.delete({
+                where: { id: templateId }
+            });
+        }
+
+        revalidatePath('/settings/hms');
+        return { success: true };
+    } catch (err: any) {
+        console.error('Delete failed:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+export async function setAsDefaultTemplate(templateId: string, usage: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { success: false, error: 'Unauthorized' };
+
+    try {
+        const normalizedUsage = (usage || 'sale_bill')?.toLowerCase()?.trim()?.replace(/\s+/g, '_');
+        let actualId = templateId;
+
+        // --- LEGACY AUTO-MIGRATION ON STAR ---
+        if (templateId.startsWith('legacy-')) {
+            console.log(`[ENGINE] Auto-migrating Legacy format to Modern Mansion: ${templateId}`);
+            const record = await prisma.hms_settings.findFirst({
+                where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+            });
+
+            if (record) {
+                const data = record.value as any;
+                const legacyTemplate = data.templates?.find((t: any) => 
+                    `legacy-${t.id}` === templateId || (!t.id && templateId.startsWith('legacy-'))
+                );
+
+                if (legacyTemplate) {
+                    const newId = crypto.randomUUID();
+                    await prisma.hms_print_template.create({
+                        data: {
+                            id: newId,
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            name: legacyTemplate.name,
+                            usage: normalizedUsage,
+                            config: legacyTemplate.config || {},
+                            is_default: true,
+                            created_by: session.user.id,
+                            updated_by: session.user.id
+                        }
+                    });
+                    actualId = newId;
+                    console.log(`[ENGINE] Migration complete. New ID: ${newId}`);
+                }
+            }
+        }
+
+        await prisma.$transaction([
+            // Unset current default for this usage
+            prisma.hms_print_template.updateMany({
+                where: { tenant_id: tenantId, company_id: companyId, usage: normalizedUsage },
+                data: { is_default: false }
+            }),
+            // Set the new one
+            prisma.hms_print_template.update({
+                where: { id: actualId },
+                data: { is_default: true }
+            })
+        ]);
+        
+        // --- SURGICAL LEGACY CLEANUP ---
+        const legacyRecord = await prisma.hms_settings.findFirst({
             where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
         });
-        return (record?.value as any) || null;
-    } catch (err) {
-        return null;
+
+        if (legacyRecord) {
+            const legacyData = legacyRecord.value as any;
+            let updated = false;
+
+            if (legacyData.usageDefaults && legacyData.usageDefaults[normalizedUsage]) {
+                delete legacyData.usageDefaults[normalizedUsage];
+                updated = true;
+            }
+
+            if (templateId.startsWith('legacy-') && legacyData.templates) {
+                const initialCount = legacyData.templates.length;
+                legacyData.templates = legacyData.templates.filter((t: any) => 
+                    `legacy-${t.id}` !== templateId && (!t.id || !templateId.startsWith('legacy-'))
+                );
+                if (legacyData.templates.length !== initialCount) updated = true;
+            }
+
+            if (updated) {
+                await prisma.hms_settings.update({
+                    where: { id: legacyRecord.id },
+                    data: { value: legacyData }
+                });
+                console.log(`[ENGINE] Cleaned legacy baggage for usage: ${normalizedUsage}`);
+            }
+        }
+
+        revalidatePath('/settings/hms');
+        return { success: true };
+    } catch (err: any) {
+        return { success: false, error: err.message };
     }
 }
 
@@ -1312,5 +1616,62 @@ export async function resetWhatsAppSession() {
         return { success: true };
     } catch (err) {
         return { success: false };
+    }
+}
+
+export async function renamePDFCategory(oldUsage: string, newUsage: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { success: false, error: 'Unauthorized' };
+
+    try {
+        const usage_id = (newUsage || 'standard').toLowerCase().trim().replace(/\s+/g, '_');
+        
+        // 1. Update Modern Mansion
+        await prisma.hms_print_template.updateMany({
+            where: { tenant_id: tenantId, company_id: companyId, usage: oldUsage },
+            data: { usage: usage_id }
+        });
+
+        // 2. Update Legacy Room (if exists)
+        const legacyRecord = await prisma.hms_settings.findFirst({
+            where: { company_id: companyId, tenant_id: tenantId, key: 'pdf_print_config' }
+        });
+
+        if (legacyRecord) {
+            const registry = legacyRecord.value as any;
+            let modified = false;
+
+            // Rename templates in array
+            if (registry.templates) {
+                registry.templates = registry.templates.map((t: any) => {
+                    if (t.usage === oldUsage) {
+                        modified = true;
+                        return { ...t, usage: usage_id };
+                    }
+                    return t;
+                });
+            }
+
+            // Rename in usageDefaults
+            if (registry.usageDefaults && registry.usageDefaults[oldUsage]) {
+                registry.usageDefaults[usage_id] = registry.usageDefaults[oldUsage];
+                delete registry.usageDefaults[oldUsage];
+                modified = true;
+            }
+
+            if (modified) {
+                await prisma.hms_settings.update({
+                    where: { id: legacyRecord.id },
+                    data: { value: registry }
+                });
+            }
+        }
+
+        revalidatePath('/settings/hms');
+        return { success: true, newUsageId: usage_id };
+    } catch (err: any) {
+        return { success: false, error: err.message };
     }
 }

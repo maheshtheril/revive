@@ -35,6 +35,8 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [logoUrl, setLogoUrl] = useState(company.logo_url || '')
     const [currencyId, setCurrencyId] = useState(company.company_settings?.currency_id || '')
     const [invoicePrefix, setInvoicePrefix] = useState(company.company_settings?.numbering_prefix || 'INV')
+    const [timezone, setTimezone] = useState(company.company_settings?.timezone || 'Asia/Kolkata')
+    const [locale, setLocale] = useState(company.company_settings?.locale || 'en-US')
 
     // Tenant Branding
     const [appName, setAppName] = useState(tenant?.app_name || tenant?.name || '')
@@ -43,6 +45,9 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [registrationEnabled, setRegistrationEnabled] = useState((tenant?.metadata as any)?.registration_enabled !== false)
     const [dateFormat, setDateFormat] = useState((tenant?.metadata as any)?.date_format || 'PPP')
     const [roundingPrecision, setRoundingPrecision] = useState(company.company_settings?.rounding_precision ?? 2)
+    const [appUrl, setAppUrl] = useState(tenant?.app_url || '')
+    const [localOrigin, setLocalOrigin] = useState('')
+    const [isMounted, setIsMounted] = useState(false)
 
     // Contact Info (stored in metadata)
     const meta = (company.metadata as any) || {}
@@ -91,6 +96,9 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
         setPhone(m.phone || '')
         setEmail(m.email || '')
         setGstin(m.gstin || '')
+        setAppUrl(tenant?.app_url || '')
+        setTimezone(company.company_settings?.timezone || 'Asia/Kolkata')
+        setLocale(company.company_settings?.locale || 'en-US')
     }, [company, tenant])
 
     // Mirror sync for WhatsApp and PDF
@@ -122,6 +130,14 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
         }
     }, [aiSettings]);
 
+    // FIX: Hydration error - set browser-specific values after mount
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            setLocalOrigin(window.location.origin);
+            setIsMounted(true);
+        }
+    }, []);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setLoading(true)
@@ -139,7 +155,9 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     email,
                     gstin,
                     invoicePrefix,
-                    roundingPrecision: Number(roundingPrecision)
+                    roundingPrecision: Number(roundingPrecision),
+                    timezone,
+                    locale
                 }),
                 updateWhatsAppSettings({
                     enabled: whatsappEnabled,
@@ -150,18 +168,17 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     companyId: company.id
                 }),
                 updatePDFSettings({
-                    headerAlignment: pdfHeaderAlignment,
+                    headerAlignment: pdfHeaderAlignment as any,
                     showLogo: pdfShowLogo,
-                    hospitalNameSize: pdfHospitalNameSize,
-                    addressSize: pdfAddressSize,
+                    hospitalNameSize: Number(pdfHospitalNameSize),
+                    addressSize: Number(pdfAddressSize),
                     showContactInfo: pdfShowContactInfo,
                     autoPrint: pdfAutoPrint,
-                    showTaxInvoiceTitle: true // Add required property
+                    showTaxInvoiceTitle: true
                 }),
                 updateAISettings({
                     enabled: aiEnabled,
                     apiKey: aiApiKey || undefined
-                    // removed invalid companyId
                 })
             ])
 
@@ -173,7 +190,8 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     logoUrl: tenantLogoUrl,
                     dbUrl: dbUrl || undefined,
                     registrationEnabled,
-                    dateFormat
+                    dateFormat,
+                    appUrl: appUrl || undefined
                 });
                 if (!res.success) {
                     tenantResult = { success: false, error: res.error || 'Failed to update tenant branding' };
@@ -268,16 +286,22 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                             </div>
                             <div className="space-y-2">
                                 <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Industry</Label>
-                                <Select value={industry} onValueChange={setIndustry}>
-                                    <SelectTrigger className="font-bold border-2 rounded-xl">
-                                        <SelectValue placeholder="Select industry" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="Healthcare">Healthcare (Hospital/Clinic)</SelectItem>
-                                        <SelectItem value="Technology">Technology</SelectItem>
-                                        <SelectItem value="Other">Other</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                <div className="min-h-[40px]">
+                                    {isMounted ? (
+                                        <Select value={industry} onValueChange={setIndustry}>
+                                            <SelectTrigger className="font-bold border-2 rounded-xl">
+                                                <SelectValue placeholder="Select industry" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="Healthcare">Healthcare (Hospital/Clinic)</SelectItem>
+                                                <SelectItem value="Technology">Technology</SelectItem>
+                                                <SelectItem value="Other">Other</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <div className="h-10 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -508,6 +532,59 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                 </CardContent>
             </Card>
 
+            {/* 5. Network & Server Configuration */}
+            <Card className="border-blue-200 dark:border-blue-900/50 shadow-md bg-white dark:bg-slate-900 border-t-4 border-t-blue-500">
+                <CardHeader className="bg-blue-50/30 dark:bg-blue-950/20">
+                    <CardTitle className="flex items-center gap-3 text-blue-900 dark:text-blue-100 italic font-black">
+                        <Database className="h-5 w-5 text-blue-600" />
+                        NETWORK GATEWAY CONFIG
+                    </CardTitle>
+                    <CardDescription className="text-xs font-bold text-blue-600/70 uppercase tracking-widest">Configure how the system is accessed on your network</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-6">
+                    <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-xl border border-amber-200 dark:border-amber-900/40 mb-4">
+                        <div className="flex gap-3">
+                            <ShieldCheck className="h-5 w-5 text-amber-600 shrink-0" />
+                            <div>
+                                <h4 className="text-sm font-black text-amber-900 dark:text-amber-100 uppercase italic">Production Network Stability</h4>
+                                <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium mt-1 leading-relaxed">
+                                    The "App URL" is used for system-wide redirects, WhatsApp notification links, and QR codes.
+                                    In a Hospital LAN setup, this should be the Fixed IP of your server (e.g. http://192.168.1.10:3002).
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">
+                                Preferred App Gateway URL
+                                <span className="text-blue-600 font-bold uppercase tracking-widest opacity-50">Local Detection: {localOrigin}</span>
+                            </Label>
+                            <div className="flex gap-2">
+                                <Input 
+                                    value={appUrl} 
+                                    onChange={e => setAppUrl(e.target.value)} 
+                                    placeholder="http://192.168.x.x:3002" 
+                                    className="font-mono text-sm border-2 rounded-xl focus:border-blue-500 transition-all" 
+                                />
+                                <Button 
+                                    type="button" 
+                                    variant="outline"
+                                    onClick={() => setAppUrl(window.location.origin)}
+                                    className="rounded-xl border-2 font-black text-[10px] uppercase px-4 h-11"
+                                >
+                                    AUTO-DETECT
+                                </Button>
+                            </div>
+                            <p className="text-[9px] text-slate-400 font-medium italic">
+                                * This is updated automatically during startup via START_HOSPITAL_NEW.bat.
+                            </p>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
             {/* 4. Financial & White-Labeling */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
@@ -520,10 +597,16 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
                             <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Currency</Label>
-                            <Select value={currencyId} onValueChange={setCurrencyId}>
-                                <SelectTrigger className="font-bold rounded-xl"><SelectValue placeholder="Select currency" /></SelectTrigger>
-                                <SelectContent>{currencies.map((c: any) => (<SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>))}</SelectContent>
-                            </Select>
+                            <div className="min-h-[40px]">
+                                {isMounted ? (
+                                    <Select value={currencyId} onValueChange={setCurrencyId}>
+                                        <SelectTrigger className="font-bold rounded-xl"><SelectValue placeholder="Select currency" /></SelectTrigger>
+                                        <SelectContent>{currencies.map((c: any) => (<SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>))}</SelectContent>
+                                    </Select>
+                                ) : (
+                                    <div className="h-10 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                )}
+                            </div>
                         </div>
                         <div className="space-y-2">
                             <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rounding Precision (Decimals)</Label>
@@ -540,32 +623,89 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                         
                         <div className="space-y-2 pt-2">
                             <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Date Format</Label>
-                            <Select value={dateFormat} onValueChange={setDateFormat}>
-                                <SelectTrigger className="font-bold rounded-xl">
-                                    <SelectValue placeholder="Select date format" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="PPP">Default (e.g. May 24th, 2024)</SelectItem>
-                                    <SelectItem value="dd/MM/yyyy">European (24/05/2024)</SelectItem>
-                                    <SelectItem value="MM/dd/yyyy">US (05/24/2024)</SelectItem>
-                                    <SelectItem value="yyyy-MM-dd">ISO (2024-05-24)</SelectItem>
-                                    <SelectItem value="dd MMM yyyy">Short Month (24 May 2024)</SelectItem>
-                                </SelectContent>
-                            </Select>
+                            <div className="min-h-[40px]">
+                                {isMounted ? (
+                                    <Select value={dateFormat} onValueChange={setDateFormat}>
+                                        <SelectTrigger className="font-bold rounded-xl">
+                                            <SelectValue placeholder="Select date format" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="PPP">Default (e.g. May 24th, 2024)</SelectItem>
+                                            <SelectItem value="dd/MM/yyyy">European (24/05/2024)</SelectItem>
+                                            <SelectItem value="MM/dd/yyyy">US (05/24/2024)</SelectItem>
+                                            <SelectItem value="yyyy-MM-dd">ISO (2024-05-24)</SelectItem>
+                                            <SelectItem value="dd MMM yyyy">Short Month (24 May 2024)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                ) : (
+                                    <div className="h-10 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                )}
+                            </div>
                         </div>
                     </CardContent>
                 </Card>
 
-                {isTenantAdmin && (
-                    <Card className="border-indigo-100 dark:border-indigo-900 shadow-sm">
+                {(isTenantAdmin || isAdmin) && (
+                    <Card className="border-indigo-100 dark:border-indigo-900 shadow-sm border-t-4 border-t-indigo-400">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-3 text-indigo-900 dark:text-indigo-100 italic font-black text-sm">
-                                <Layout className="h-4 w-4 text-indigo-600" />
-                                PORTAL BRANDING
+                                <Sparkles className="h-4 w-4 text-indigo-600" />
+                                REGIONAL SETTINGS
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                             <FileUpload label="Portal Logo" folder="tenant-logos" accept="image/*" currentFileUrl={tenantLogoUrl} onUploadComplete={(url) => setTenantLogoUrl(url)} />
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-relaxed">
+                                    Hospital Timezone <br/>
+                                    <span className="text-[9px] text-slate-500 font-medium italic lowercase">
+                                        Current Local Time: {isMounted ? new Date().toLocaleString("en-US", {timeZone: timezone}) : 'Loading...'}
+                                    </span>
+                                </Label>
+                                <div className="min-h-[40px]">
+                                    {isMounted ? (
+                                        <Select value={timezone} onValueChange={setTimezone}>
+                                            <SelectTrigger className="font-bold rounded-xl h-11 border-2">
+                                                <SelectValue placeholder="Select timezone" />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-[300px]">
+                                                <SelectItem value="Asia/Kolkata">India (IST) - Asia/Kolkata</SelectItem>
+                                                <SelectItem value="UTC">Universal Time (UTC)</SelectItem>
+                                                <SelectItem value="Asia/Dubai">Gulf (GST) - Asia/Dubai</SelectItem>
+                                                <SelectItem value="Africa/Nairobi">Nairobi/Kenya - Africa/Nairobi</SelectItem>
+                                                <SelectItem value="Europe/London">London (GMT) - Europe/London</SelectItem>
+                                                <SelectItem value="America/New_York">New York (EST) - America/New_York</SelectItem>
+                                                <SelectItem value="Singapore">Singapore (SGT) - Singapore</SelectItem>
+                                                {/* Dynamic values could be added here */}
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <div className="h-11 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                    )}
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Regional Locale</Label>
+                                <div className="min-h-[40px]">
+                                    {isMounted ? (
+                                        <Select value={locale} onValueChange={setLocale}>
+                                            <SelectTrigger className="font-bold rounded-xl h-11 border-2">
+                                                <SelectValue placeholder="Select locale" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="en-IN">English (India) - en-IN</SelectItem>
+                                                <SelectItem value="en-US">English (US) - en-US</SelectItem>
+                                                <SelectItem value="en-GB">English (UK) - en-GB</SelectItem>
+                                                <SelectItem value="en-AE">English (UAE) - en-AE</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <div className="h-11 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                    )}
+                                </div>
+                                <p className="text-[9px] text-slate-400 italic leading-relaxed">
+                                    Determines how dates, numbers, and currencies are displayed.
+                                </p>
+                            </div>
                         </CardContent>
                     </Card>
                 )}

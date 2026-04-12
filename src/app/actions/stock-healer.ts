@@ -50,3 +50,61 @@ export async function repairStockQuantities() {
         return { success: false, error: err.message };
     }
 }
+
+/**
+ * Repairs 0-priced batches by pulling values from Product Master.
+ * Essential for legacy imports where prices were only in the Master record.
+ */
+export async function repairMissingPrices() {
+    const session = await auth();
+    if (!session?.user?.id || !session.user.companyId) return { success: false, error: "Unauthorized" };
+
+    const companyId = session.user.companyId;
+
+    try {
+        const batches = await prisma.hms_product_batch.findMany({
+            where: {
+                company_id: companyId,
+                OR: [
+                    { mrp: { lte: 0 } },
+                    { cost: { lte: 0 } },
+                    { sale_price: { lte: 0 } }
+                ]
+            },
+            include: {
+                hms_product: true
+            }
+        });
+
+        let repairedCount = 0;
+
+        for (const batch of batches) {
+            const product = batch.hms_product;
+            const meta = (product.metadata as any) || {};
+            
+            // Derive prices
+            const mrp = (batch.mrp?.toNumber() || 0) > 0 ? batch.mrp : (meta.mrp || 0);
+            const cost = (batch.cost?.toNumber() || 0) > 0 ? batch.cost : (meta.cost_price || meta.purchase_price || 0);
+            const sale = (batch.sale_price?.toNumber() || 0) > 0 ? batch.sale_price : (product.price || meta.last_sale_price || 0);
+
+            if (mrp > 0 || cost > 0 || sale > 0) {
+                await prisma.hms_product_batch.update({
+                    where: { id: batch.id },
+                    data: {
+                        mrp: Number(mrp),
+                        cost: Number(cost),
+                        sale_price: Number(sale)
+                    }
+                });
+                repairedCount++;
+            }
+        }
+
+        revalidatePath('/hms/inventory/reports/stock');
+        return { success: true, message: `Pricing data repaired for ${repairedCount} batches.` };
+
+    } catch (err: any) {
+        console.error("Price Repair Error:", err);
+        return { success: false, error: err.message };
+    }
+}

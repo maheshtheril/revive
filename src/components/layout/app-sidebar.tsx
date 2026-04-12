@@ -24,9 +24,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { useSession } from 'next-auth/react';
 import { getUserProfile } from '@/app/actions/settings';
 import { ZionaLogo } from '@/components/branding/ziona-logo';
+import { WorkspaceTabs } from './workspace-tabs';
+import { CommandCapsule } from './command-capsule';
+import { Breadcrumbs } from './breadcrumbs';
 
 // Dynamically retrieve icons
 const getIcon = (iconName: string) => {
@@ -36,12 +38,11 @@ const getIcon = (iconName: string) => {
 };
 
 export function AppSidebar({ menuItems, currentCompany, tenant, user: initialUser, children }: { menuItems: any[], currentCompany: any, tenant?: any, user?: any, children: React.ReactNode }) {
-    const { data: session } = useSession();
     const { theme } = useTheme();
     const [freshAvatar, setFreshAvatar] = useState<string | null>(null);
 
     // Get the base user from session or prop
-    const baseUser = session?.user || initialUser;
+    const baseUser = initialUser;
 
     // Load fresh avatar if it's a data-URI (which we exclude from session for performance/security)
     useEffect(() => {
@@ -189,9 +190,16 @@ export function AppSidebar({ menuItems, currentCompany, tenant, user: initialUse
                     </Avatar>
                 </header>
 
+                {/* Workspace Multi-Tab System */}
+                <WorkspaceTabs />
+                <Breadcrumbs />
+
                 <div className="flex-1 overflow-auto relative scroll-smooth scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800 scrollbar-track-transparent">
                     {children}
                 </div>
+
+                {/* Global Command Hub */}
+                <CommandCapsule user={user} />
             </main>
         </div>
     );

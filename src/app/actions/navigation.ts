@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { getUserPermissions, seedRolesAndPermissions } from "./rbac"
-import { ensureAdminMenus, ensureCrmMenus } from "@/lib/menu-seeder"
+import { ensureAdminMenus, ensureCrmMenus, ensureHmsMenus, ensureAccountingMenu, ensurePurchasingMenus } from "@/lib/menu-seeder"
 import crypto from "crypto";
 import { unstable_noStore as noStore } from 'next/cache';
 
@@ -107,7 +107,7 @@ export async function getMenuItems() {
         // 3. IMPLICIT PERMISSION-BASED MODULE ACCESS (Safety Net vs Strict Mode)
         // CRITICAL FIX: If the tenant has explicit subscriptions (hasStrictSubscriptions), 
         // we MUST NOT allow User Permissions (like Admin '*') to leak unrelated modules (like HMS in a CRM tenant).
-        const hasStrictSubscriptions = strictSubsCount > 0;
+        const hasStrictSubscriptions = strictSubsCount > 0 && !isAdmin;
 
         if (!hasStrictSubscriptions) {
             // Only fall back to "Permission Guessing" if the tenant has NO configuration.
@@ -387,6 +387,7 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
         module: { name: 'Health Management', module_key: 'hms' },
         items: [
             { key: 'hms-dashboard', label: 'HMS Dashboard', icon: 'Activity', url: '/hms/dashboard', permission_code: 'hms:admin' },
+            { key: 'hms-analytics', label: 'Analytics & Trends', icon: 'BarChart3', url: '/hms/analytics', permission_code: 'hms:admin' },
             { key: 'hms-reception', label: 'Reception', icon: 'Monitor', url: '/hms/reception/dashboard', permission_code: 'hms:dashboard:reception' },
             {
                 key: 'hms-patients',
@@ -410,13 +411,13 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
             },
             {
                 key: 'hms-clinical',
-                label: 'Clinical',
+                label: 'Clinical Hub',
                 icon: 'Stethoscope',
                 url: '#',
                 other_menu_items: [
                     { key: 'prescriptions', label: 'Prescriptions', icon: 'FileText', url: '/hms/prescriptions' },
                     { key: 'nursing-station', label: 'Nursing Station', icon: 'Activity', url: '/hms/nursing' },
-                    { key: 'doctors', label: 'Medical Staff', icon: 'UserCheck', url: '/hms/doctors' },
+                    { key: 'doctors', label: 'Staff Registry', icon: 'UserCheck', url: '/hms/doctors' },
                 ]
             }
         ]
@@ -486,6 +487,16 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                     { key: 'inv-po', label: 'Purchase Orders', icon: 'FileText', url: '/hms/purchasing/orders' },
                     { key: 'inv-receipts', label: 'Goods Receipts', icon: 'ClipboardList', url: '/hms/purchasing/receipts' },
                     { key: 'inv-returns', label: 'Purchase Returns', icon: 'Undo2', url: '/hms/purchasing/returns' },
+                ]
+            },
+            {
+                key: 'inv-reports',
+                label: 'Inventory Reports',
+                icon: 'BarChart3',
+                url: '#',
+                other_menu_items: [
+                    { key: 'inv-report-stock', label: 'Full Stock Report', icon: 'ClipboardList', url: '/hms/inventory/reports/stock' },
+                    { key: 'inv-report-valuation', label: 'Stock Valuation', icon: 'DollarSign', url: '/hms/inventory/reports/valuation' },
                 ]
             }
         ]
@@ -587,12 +598,9 @@ export async function auditAndFixMenuPermissions() {
         // -1. ENSURE PERMISSIONS EXIST
         // Run seed check to register any missing permission codes
         await seedRolesAndPermissions();
-
+        
         // -0.5 ENSURE CORE MENUS EXIST (Self-Healing Structure)
         // We must ensure the physical menu items exist before we can secure them.
-        // Importing dynamically to avoid circular deps if any.
-        const { ensureHmsMenus, ensureAccountingMenu, ensureCrmMenus, ensurePurchasingMenus, ensureAdminMenus } = await import('@/lib/menu-seeder');
-
         await ensureHmsMenus();
         await ensureCrmMenus();
         await ensureAdminMenus();
@@ -688,7 +696,7 @@ export async function auditAndFixMenuPermissions() {
             { key: 'hms-dashboard', perm: 'hms:admin', label: 'HMS Dashboard', url: '/hms/dashboard' }, 
             { key: 'crm-dashboard', perm: 'crm:view', label: 'CRM Dashboard', url: '/crm/dashboard' }, 
             { key: 'hms-reception', perm: 'hms:dashboard:reception' }, // Strict Reception Access
-            { key: 'hms-doctors', perm: 'hms:admin' }, // Only Admins should manage doctors menu
+            { key: 'hms-doctors', perm: 'hms:admin', label: 'Staff Registry' }, // Only Admins should manage staff registry
 
             // ATTENDANCE
             { key: 'hms-attendance', perm: 'hms:view' }, // Available to all clinical staff

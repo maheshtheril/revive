@@ -34,6 +34,7 @@ export async function createDoctor(formData: FormData) {
     const workingDays = formData.getAll("working_days") as string[]
     const profileImageUrl = formData.get("profile_image_url") as string
     const signatureUrl = formData.get("signature_url") as string
+    const salutation = formData.get("salutation") as string || "Dr."
     const documentUrlsStr = formData.get("document_urls") as string
     const documentUrls = documentUrlsStr ? JSON.parse(documentUrlsStr) : []
 
@@ -60,6 +61,7 @@ export async function createDoctor(formData: FormData) {
                 company_id: companyId,
                 first_name: firstName,
                 last_name: lastName,
+                salutation: salutation,
                 email: email,
                 employee_id: employeeId || null,
                 designation: designation || null,
@@ -106,6 +108,7 @@ export async function updateDoctor(formData: FormData) {
     const employeeId = formData.get("employee_id") as string
     const designation = formData.get("designation") as string
     const licenseNo = formData.get("license_no") as string
+    const salutation = formData.get("salutation") as string
     const roleId = formData.get("role_id") as string
     const specializationId = formData.get("specialization_id") as string
     const departmentId = formData.get("department_id") as string
@@ -127,6 +130,7 @@ export async function updateDoctor(formData: FormData) {
             data: {
                 first_name: firstName,
                 last_name: lastName,
+                salutation: salutation,
                 email: email,
                 phone: phone,
                 employee_id: employeeId || null,
@@ -214,7 +218,7 @@ export async function initializeDoctorProfile(_formData: FormData) {
         // WORLD-CLASS FIX: Use tagged template literal $executeRaw for safety
         await prisma.$executeRaw`
             INSERT INTO hms_clinicians (
-                id, tenant_id, company_id, first_name, last_name, 
+                id, tenant_id, company_id, first_name, last_name, salutation,
                 email, user_id, is_active, consultation_fee, 
                 consultation_slot_duration, consultation_start_time, 
                 consultation_end_time, working_days
@@ -224,6 +228,7 @@ export async function initializeDoctorProfile(_formData: FormData) {
                 ${companyId || tenantId}, 
                 ${firstName}, 
                 ${lastName}, 
+                ${(firstName.toLowerCase().includes('dr') || (name && name.toLowerCase().includes('dr'))) ? 'Dr.' : 'Mr.'},
                 ${email}, 
                 ${userId}, 
                 true, 

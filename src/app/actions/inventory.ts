@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
+import * as inventorySearch from "./inventory-search";
 import { SYSTEM_DEFAULT_CURRENCY_SYMBOL } from "@/lib/currency"
 import { redirect } from "next/navigation"
 import crypto from 'crypto';
@@ -105,7 +106,6 @@ export async function getInventoryDashboardStats() {
 }
 
 // --- Product Management ---
-
 
 // -- Helpers for Dropdowns --
 
@@ -480,145 +480,10 @@ export async function createUOM(prevState: any, formData: FormData): Promise<{ e
     }
 }
 
-export async function findOrCreateUOM(name: string): Promise<string> {
-    const session = await auth();
-    if (!session?.user?.companyId || !session?.user?.tenantId) return "";
-
-    const cleanName = name.trim().toUpperCase() || "PCS";
-
-    try {
-        // 1. Search existing
-        const existing = await prisma.hms_uom.findFirst({
-            where: {
-                company_id: session.user.companyId,
-                name: { equals: cleanName, mode: 'insensitive' }
-            }
-        });
-
-        if (existing) return existing.id;
-
-        // 2. Create Category if missing
-        let catName = `${cleanName} Category`;
-        let category = await prisma.hms_uom_category.findFirst({
-            where: { company_id: session.user.companyId, name: catName }
-        });
-
-        if (!category) {
-            category = await prisma.hms_uom_category.create({
-                data: {
-                    id: crypto.randomUUID(),
-                    tenant_id: session.user.tenantId,
-                    company_id: session.user.companyId,
-                    name: catName
-                }
-            });
-        }
-
-        // 3. Create UOM
-        const newUom = await prisma.hms_uom.create({
-            data: {
-                id: crypto.randomUUID(),
-                tenant_id: session.user.tenantId,
-                company_id: session.user.companyId,
-                category_id: category.id,
-                name: cleanName,
-                uom_type: 'reference',
-                ratio: 1,
-                rounding: 0.01,
-                is_active: true
-            }
-        });
-
-        return newUom.id;
-    } catch (error) {
-        console.error("findOrCreateUOM Error:", error);
-        return "";
-    }
-}
-
-export async function findOrCreateUOMsBatch(names: string[]): Promise<Map<string, string>> {
-    const results = new Map<string, string>();
-    const uniqueNames = Array.from(new Set(names.filter(Boolean).map(n => n.trim().toUpperCase())));
-
-    // Process sequentially to avoid race conditions on category creation for now, 
-    // or we could optimize with more complex logic. Given the small number of lines, 
-    // sequential is safer and usually fast enough for a single scan.
-    for (const name of uniqueNames) {
-        const id = await findOrCreateUOM(name);
-        if (id) results.set(name, id);
-    }
-
-    return results;
-}
-
-export async function updateUOM(prevState: any, formData: FormData): Promise<{ error?: string, success?: boolean }> {
-    const session = await auth();
-    if (!session?.user?.companyId || !session?.user?.tenantId) return { error: "Unauthorized" };
-
-    const id = formData.get("id") as string;
-    const name = formData.get("name") as string;
-    let categoryId = formData.get("categoryId") as string;
-    const type = formData.get("type") as string || 'reference';
-    const ratio = Number(formData.get("ratio") || 1);
-    const baseUnitId = formData.get("baseUnitId") as string;
-
-    if (!id || !name) return { error: "ID and Name are required" };
-
-    try {
-        const uomRatio = type === 'reference' ? 1 : ratio;
-
-        let updateData: any = {
-            name,
-            uom_type: type,
-            ratio: new Prisma.Decimal(uomRatio)
-        };
-
-        const currentUom = await prisma.hms_uom.findUnique({
-            where: { id, company_id: session.user.companyId }
-        });
-
-        if (type === 'derived') {
-            if (!baseUnitId) return { error: "Base Unit is required for alternative units." };
-            const baseUnit = await prisma.hms_uom.findUnique({
-                where: { id: baseUnitId, company_id: session.user.companyId }
-            });
-            if (!baseUnit) return { error: "Selected Base Unit not found." };
-            updateData.category_id = baseUnit.category_id;
-        } else if (currentUom?.uom_type === 'derived') {
-            // Type changed from derived to reference. Needs its own category.
-            let catName = `${name} Category`;
-            let newCategory = await prisma.hms_uom_category.findFirst({
-                where: { company_id: session.user.companyId, name: catName }
-            });
-            if (!newCategory) {
-                newCategory = await prisma.hms_uom_category.create({
-                    data: {
-                        id: crypto.randomUUID(),
-                        tenant_id: session.user.tenantId,
-                        company_id: session.user.companyId,
-                        name: catName
-                    }
-                });
-            }
-            updateData.category_id = newCategory.id;
-        }
-
-        if (categoryId && !updateData.category_id) {
-            updateData.category_id = categoryId;
-        }
-
-        await prisma.hms_uom.update({
-            where: { id, company_id: session.user.companyId },
-            data: updateData
-        });
-        revalidatePath('/hms/inventory/uom');
-        revalidatePath('/hms/inventory/products/new');
-        return { success: true };
-    } catch (error) {
-        console.error("Failed to update UOM:", error);
-        return { error: "Failed to update UOM" };
-    }
-}
+// Wrapped Search Actions to comply with "use server" export standards
+export async function findOrCreateUOM(name: string) { return await inventorySearch.findOrCreateUOM(name); }
+export async function findOrCreateUOMsBatch(names: string[]) { return await inventorySearch.findOrCreateUOMsBatch(names); }
+export async function updateUOM(prevState: any, formData: FormData) { return await inventorySearch.updateUOM(prevState, formData); }
 
 export async function deleteUOM(id: string) {
     const session = await auth();
@@ -923,116 +788,7 @@ export async function deleteLocation(id: string) {
 // --- Product Management ---
 
 export async function getProductsPremium(query?: string, page: number = 1, supplierId?: string) {
-    const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
-
-    const pageSize = 100;
-    const skip = (page - 1) * pageSize;
-
-    try {
-        const where: any = {
-            company_id: session.user.companyId,
-            is_active: true
-        };
-
-        // If supplierId is provided, filter products to only those bought from this supplier before
-        if (supplierId) {
-            const supplierProductIds = await prisma.hms_purchase_receipt_line.findMany({
-                where: {
-                    hms_purchase_receipt: {
-                        supplier_id: supplierId,
-                        company_id: session.user.companyId
-                    }
-                },
-                select: { product_id: true }
-            });
-
-            const uniqueIds = Array.from(new Set(supplierProductIds.map(sp => sp.product_id)));
-            if (uniqueIds.length > 0) {
-                where.id = { in: uniqueIds };
-            } else {
-                // If no items found for this supplier, we don't apply the filter strictly 
-                // but we could. User asked to "filter", but if 0 items, search yields 0.
-                // Let's stick to the request: filter.
-                where.id = "NOT_FOUND"; // Force zero results if strictly filtering and no purchase history
-            }
-        }
-
-        if (query) {
-            where.OR = [
-                { name: { contains: query, mode: 'insensitive' } },
-                { sku: { contains: query, mode: 'insensitive' } },
-                { default_barcode: { contains: query, mode: 'insensitive' } },
-            ];
-        }
-
-        const [products, total, companySettings] = await prisma.$transaction([
-            prisma.hms_product.findMany({
-                where,
-                skip,
-                take: pageSize,
-                orderBy: { created_at: 'desc' },
-                include: {
-                    hms_stock_levels: {
-                        select: { quantity: true }
-                    },
-                    hms_product_category_rel: {
-                        include: { hms_product_category: true }
-                    },
-                    hms_uom: true
-                }
-            }),
-            prisma.hms_product.count({ where }),
-            prisma.company_settings.findUnique({
-                where: { company_id: session.user.companyId },
-                select: { currencies: { select: { symbol: true } } }
-            })
-        ]);
-
-        const processed = products.map(p => {
-            const totalStock = p.hms_stock_levels.reduce((sum, lvl) => sum + Number(lvl.quantity || 0), 0);
-            let status = 'In Stock';
-            if (totalStock === 0) status = 'Out of Stock';
-            else if (totalStock < 10) status = 'Low Stock';
-
-            // Extract brand from metadata if exists
-            const metadata = p.metadata as Record<string, any> || {};
-
-            // Explicitly exclude raw complex objects like hms_stock_levels to avoid Decimal leakage
-            // and serialize all Decimal fields.
-            const { hms_stock_levels, ...rest } = p;
-
-            return {
-                ...rest,
-                price: Number(p.price || 0),
-                totalStock,
-                stockStatus: status,
-                category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
-                brand: metadata.brand || '',
-                uom: p.hms_uom?.name || p.uom,
-                default_cost: Number(metadata.cost_price || p.default_cost || 0),
-                mrp: Number(metadata.mrp || p.price || 0)
-            };
-        });
-
-        // Default to system default if not set
-        const currencySymbol = companySettings?.currencies?.symbol || SYSTEM_DEFAULT_CURRENCY_SYMBOL;
-
-        return {
-            success: true,
-            data: serialize(processed),
-            meta: {
-                total,
-                page,
-                totalPages: Math.ceil(total / pageSize),
-                currencySymbol
-            }
-        };
-
-    } catch (error) {
-        console.error("DEBUG: getProductsPremium failed:", error);
-        return { error: "Failed to fetch products: " + (error instanceof Error ? error.message : String(error)) };
-    }
+    return await inventorySearch.getProductsPremium(query, page, supplierId);
 }
 
 export async function createProduct(formData: FormData) {
@@ -1158,61 +914,7 @@ export async function createProduct(formData: FormData) {
     }
 }
 
-export async function getProduct(id: string) {
-    const session = await auth();
-    if (!session?.user?.companyId) return null;
-
-    try {
-        const product = await prisma.hms_product.findUnique({
-            where: {
-                id,
-                company_id: session.user.companyId
-            },
-            include: {
-                hms_product_supplier: {
-                    where: { is_primary: true },
-                    take: 1
-                },
-                product_tax_rules: {
-                    include: { tax_rates: true },
-                    take: 1,
-                    orderBy: { priority: 'asc' }
-                },
-                hms_product_image: {
-                    take: 1,
-                    orderBy: { created_at: 'desc' }
-                },
-                hms_product_category_rel: true,
-                hms_stock_levels: true
-            }
-        });
-
-        if (!product) return null;
-
-        const metadata = product.metadata as Record<string, any> || {};
-
-        return serialize({
-            ...product,
-            price: Number(product.price || 0),
-            mrp: Number(metadata.mrp || product.price || 0),
-            hsn: (metadata.hsn as string) || '',
-            packing: (metadata.packing as string) || '',
-            brand: metadata.brand || '',
-            tracking: metadata.tracking || 'none',
-            supplierId: product.hms_product_supplier[0]?.supplier_id || '',
-            taxRateId: product.product_tax_rules[0]?.tax_rate_id || '',
-            taxRate: Number(product.product_tax_rules[0]?.tax_rates?.rate || 0),
-            imageUrl: product.hms_product_image[0]?.url || '',
-            default_cost: Number(metadata.cost_price || product.default_cost || 0),
-            categoryId: product.hms_product_category_rel[0]?.category_id || '',
-            manufacturerId: product.manufacturer_id || '',
-            stock_levels: product.hms_stock_levels
-        });
-    } catch (error) {
-        console.error("Failed to fetch product:", error);
-        return null;
-    }
-}
+export async function getProduct(id: string) { return await inventorySearch.getProduct(id); }
 
 export async function updateProduct(formData: FormData) {
     const session = await auth();
@@ -1433,54 +1135,7 @@ export async function updateProductBatch(prevState: any, formData: FormData) {
 }
 
 export async function getSuppliersList(query?: string, page: number = 1) {
-    const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
-
-    const pageSize = 10;
-    const skip = (page - 1) * pageSize;
-
-    try {
-        const where: any = {
-            company_id: session.user.companyId,
-            is_active: true
-        };
-        if (query) {
-            where.name = { contains: query, mode: 'insensitive' };
-        }
-
-        const [suppliers, total] = await prisma.$transaction([
-            prisma.hms_supplier.findMany({
-                where,
-                skip,
-                take: pageSize,
-                orderBy: { created_at: 'desc' },
-                include: {
-                    _count: { select: { hms_product_supplier: true, hms_purchase_order: true } }
-                }
-            }),
-            prisma.hms_supplier.count({ where })
-        ]);
-
-        return {
-            success: true,
-            data: suppliers.map(s => {
-                const meta = s.metadata as any || {};
-                return {
-                    id: s.id,
-                    name: s.name,
-                    gstin: meta.gstin || '',
-                    address: meta.address || '',
-                    productCount: s._count.hms_product_supplier,
-                    orderCount: s._count.hms_purchase_order,
-                    createdAt: s.created_at
-                };
-            }),
-            meta: { total, page, totalPages: Math.ceil(total / pageSize) }
-        };
-    } catch (error) {
-        console.error("Failed to fetch suppliers list:", error);
-        return { error: "Failed to fetch suppliers" };
-    }
+    return await inventorySearch.getSuppliersList(query, page);
 }
 
 export async function getStockMoves(query?: string, page: number = 1, options?: { fromDate?: string, toDate?: string, type?: string }) {
@@ -1591,10 +1246,9 @@ export async function getStockReport(options: {
 
     try {
         const productWhere: any = {
-            tenant_id: tenantId,
+            company_id: companyId,
             is_active: true,
             // [MOD] Removed strict is_stockable: true to show all products that might have physical batches/stock
-            // even if mistakenly marked as non-stockable in Master File.
         };
 
         if (options.query) {
@@ -1670,14 +1324,14 @@ export async function getStockReport(options: {
                         id: `p-${p.id}`,
                         productId: p.id,
                         sku: p.sku || 'N/A',
-                        productName: p.name,
+                        name: p.name,
                         batchNo: 'N/A',
                         expiryDate: null,
                         qty: 0,
                         uom: uomName,
                         friendlyQty: '0 Units',
                         costPrice: p.default_cost?.toNumber() || 0,
-                        mrp: (p.metadata as any)?.last_mrp || 0,
+                        mrp: Number((p.metadata as any)?.last_mrp || 0),
                         salePrice: p.price?.toNumber() || 0,
                         totalValue: 0,
                         category: categoryName,
@@ -1686,6 +1340,11 @@ export async function getStockReport(options: {
                 }
             } else {
                 batches.forEach(b => {
+                    const costVal = b.cost?.toNumber() || 0;
+                    const qtyVal = b.qty_on_hand?.toNumber() || 0;
+                    const mrpVal = b.mrp?.toNumber() || 0;
+                    const saleVal = b.sale_price?.toNumber() || 0;
+
                     reportData.push({
                         id: b.id,
                         productId: p.id,
@@ -1693,13 +1352,13 @@ export async function getStockReport(options: {
                         name: p.name,
                         batchNo: b.batch_no,
                         expiryDate: b.expiry_date,
-                        qty: b.qty_on_hand.toNumber(),
-                        friendlyQty: formatFriendlyQty(b.qty_on_hand.toNumber(), p.metadata),
+                        qty: qtyVal,
+                        friendlyQty: formatFriendlyQty(qtyVal, p.metadata),
                         uom: uomName,
-                        costPrice: b.cost.toNumber(),
-                        mrp: b.mrp.toNumber(),
-                        salePrice: b.sale_price.toNumber(),
-                        totalValue: b.cost.toNumber() * b.qty_on_hand.toNumber(),
+                        costPrice: costVal,
+                        mrp: mrpVal,
+                        salePrice: saleVal,
+                        totalValue: costVal * qtyVal,
                         category: categoryName,
                         metadata: p.metadata
                     });
@@ -1713,7 +1372,6 @@ export async function getStockReport(options: {
         const allBatches = await prisma.hms_product_batch.findMany({
             where: {
                 company_id: companyId,
-                tenant_id: tenantId,
                 hms_product: { is_active: true }
             },
             select: { qty_on_hand: true, cost: true, expiry_date: true }
@@ -1807,209 +1465,11 @@ export async function bulkUpdateBatchPricing(updates: { batchId: string, cost?: 
 
 // --- Smart Product Matching & Auto-Creation ---
 
-export async function findOrCreateProduct(productName: string, additionalData?: {
-    mrp?: number;
-    hsn?: string;
-    packing?: string;
-    taxRate?: number;
-}) {
-    const session = await auth();
-    if (!session?.user?.companyId || !session?.user?.tenantId) {
-        return { error: "Unauthorized" };
-    }
-
-    try {
-        const companyId = session.user.companyId;
-        const tenantId = session.user.tenantId;
-
-        // 1. Try to find existing product by exact name match
-        let product = await prisma.hms_product.findFirst({
-            where: {
-                company_id: companyId,
-                name: {
-                    equals: productName,
-                    mode: 'insensitive'
-                }
-            }
-        });
-
-        if (product) {
-            // CRITICAL: Even if product exists, ensure it has a Tax Rule if the scan provided one
-            if (additionalData?.taxRate) {
-                const taxRateVal = Number(additionalData.taxRate);
-                if (taxRateVal > 0) {
-                    const existingRule = await prisma.product_tax_rules.findFirst({
-                        where: { product_id: product.id, is_active: true }
-                    });
-
-                    if (!existingRule) {
-                        const taxMaps = await prisma.company_tax_maps.findMany({
-                            where: { company_id: companyId },
-                            include: { tax_rates: true }
-                        });
-                        const match = taxMaps.find(m => Math.abs(Number(m.tax_rates.rate) - taxRateVal) < 0.1);
-
-                        if (match) {
-                            await prisma.product_tax_rules.create({
-                                data: {
-                                    id: crypto.randomUUID(),
-                                    tenant_id: tenantId,
-                                    company_id: companyId,
-                                    product_id: product.id,
-                                    tax_rate_id: match.tax_rate_id,
-                                    priority: 1,
-                                    is_active: true
-                                }
-                            });
-                            console.log(`✅ UPDATE: Auto-created tax rule for EXISTING product (Exact Match): ${product.name}, Rate: ${taxRateVal}%`);
-                        }
-                    }
-                }
-            }
-
-            return {
-                productId: product.id,
-                productName: product.name,
-                created: false
-            };
-        }
-
-        // 2. If not found, try fuzzy match
-        const similarProducts = await prisma.hms_product.findMany({
-            where: {
-                company_id: companyId,
-                name: {
-                    contains: productName,
-                    mode: 'insensitive'
-                }
-            },
-            take: 1
-        });
-
-        if (similarProducts.length > 0) {
-            product = similarProducts[0];
-
-            // CRITICAL: Even if product exists, ensure it has a Tax Rule if the scan provided one
-            if (additionalData?.taxRate) {
-                const taxRateVal = Number(additionalData.taxRate);
-                if (taxRateVal > 0) {
-                    const existingRule = await prisma.product_tax_rules.findFirst({
-                        where: { product_id: product.id, is_active: true }
-                    });
-
-                    if (!existingRule) {
-                        const taxMaps = await prisma.company_tax_maps.findMany({
-                            where: { company_id: companyId },
-                            include: { tax_rates: true }
-                        });
-                        const match = taxMaps.find(m => Math.abs(Number(m.tax_rates.rate) - taxRateVal) < 0.1);
-
-                        if (match) {
-                            await prisma.product_tax_rules.create({
-                                data: {
-                                    id: crypto.randomUUID(),
-                                    tenant_id: tenantId,
-                                    company_id: companyId,
-                                    product_id: product.id,
-                                    tax_rate_id: match.tax_rate_id,
-                                    priority: 1,
-                                    is_active: true
-                                }
-                            });
-                            console.log(`✅ UPDATE: Auto-created tax rule for EXISTING product: ${product.name}, Rate: ${taxRateVal}%`);
-                        }
-                    }
-                }
-            }
-
-            return {
-                productId: product.id,
-                productName: product.name,
-                created: false,
-                fuzzyMatch: true
-            };
-        }
-
-        // 3. Auto-create new product
-        const newProduct = await prisma.hms_product.create({
-            data: {
-                tenant_id: tenantId,
-                company_id: companyId,
-                name: productName,
-                description: productName, // Use actual name for description
-                price: additionalData?.mrp || 0,
-                default_cost: 0,
-                sku: `AUTO-${Date.now()}`,
-                is_active: true,
-                is_service: false,
-                is_stockable: true,
-                metadata: {
-                    ...(additionalData?.hsn && { hsn: additionalData.hsn }),
-                    ...(additionalData?.packing && { packing: additionalData.packing }),
-                    tax_rate: additionalData?.taxRate, // Proactive tax capture
-                    autoCreated: true,
-                    created_from: 'invoice_scan',
-                    scan_details: additionalData
-                }
-            }
-        });
-
-        // 4. IMMEDIATE TAX RULE CREATION (Critical for Billing)
-        if (additionalData?.taxRate) {
-            const taxRateVal = Number(additionalData.taxRate);
-            if (taxRateVal > 0) {
-                // Find matching tax ID in company settings
-                const taxMaps = await prisma.company_tax_maps.findMany({
-                    where: { company_id: companyId },
-                    include: { tax_rates: true }
-                });
-                const match = taxMaps.find(m => Math.abs(Number(m.tax_rates.rate) - taxRateVal) < 0.1);
-
-                if (match) {
-                    await prisma.product_tax_rules.create({
-                        data: {
-                            id: crypto.randomUUID(),
-                            tenant_id: tenantId,
-                            company_id: companyId,
-                            product_id: newProduct.id,
-                            tax_rate_id: match.tax_rate_id,
-                            priority: 1,
-                            is_active: true
-                        }
-                    });
-                    console.log(`✅ Auto-created tax rule for product: ${productName}, Rate: ${taxRateVal}%`);
-                }
-            }
-        }
-
-        console.log(`✅ Auto-created product: ${productName}`);
-
-        return {
-            productId: newProduct.id,
-            productName: newProduct.name,
-            created: true
-        };
-
-    } catch (error) {
-        console.error("Failed to find/create product:", error);
-        return { error: "Failed to process product" };
-    }
+export async function findOrCreateProduct(productName: string, additionalData?: any) {
+    return await inventorySearch.findOrCreateProduct(productName, additionalData);
 }
-
-export async function findOrCreateProductsBatch(items: { productName: string, mrp?: number, hsn?: string, packing?: string, taxRate?: number }[]) {
-    const session = await auth();
-    if (!session?.user?.companyId || !session?.user?.tenantId) return { error: "Unauthorized" };
-
-    const results: any[] = [];
-    const companyId = session.user.companyId;
-
-    // Process sequentially but in a single server call from the UI
-    for (const item of items) {
-        const res = await findOrCreateProduct(item.productName, item);
-        results.push({ ...res, originalName: item.productName });
-    }
-
-    return { success: true, data: results };
+export async function findOrCreateProductsBatch(items: any[]) {
+    return await inventorySearch.findOrCreateProductsBatch(items);
 }
 
 // Helper for CSV Parsing
@@ -2085,17 +1545,44 @@ export async function importProductsCSV(formData: FormData) {
     const idxStock = getIdx(['stock', 'quantity', 'qty', 'opening']);
     const idxBatch = getIdx(['batch']);
     const idxExpiry = getIdx(['expiry', 'exp']);
-    const idxManufacturer = getIdx(['manufacturer', 'mfg']);
+    const idxManufacturer = getIdx(['manufacturer', 'mfg', 'brand', 'company']);
+    const idxGeneric = getIdx(['generic', 'salt', 'composition', 'molecule']);
+    const idxHsn = getIdx(['hsn', 'sac', 'tax code', 'hsn_code']);
+    const idxMinStock = getIdx(['min stock', 'alert level', 'reorder']);
+    const idxProductType = getIdx(['type', 'kind', 'class']);
 
     if (idxName === -1) {
         return { error: "CSV must contain a 'Name' column." };
     }
 
-    // 2. Pre-fetch Data for mapping
-    const [existingCats, existingTaxes] = await Promise.all([
+    // 2. Pre-fetch Data for mapping (Optimization: Fetch all at once to avoid thousands of per-row queries)
+    const [existingCats, existingTaxes, existingManufacturers, existingProducts, defaultLocation] = await Promise.all([
         prisma.hms_product_category.findMany({ where: { company_id: companyId }, select: { id: true, name: true, default_tax_rate_id: true } }),
-        prisma.company_taxes.findMany({ where: { company_id: companyId }, select: { id: true, rate: true } })
+        prisma.company_taxes.findMany({ where: { company_id: companyId }, select: { id: true, rate: true } }),
+        prisma.hms_manufacturer.findMany({ where: { company_id: companyId }, select: { id: true, name: true } }),
+        prisma.hms_product.findMany({ where: { company_id: companyId }, select: { id: true, sku: true, price: true, description: true, manufacturer_id: true, metadata: true } }),
+        prisma.hms_stock_location.findFirst({ where: { company_id: companyId } })
     ]);
+
+    // Resolved Default Location (fallback if missing)
+    let locationId = defaultLocation?.id;
+    if (!locationId) {
+        const newLocation = await prisma.hms_stock_location.create({
+            data: {
+                tenant_id: tenantId,
+                company_id: companyId,
+                name: 'Main Store',
+                code: 'MAIN'
+            }
+        });
+        locationId = newLocation.id;
+    }
+
+    // Maps for fast lookups
+    const productMap = new Map(existingProducts.map(p => [p.sku, p]));
+    const catMap = new Map(existingCats.map(c => [c.name.toLowerCase(), c]));
+    const mfgMap = new Map(existingManufacturers.map(m => [m.name.toLowerCase(), m]));
+    const taxMap = existingTaxes.map(t => ({ id: t.id, rate: Number(t.rate) }));
 
     let createdCount = 0;
     let updatedCount = 0;
@@ -2108,15 +1595,10 @@ export async function importProductsCSV(formData: FormData) {
 
         try {
             const row = parseCSVLine(line);
-
-            // Check row length matches roughly or reuse logic
-            // Just access safely
             const name = idxName !== -1 ? row[idxName] : null;
             if (!name) continue;
 
             const sku = idxSku !== -1 && row[idxSku] ? row[idxSku] : `PRD-${name.toUpperCase().replace(/[^A-Z0-9]/g, '-').slice(0, 30)}`;
-
-            // Basic sanitization for SKU
             const sanitizedSku = sku.trim().replace(/[^a-zA-Z0-9-]/g, '');
 
             const salePrice = idxPrice !== -1 ? parseFloat(row[idxPrice]) || 0 : 0;
@@ -2130,68 +1612,69 @@ export async function importProductsCSV(formData: FormData) {
             let categoryId = null;
             const catNameInput = (idxCat !== -1 && row[idxCat]) ? row[idxCat] : defaultCategory;
             if (catNameInput) {
-                const catName = catNameInput;
-                const existing = existingCats.find(c => c.name.toLowerCase() === catName.toLowerCase());
-                if (existing) categoryId = existing.id;
-                else {
-                    // Try to find reasonable default accounts for the new category
-                    let incomeAccountId = undefined;
-                    let expenseAccountId = undefined;
-
-                    if (catName.toLowerCase().includes('pharmacy') || catName.toLowerCase().includes('medicine')) {
-                        const phAccount = await prisma.accounts.findFirst({
-                            where: { company_id: companyId, code: '4200' } // Pharmacy Sales
-                        });
-                        if (phAccount) incomeAccountId = phAccount.id;
-                    } else if (catName.toLowerCase().includes('consultation') || catName.toLowerCase().includes('op')) {
-                        const opAccount = await prisma.accounts.findFirst({
-                            where: { company_id: companyId, code: '4020' } // OP Income
-                        });
-                        if (opAccount) incomeAccountId = opAccount.id;
-                    }
-
-                    const newCat = await prisma.hms_product_category.create({
+                const catName = catNameInput.trim();
+                let cat = catMap.get(catName.toLowerCase());
+                if (!cat) {
+                    // Create once and update map
+                    cat = await prisma.hms_product_category.create({
                         data: {
                             tenant_id: tenantId,
                             company_id: companyId,
                             name: catName,
-                            income_account_id: incomeAccountId,
-                            expense_account_id: expenseAccountId
                         }
                     });
-                    existingCats.push(newCat);
-                    categoryId = newCat.id;
+                    catMap.set(catName.toLowerCase(), cat as any);
                 }
+                categoryId = cat.id;
             }
 
-            // Upsert Product Logic
-            const existingProduct = await prisma.hms_product.findFirst({
-                where: { company_id: companyId, sku: sanitizedSku }
-            });
+            // Resolve Manufacturer
+            let manufacturerId = undefined;
+            const mfgName = idxManufacturer !== -1 ? row[idxManufacturer]?.trim() : null;
+            if (mfgName) {
+                let mfg = mfgMap.get(mfgName.toLowerCase());
+                if (!mfg) {
+                    mfg = await prisma.hms_manufacturer.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            name: mfgName,
+                            is_active: true
+                        }
+                    });
+                    mfgMap.set(mfgName.toLowerCase(), mfg);
+                }
+                manufacturerId = mfg.id;
+            }
 
-            let productId: string;
             const metadata: any = {
-                brand: idxBrand !== -1 ? row[idxBrand] : undefined,
-                manufacturer: idxManufacturer !== -1 ? row[idxManufacturer] : undefined,
+                brand: mfgName || undefined,
+                manufacturer: mfgName || undefined,
+                generic_name: idxGeneric !== -1 ? row[idxGeneric] : undefined,
+                hsn_code: idxHsn !== -1 ? row[idxHsn] : undefined,
+                min_stock_level: idxMinStock !== -1 ? parseFloat(row[idxMinStock]) : undefined,
                 mrp: mrp > 0 ? mrp : undefined,
                 purchase_price: purchaseCost > 0 ? purchaseCost : undefined
             };
 
+            const existingProduct = productMap.get(sanitizedSku);
+            let productId: string;
+
             if (existingProduct) {
-                // Update
                 const updated = await prisma.hms_product.update({
                     where: { id: existingProduct.id },
                     data: {
                         name,
                         price: salePrice > 0 ? salePrice : existingProduct.price,
                         description: idxDesc !== -1 && row[idxDesc] ? row[idxDesc] : existingProduct.description,
+                        manufacturer_id: manufacturerId || existingProduct.manufacturer_id,
                         metadata: { ...(existingProduct.metadata as object), ...metadata }
                     }
                 });
                 productId = updated.id;
                 updatedCount++;
             } else {
-                // Create
                 const created = await prisma.hms_product.create({
                     data: {
                         tenant_id: tenantId,
@@ -2203,152 +1686,98 @@ export async function importProductsCSV(formData: FormData) {
                         uom: uomStr,
                         is_active: true,
                         is_stockable: true,
-                        is_service: false,
                         created_by: session.user.id,
                         default_barcode: idxBarcode !== -1 ? row[idxBarcode] : null,
+                        manufacturer_id: manufacturerId,
                         metadata
                     }
                 });
                 productId = created.id;
+                productMap.set(sanitizedSku, created as any);
                 createdCount++;
-
             }
 
-            // Always Link Category if provided (for both New and Existing)
+            // Category Linking (Bulk check later or Upsert simple)
             if (categoryId) {
                 await prisma.hms_product_category_rel.upsert({
+                    where: { product_id_category_id: { product_id: productId, category_id: categoryId } },
+                    update: {},
+                    create: { product_id: productId, category_id: categoryId }
+                });
+            }
+
+            // Opening Stock (One upsert + one ledger)
+            if (openingStock > 0) {
+                let batchNo = (idxBatch !== -1 && row[idxBatch]) ? row[idxBatch] : `OPENING-${format(new Date(), 'yyyyMMdd')}`;
+                const expiry = idxExpiry !== -1 && row[idxExpiry] ? new Date(row[idxExpiry]) : null;
+
+                const batch = await prisma.hms_product_batch.upsert({
+                    where: { tenant_id_company_id_product_id_batch_no: { tenant_id: tenantId, company_id: companyId, product_id: productId, batch_no: batchNo } },
+                    create: {
+                        tenant_id: tenantId,
+                        company_id: companyId,
+                        product_id: productId,
+                        batch_no: batchNo,
+                        expiry_date: expiry,
+                        qty_on_hand: new Prisma.Decimal(openingStock),
+                        cost: new Prisma.Decimal(purchaseCost),
+                        mrp: new Prisma.Decimal(mrp),
+                        sale_price: new Prisma.Decimal(salePrice),
+                        created_by: session.user.id
+                    },
+                    update: {
+                        qty_on_hand: { increment: openingStock },
+                        ...(purchaseCost > 0 && { cost: new Prisma.Decimal(purchaseCost) }),
+                        ...(mrp > 0 && { mrp: new Prisma.Decimal(mrp) }),
+                        ...(salePrice > 0 && { sale_price: new Prisma.Decimal(salePrice) }),
+                        ...(expiry && { expiry_date: expiry })
+                    }
+                });
+
+                await prisma.hms_stock_levels.upsert({
                     where: {
-                        product_id_category_id: {
+                        tenant_id_company_id_product_id_location_id_batch_id: {
+                            tenant_id: tenantId,
+                            company_id: companyId,
                             product_id: productId,
-                            category_id: categoryId
+                            location_id: locationId,
+                            batch_id: batch.id
                         }
                     },
-                    update: {},
                     create: {
+                        tenant_id: tenantId,
+                        company_id: companyId,
                         product_id: productId,
-                        category_id: categoryId
-                    }
+                        location_id: locationId,
+                        batch_id: batch.id,
+                        quantity: new Prisma.Decimal(openingStock)
+                    },
+                    update: { quantity: { increment: openingStock } }
                 });
-            }
 
-            // 4. Handle Tax Rule
-            let taxRateToApply = taxRateVal;
-            let taxRateIdToApply = null;
-
-            // If no specific tax rate in CSV, try Category default
-            if (idxTax === -1 || isNaN(parseFloat(row[idxTax]))) {
-                const cat = existingCats.find(c => c.id === categoryId);
-                if (cat?.default_tax_rate_id) {
-                    taxRateIdToApply = cat.default_tax_rate_id;
-                }
-            }
-
-            if (taxRateIdToApply) {
-                const existingRule = await prisma.product_tax_rules.findFirst({
-                    where: { product_id: productId }
-                });
-                if (!existingRule) {
-                    await prisma.product_tax_rules.create({
-                        data: {
-                            tenant_id: tenantId,
-                            company_id: companyId,
-                            product_id: productId,
-                            tax_rate_id: taxRateIdToApply,
-                            priority: 1
-                        }
-                    });
-                }
-            } else if (!isNaN(taxRateToApply)) {
-                const match = existingTaxes.find(t => Math.abs(Number(t.rate) - taxRateToApply) < 0.1);
-                if (match) {
-                    const existingRule = await prisma.product_tax_rules.findFirst({
-                        where: { product_id: productId }
-                    });
-                    if (!existingRule) {
-                        await prisma.product_tax_rules.create({
-                            data: {
-                                tenant_id: tenantId,
-                                company_id: companyId,
-                                product_id: productId,
-                                tax_rate_id: match.id,
-                                priority: 1
-                            }
-                        });
-                    }
-                }
-            }
-
-            // 5. Handle Opening Stock
-            if (openingStock > 0) {
-                // Handle Batch
-                let batchId: string | null = null;
-                if (idxBatch !== -1 && row[idxBatch]) {
-                    const batchNo = row[idxBatch];
-                    const expiry = idxExpiry !== -1 && row[idxExpiry] ? new Date(row[idxExpiry]) : null;
-
-                    // Upsert Batch
-                    const batch = await prisma.hms_product_batch.upsert({
-                        where: {
-                            tenant_id_company_id_product_id_batch_no: {
-                                tenant_id: tenantId,
-                                company_id: companyId,
-                                product_id: productId,
-                                batch_no: batchNo
-                            }
-                        },
-                        create: {
-                            tenant_id: tenantId,
-                            company_id: companyId,
-                            product_id: productId,
-                            batch_no: batchNo,
-                            expiry_date: expiry,
-                            qty_on_hand: openingStock
-                        },
-                        update: {
-                            qty_on_hand: { increment: openingStock }
-                        }
-                    });
-                    batchId = batch.id;
-                }
-
-                // Get Last Balance
-                let currentBalance = 0;
-                const lastLedger = await prisma.hms_product_stock_ledger.findFirst({
-                    where: { product_id: productId },
-                    orderBy: { created_at: 'desc' }
-                });
-                if (lastLedger) currentBalance = Number(lastLedger.balance_qty);
-
-                const newBalance = currentBalance + openingStock;
-
-                // Create Ledger Entry
-                await prisma.hms_product_stock_ledger.create({
+                await prisma.hms_stock_ledger.create({
                     data: {
                         tenant_id: tenantId,
                         company_id: companyId,
                         product_id: productId,
-                        movement_type: 'OPENING', // ensure enum or string matches
-                        change_qty: openingStock,
-                        balance_qty: newBalance,
-                        batch_id: batchId,
-                        reference: `IMPORT-${Date.now()}-${i}`,
-                        cost: purchaseCost > 0 ? purchaseCost : undefined
+                        batch_id: batch.id,
+                        movement_type: 'OPENING',
+                        qty: new Prisma.Decimal(openingStock),
+                        unit_cost: new Prisma.Decimal(purchaseCost),
+                        total_cost: new Prisma.Decimal(openingStock * purchaseCost),
+                        reference: `IMPORT-${batchNo}`
                     }
                 });
             }
-
-
-
         } catch (e) {
-            const msg = (e as Error).message;
-            errors.push({ row: i + 1, error: msg });
+            errors.push({ row: i + 1, error: (e as Error).message });
         }
     }
 
     revalidatePath('/hms/inventory/products');
     return {
         success: true,
-        message: `Import complete. ${createdCount} new products added, ${updatedCount} existing products updated.`,
+        message: `Import complete. ${createdCount} created, ${updatedCount} updated.`,
         created: createdCount,
         updated: updatedCount,
         errors
@@ -2484,44 +1913,7 @@ export async function adjustStock(prevState: any, formData: FormData) {
     }
 }
 
-export async function searchProducts(query: string) {
-    const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
-
-    try {
-        const products = await prisma.hms_product.findMany({
-            where: {
-                company_id: session.user.companyId,
-                is_active: true,
-                OR: [
-                    { name: { contains: query, mode: 'insensitive' } },
-                    { sku: { contains: query, mode: 'insensitive' } }
-                ]
-            },
-            select: {
-                id: true,
-                name: true,
-                sku: true,
-                price: true,
-                default_cost: true,
-                uom: true,
-                metadata: true
-            },
-            take: 10
-        });
-
-        const serializedData = products.map(p => ({
-            ...p,
-            price: Number(p.price || 0), // Override original Decimal
-            mrp: Number(p.price || 0),
-            default_cost: Number(p.default_cost || (p.metadata && typeof p.metadata === 'object' ? (p.metadata as any).cost || 0 : 0))
-        }));
-
-        return { success: true, data: serializedData };
-    } catch (e: any) {
-        return { error: e.message };
-    }
-}
+export async function searchProducts(query: string) { return await inventorySearch.searchProducts(query); }
 
 export async function bulkUpdateProducts(productIds: string[], updates: {
     categoryId?: string;

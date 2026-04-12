@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { getHMSSettings } from "@/app/actions/settings"
 import crypto from "crypto"
 import { isUUID, safeNum } from "@/lib/utils/is-uuid"
 
@@ -66,27 +67,11 @@ export async function createPatientV10(patientId: string | null | any, formData:
     if (!companyId) return { error: "FACILITY_NOT_LINKED: Terminal must be associated with an active medical branch." };
 
     try {
-        // 3. DUPLICATE CHECK (Mobile Number)
+        // 3. DUPLICATE CHECK (Identity Pair: Soft Check for World-Standard)
+        // [BUSINESS-LOGIC] Allow family members to share the same mobile number.
+        // We no longer block here to provide a seamless "Open Facility" registration experience.
+        // Duplicates are handled via the MRN (Patient Number) and Frontend search.
         const isUpdate = (patientId && typeof patientId === 'string' && patientId.length > 30);
-        if (!isUpdate) {
-            const existingPatient = await prisma.hms_patient.findFirst({
-                where: {
-                    tenant_id: tenantId,
-                    contact: {
-                        path: ['phone'],
-                        equals: phone
-                    }
-                },
-                select: { id: true, first_name: true }
-            });
-
-            if (existingPatient) {
-                return {
-                    error: `DUPLICATE_FOUND: A patient with this mobile number (${phone}) is already registered as ${existingPatient.first_name}.`,
-                    data: existingPatient
-                };
-            }
-        }
         // -----------------------------------------------------------------------------------
         // MASTER PATIENT INDEX (UPSERT) - DIRECT MODE (No Transaction, No Others)
         // -----------------------------------------------------------------------------------
@@ -143,7 +128,20 @@ export async function createPatientV10(patientId: string | null | any, formData:
                     }
                 });
 
-                // [RCM-AUDIT] Automatic billing removed. Clinical terminal will now handle registration triggers.
+                // [RCM-AUDIT] Restore Automatic billing for new patients (Conditional on Master Disable)
+                const settingsRes = await getHMSSettings();
+                const isRegistrationDisabled = settingsRes.success && settingsRes.settings?.disableRegistrationBilling;
+
+                const shouldCharge = !isRegistrationDisabled && (formData.get('charge_registration') === 'on' || !isUpdate);
+                if (shouldCharge) {
+                    const { generateRegistrationInvoice } = await import("@/app/actions/billing");
+                    const regRes = await generateRegistrationInvoice(patient.id);
+                    if (regRes.success && regRes.data) {
+                        invoiceId = (regRes.data as any).id;
+                    } else {
+                        console.warn("[RCM-AUTO-BILL] Registration invoice failed to generate:", regRes.error);
+                    }
+                }
             }
 
             return {

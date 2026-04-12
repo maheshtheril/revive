@@ -89,12 +89,13 @@ export async function getNextVoucherNumber(date: string = new Date().toISOString
 export async function getBillableItems() {
     const session = await auth();
     const companyId = session?.user?.companyId || session?.user?.tenantId;
-    if (!companyId) return { error: "Unauthorized" };
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { error: "Unauthorized" };
 
     try {
         const items = await prisma.hms_product.findMany({
             where: {
-                tenant_id: session.user.tenantId,
+                tenant_id: tenantId,
                 company_id: companyId,
                 is_active: true
             },
@@ -131,29 +132,32 @@ export async function getBillableItems() {
                     orderBy: { created_at: 'desc' },
                     take: 1
                 }
-            }
+            },
+            orderBy: { updated_at: 'desc' },
+            take: 2000 // [OPTIMIZATION] Limit to avoid heap/timeout issues on very large catalogs
         });
 
         const itemIds = items.map(i => i.id);
 
-        // PROCUREMENT SYNC: Find the absolute latest purchase records (Invoices or Receipts)
+        // PROCUREMENT SYNC: Retrieve latest system-wide records to populate maps efficiently
+        // [OPTIMIZATION] High-Performance Fetch: Only fetch THE latest 2000 records total.
+        // This is much faster than fetching per-product history across the entire history.
         const [lastInvoiceEntries, lastReceiptEntries, taxMaps] = await Promise.all([
             prisma.hms_purchase_invoice_line.findMany({
                 where: {
-                    product_id: { in: itemIds },
-                    tenant_id: session.user.tenantId,
-                    hms_purchase_invoice: {
-                        status: { in: ['posted', 'finalized', 'paid', 'draft', 'approved'] }
-                    }
+                    company_id: companyId,
+                    tenant_id: tenantId,
                 },
                 orderBy: { created_at: 'desc' },
+                take: 1500
             }),
             prisma.hms_purchase_receipt_line.findMany({
                 where: {
-                    product_id: { in: itemIds },
-                    tenant_id: session.user.tenantId
+                    company_id: companyId,
+                    tenant_id: tenantId
                 },
-                orderBy: { created_at: 'desc' }
+                orderBy: { created_at: 'desc' },
+                take: 1500
             }),
             prisma.company_tax_maps.findMany({
                 where: { company_id: companyId },
@@ -496,6 +500,18 @@ export async function createInvoice(data: {
             const totalPaidCalc = payments.reduce((sum, p) => sum + safeNum(p.amount), 0);
             const outstandingCalc = (status === 'paid') ? 0 : Math.max(0, grandTotalCalc - totalPaidCalc);
 
+            // [STABILITY-GUARD] Verify all product_ids exist before creating lines to prevent FK violations
+            // Clinical items (Lab, Doctor etc) often pass identifiers that might not be in the product master.
+            const candidateProductIds = processedLineItems.map(l => l.product_id).filter(isUUID);
+            const verifiedProducts = await tx.hms_product.findMany({
+                where: { 
+                    id: { in: candidateProductIds },
+                    company_id: companyId
+                },
+                select: { id: true }
+            });
+            const validProductIds = new Set(verifiedProducts.map(p => p.id));
+
             // 6. Persistence
             const invoiceId = crypto.randomUUID();
             const invoice = await tx.hms_invoice.create({
@@ -529,7 +545,7 @@ export async function createInvoice(data: {
                             discount_amount: safeNum(l.discount_amount),
                             tax_amount: safeNum(l.tax_amount),
                             net_amount: (safeNum(l.quantity) * safeNum(l.unit_price)) - safeNum(l.discount_amount),
-                            product_id: isUUID(l.product_id) ? l.product_id : null,
+                            product_id: (isUUID(l.product_id) && validProductIds.has(l.product_id)) ? l.product_id : null,
                             tax_rate_id: isUUID(l.tax_rate_id) ? l.tax_rate_id : null,
                             uom: l.uom || 'Unit'
                         }))
@@ -927,6 +943,17 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
         const finalOutstanding = (status === 'paid') ? 0 : Math.max(0, finalGrandTotal - totalPaid);
 
         const result = await prisma.$transaction(async (tx) => {
+            // [STABILITY-GUARD] Verify all product_ids exist before creating lines to prevent FK violations
+            const candidateProductIds = processedLineItems.map(l => l.product_id).filter(isUUID);
+            const verifiedProducts = await tx.hms_product.findMany({
+                where: { 
+                    id: { in: candidateProductIds },
+                    company_id: companyId
+                },
+                select: { id: true }
+            });
+            const validProductIds = new Set(verifiedProducts.map(p => p.id));
+
             // 0. Resolve Old State (to prevent double-deduction)
             const oldInvoice = await tx.hms_invoice.findUnique({
                 where: { id: invoiceId },
@@ -1105,7 +1132,7 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                     company_id: companyId,
                     invoice_id: invoiceId,
                     line_idx: index + 1,
-                    product_id: isUUID(item.product_id) ? item.product_id : null,
+                    product_id: (isUUID(item.product_id) && validProductIds.has(item.product_id)) ? item.product_id : null,
                     description: item.description || "Service Item",
                     quantity: safeNum(item.quantity) || 1,
                     unit_price: safeNum(item.unit_price),
@@ -2222,13 +2249,13 @@ export async function generateRegistrationInvoice(patientId: string, appointment
                 return existing;
             }
 
-            // 1. Resolve Settings for Registration Fee
+            // 1. Resolve Settings for Registration Fee (from 'registration_config')
             const settings = await tx.hms_settings.findFirst({
-                where: { tenant_id: tenantId, key: 'billing' }
+                where: { company_id: companyId, key: 'registration_config' }
             });
-            const billingSettings = (settings?.value as any) || {};
-            const regFee = billingSettings.registrationFee || 150;
-            const regProductId = billingSettings.registrationProductId;
+            const config = (settings?.value as any) || {};
+            const regFee = config.fee || 150;
+            const regProductId = config.productId;
 
             // 2. Resolve Product (Registration Fee)
             let product = null;
@@ -2278,7 +2305,8 @@ export async function generateRegistrationInvoice(patientId: string, appointment
                     patient_id: patientId,
                     appointment_id: appointmentId || null,
                     invoice_number: invoiceNumber,
-                    issued_at: new Date(),
+                    // [WORLD STANDARD] Use hospital timezone-aware date
+                    issued_at: await getHospitalNow(), 
                     subtotal: product.price || 0,
                     total_tax: 0,
                     total: product.price || 0,
@@ -2422,7 +2450,8 @@ export async function generateConsultationInvoice(appointmentId: string) {
                 patient_id: appointment.patient_id,
                 appointment_id: appointmentId,
                 invoice_number: invoiceNumber,
-                issued_at: new Date(),
+                // [WORLD STANDARD] Use hospital timezone-aware date
+                issued_at: await getHospitalNow(),
                 subtotal: consultationFee,
                 total: consultationFee,
                 outstanding_amount: consultationFee,
@@ -2516,36 +2545,39 @@ export async function getInitialInvoiceData(rawAppointmentId: string) {
             }
         });
 
-        // 1. Consultation Hub
+        // 1. Consultation Hub (Respect Master Switch)
         const configRes = await getHMSSettings();
         const configData = configRes.success ? configRes.settings : {};
-        const consultationBillingMode = (configData as any).consultationBillingMode || 'post_visit';
-
-        const consultationFee = Number(appointment.hms_clinician?.consultation_fee || 0);
-        let shouldAddConsultation = (consultationBillingMode === 'at_booking') || !['scheduled', 'arrived'].includes(appointment.status);
+        const isConsultationDisabled = !!(configData as any).disableConsultationBilling;
 
         const consultationItems: any[] = [];
-        if (consultationFee > 0 && shouldAddConsultation) {
-            const hasConsultation = draftInvoice?.hms_invoice_lines.some(l => l.description?.includes('Consultation Fee'));
-            if (!hasConsultation) {
-                consultationItems.push({
-                    id: appointment.clinician_id,
-                    name: `Consultation Fee - Dr. ${appointment.hms_clinician?.first_name}`,
-                    price: consultationFee,
-                    quantity: 1,
-                    type: 'service',
-                    source: 'consultation',
-                    sourceId: appointmentId
-                });
-            }
+        if (!isConsultationDisabled) {
+             const consultationBillingMode = (configData as any).consultationBillingMode || 'post_visit';
+             const consultationFee = Number(appointment.hms_clinician?.consultation_fee || 0);
+             let shouldAddConsultation = (consultationBillingMode === 'at_booking') || !['scheduled', 'arrived'].includes(appointment.status);
+
+             if (consultationFee > 0 && shouldAddConsultation) {
+                 const hasConsultation = draftInvoice?.hms_invoice_lines.some(l => l.description?.includes('Consultation Fee'));
+                 if (!hasConsultation) {
+                     consultationItems.push({
+                         id: appointment.clinician_id,
+                         name: `Consultation Fee - Dr. ${appointment.hms_clinician?.first_name}`,
+                         price: consultationFee,
+                         quantity: 1,
+                         type: 'service',
+                         source: 'consultation',
+                         sourceId: appointmentId
+                     });
+                 }
+             }
         }
 
-        // 2. Nursing Hub (Confirmed Consumables)
+        // 2. Nursing Hub (Confirmed & Pending Consumables)
         const nursingMoves = await prisma.hms_stock_move.findMany({
             where: {
                 source_reference: appointmentId,
                 tenant_id: tenantId as any,
-                source: { in: ['Nursing Consumption', 'Nursing Consumption (Confirmed)', 'confirmed'] }
+                source: { in: ['Nursing Consumption', 'Nursing Consumption (Confirmed)', 'Nursing Consumption (Pending)', 'confirmed'] }
             }
         });
 
@@ -2558,15 +2590,18 @@ export async function getInitialInvoiceData(rawAppointmentId: string) {
         const nursingItems = nursingMoves.map(m => {
             const product = productMap.get(m.product_id);
             const finalPrice = Number(m.cost || product?.price || 0);
+            const isPending = m.source === 'Nursing Consumption (Pending)';
+            
             return {
                 id: m.product_id,
-                name: product?.name || 'Consumable',
+                name: (product?.name || 'Consumable') + (isPending ? ' (Draft)' : ''),
                 quantity: Math.abs(Number(m.qty || 1)),
                 unit_price: finalPrice,
                 price: finalPrice,
                 type: 'item',
                 source: 'nursing',
-                sourceId: m.id
+                sourceId: m.id,
+                isPending: isPending
             };
         });
 
@@ -2660,7 +2695,7 @@ export async function getInitialInvoiceData(rawAppointmentId: string) {
 
         // Deduplicate and Prepare Hubs for Sidebar
         const hubs = [
-            { id: 'consult', label: 'Consultations', items: consultationItems, icon: 'User' },
+            // { id: 'consult', label: 'Consultations', items: consultationItems, icon: 'User' },
             { id: 'doctor', label: 'Doctor Hub', items: prescriptionItems, icon: 'Package' },
             { id: 'lab', label: 'Lab Hub', items: labItems, icon: 'Activity' },
             { id: 'nurse', label: 'Nursing Hub', items: nursingItems, icon: 'Zap' },
