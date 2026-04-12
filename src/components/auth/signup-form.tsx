@@ -31,19 +31,9 @@ export function SignupForm({ setIsLogin, branding }: { setIsLogin?: (v: boolean)
     })
 
     useEffect(() => {
-        console.log("[SIGNUP] Initiating data load...");
-        getCountries().then(data => {
-            console.log("[SIGNUP] Countries received:", data?.length || 0);
-            setCountries(data || []);
-        });
-        getCurrencies().then(data => {
-            console.log("[SIGNUP] Currencies received:", data?.length || 0);
-            setCurrencies(data || []);
-        });
-        getModules().then(data => {
-            console.log("[SIGNUP] Modules received:", data?.length || 0);
-            setModules(data || []);
-        });
+        getCountries().then(setCountries)
+        getCurrencies().then(setCurrencies)
+        getModules().then(setModules)
     }, [])
 
     const nextStep = () => {
