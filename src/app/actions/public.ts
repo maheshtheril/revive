@@ -7,34 +7,14 @@ import { unstable_noStore as noStore } from 'next/cache'
 export async function getCountries() {
     noStore();
     try {
-        const count = await prisma.countries.count();
-        if (count === 0) {
-            console.log("Auto-seeding Countries...");
-            // Use fallback mechanism if this fails or takes too long
-            try {
-                await prisma.countries.createMany({
-                    data: countriesList.map(c => ({
-                        iso2: c.iso2,
-                        iso3: c.iso3,
-                        name: c.name,
-                        flag: c.flag,
-                        region: c.region,
-                        is_active: true
-                    })),
-                    skipDuplicates: true
-                });
-            } catch (seedError) {
-                console.error("Auto-seeding countries failed:", seedError);
-            }
-        }
-
         const countries = await prisma.countries.findMany({
             where: { is_active: true },
             orderBy: { name: 'asc' },
             select: { id: true, name: true, iso2: true }
         });
 
-        if (countries.length === 0) throw new Error("No countries found after seeding attempting");
+        console.log(`[ACTION] Fetched ${countries.length} countries from DB`);
+        if (countries.length === 0) throw new Error("Database returned empty list");
         return countries;
     } catch (error) {
         console.error("Failed to fetch countries, returning static fallback:", error);
@@ -52,31 +32,14 @@ export async function getCountries() {
 export async function getCurrencies() {
     noStore();
     try {
-        const count = await prisma.currencies.count();
-        if (count === 0) {
-            console.log("Auto-seeding Currencies...");
-            try {
-                await prisma.currencies.createMany({
-                    data: currenciesList.map(c => ({
-                        code: c.code,
-                        name: c.name,
-                        symbol: c.symbol,
-                        is_active: true
-                    })),
-                    skipDuplicates: true
-                });
-            } catch (seedError) {
-                console.error("Auto-seeding currencies failed:", seedError);
-            }
-        }
-
         const currencies = await prisma.currencies.findMany({
             where: { is_active: true },
             orderBy: { code: 'asc' },
             select: { id: true, code: true, name: true, symbol: true }
         });
 
-        if (currencies.length === 0) throw new Error("No currencies found after seeding attempting");
+        console.log(`[ACTION] Fetched ${currencies.length} currencies from DB`);
+        if (currencies.length === 0) throw new Error("Database returned empty list");
         return currencies;
     } catch (error) {
         console.error("Failed to fetch currencies, returning static fallback:", error);
