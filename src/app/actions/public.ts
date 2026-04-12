@@ -4,49 +4,54 @@ import { prisma } from "@/lib/prisma"
 import { currenciesList, countriesList, modulesList } from "@/lib/static-data"
 import { unstable_noStore as noStore } from 'next/cache'
 
+// Circuit breaker to prevent hanging on slow DB connections
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs))
+    ]);
+}
+
 export async function getCountries() {
     noStore();
+    const fallback = countriesList.map(c => ({ id: c.iso2, name: c.name, iso2: c.iso2 }));
     try {
-        const countries = await prisma.countries.findMany({
-            where: { is_active: true },
-            orderBy: { name: 'asc' },
-            select: { id: true, name: true, iso2: true }
-        });
-        if (countries.length === 0) throw new Error("Empty DB");
-        return countries;
+        const query = (async () => {
+            const arr: any = await prisma.$queryRaw`SELECT id, name, iso2 FROM countries WHERE is_active = true ORDER BY name ASC`;
+            return (arr && arr.length > 0) ? arr : fallback;
+        })();
+        return await withTimeout(query, 3000, fallback); // 3s timeout or return static list
     } catch (error) {
-        return countriesList.map(c => ({ id: c.iso2, name: c.name, iso2: c.iso2 }));
+        return fallback;
     }
 }
 
 export async function getCurrencies() {
     noStore();
+    const fallback = currenciesList.map(c => ({ id: c.code, code: c.code, name: c.name, symbol: c.symbol }));
     try {
-        const currencies = await prisma.currencies.findMany({
-            where: { is_active: true },
-            orderBy: { code: 'asc' },
-            select: { id: true, code: true, name: true, symbol: true }
-        });
-        if (currencies.length === 0) throw new Error("Empty DB");
-        return currencies;
+        const query = (async () => {
+            const arr: any = await prisma.$queryRaw`SELECT id, code, name, symbol FROM currencies WHERE is_active = true ORDER BY code ASC`;
+            return (arr && arr.length > 0) ? arr : fallback;
+        })();
+        return await withTimeout(query, 3000, fallback);
     } catch (error) {
-        return currenciesList.map(c => ({ id: c.code, code: c.code, name: c.name, symbol: c.symbol }));
+        return fallback;
     }
 }
 
 export async function getModules() {
     noStore();
+    const fallback = modulesList
+        .filter(m => m.key !== 'system')
+        .map(m => ({ id: m.key, module_key: m.key, name: m.name, description: m.desc }));
     try {
-        const modules = await prisma.modules.findMany({
-            where: { is_active: true, module_key: { notIn: ['system'] } },
-            orderBy: { name: 'asc' },
-            select: { id: true, module_key: true, name: true, description: true }
-        });
-        if (modules.length === 0) throw new Error("Empty DB");
-        return modules;
+        const query = (async () => {
+            const arr: any = await prisma.$queryRaw`SELECT id, module_key, name, description FROM modules WHERE is_active = true AND module_key != 'system' ORDER BY name ASC`;
+            return (arr && arr.length > 0) ? arr : fallback;
+        })();
+        return await withTimeout(query, 3000, fallback);
     } catch (error) {
-        return modulesList
-            .filter(m => m.key !== 'system')
-            .map(m => ({ id: m.key, module_key: m.key, name: m.name, description: m.desc }));
+        return fallback;
     }
 }
