@@ -58,24 +58,6 @@ export async function getCurrencies() {
 export async function getModules() {
     noStore();
     try {
-        const count = await prisma.modules.count();
-        if (count === 0) {
-            console.log("Auto-seeding Modules...");
-            try {
-                await prisma.modules.createMany({
-                    data: modulesList.map(m => ({
-                        module_key: m.key,
-                        name: m.name,
-                        description: m.desc,
-                        is_active: true
-                    })),
-                    skipDuplicates: true
-                });
-            } catch (seedError) {
-                console.error("Auto-seeding modules failed:", seedError);
-            }
-        }
-
         const modules = await prisma.modules.findMany({
             where: {
                 is_active: true,
@@ -85,7 +67,8 @@ export async function getModules() {
             select: { id: true, module_key: true, name: true, description: true }
         });
 
-        if (modules.length === 0) throw new Error("No modules found after seeding attempting");
+        console.log(`[ACTION] Fetched ${modules.length} modules from DB`);
+        if (modules.length === 0) throw new Error("Database returned empty list");
         return modules;
     } catch (error) {
         console.error("Failed to fetch modules, returning static fallback:", error);
