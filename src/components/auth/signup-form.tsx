@@ -4,6 +4,7 @@ import { useActionState, useState, useEffect } from "react"
 import { signIn } from "next-auth/react"
 import { signup } from "@/app/actions/auth"
 import { getCountries, getCurrencies, getModules } from "@/app/actions/public"
+import { currenciesList, countriesList, modulesList } from "@/lib/static-data"
 import { Check, ChevronRight, Building, Layers } from "lucide-react"
 import { ZionaLogo } from "@/components/branding/ziona-logo"
 
