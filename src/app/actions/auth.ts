@@ -40,13 +40,10 @@ export async function signup(prevState: any, formData: FormData) {
     }
 
     try {
-        // [SAFETY] Check if this is a fresh system. For local installs, we only allow ONE initial signup.
-        const userCount = await prisma.app_user.count();
-        if (userCount > 0) {
-            return { error: "Initial setup already completed. Please login instead." }
-        }
-
         const existing = await prisma.app_user.findFirst({ where: { email } })
+        if (existing) {
+            return { error: "A user with this email already exists." }
+        }
         const inputCountryId = rawData.countryId as string;
         let resolvedCountryId = inputCountryId;
 
