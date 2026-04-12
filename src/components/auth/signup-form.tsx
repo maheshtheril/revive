@@ -30,11 +30,16 @@ export function SignupForm({
     const [currencies, setCurrencies] = useState<any[]>(initialCurrencies)
     const [modules, setModules] = useState<any[]>(initialModules)
 
-    // Update state if props change (though unlikely in this flow)
+    // Update state if props change, AND fetch in background if empty
     useEffect(() => {
         if (initialCountries.length > 0) setCountries(initialCountries);
+        else getCountries().then(setCountries);
+
         if (initialCurrencies.length > 0) setCurrencies(initialCurrencies);
+        else getCurrencies().then(setCurrencies);
+
         if (initialModules.length > 0) setModules(initialModules);
+        else getModules().then(setModules);
     }, [initialCountries, initialCurrencies, initialModules])
 
     // Form State

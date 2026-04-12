@@ -1,23 +1,13 @@
 import { SignupForm } from "@/components/auth/signup-form"
 import { getTenantBrandingByHost } from "@/app/actions/branding"
-import { getCountries, getCurrencies, getModules } from "@/app/actions/public"
 
 export const dynamic = 'force-dynamic'
 
 export default async function SignupPage() {
     let branding = null;
-    let countries = [];
-    let currencies = [];
-    let modules = [];
 
     try {
         branding = await getTenantBrandingByHost();
-        // Fetch data on server for instant render
-        [countries, currencies, modules] = await Promise.all([
-            getCountries(),
-            getCurrencies(),
-            getModules()
-        ]);
     } catch (error) {
         console.error("Signup Page Data Load Failure:", error);
     }
@@ -27,9 +17,6 @@ export default async function SignupPage() {
             <SignupForm 
                 setIsLogin={undefined} 
                 branding={branding || { isPublic: true }} 
-                initialCountries={countries}
-                initialCurrencies={currencies}
-                initialModules={modules}
             />
         </div>
     )
