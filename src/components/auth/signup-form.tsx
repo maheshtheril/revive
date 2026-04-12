@@ -35,6 +35,7 @@ export function SignupForm({
         const loadData = async () => {
             try {
                 const res = await fetch('/api/master-data');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 if (data.countries) setCountries(data.countries);
                 if (data.currencies) setCurrencies(data.currencies);

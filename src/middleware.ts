@@ -3,6 +3,7 @@ import { authConfig } from "./auth.config"
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+// Use NextAuth middleware
 const { auth } = NextAuth(authConfig)
 
 export default auth((req) => {
@@ -11,13 +12,14 @@ export default auth((req) => {
     requestHeaders.set('x-pathname', url.pathname)
 
     // --- GLOBAL READ-ONLY LOCK ---
-    // If the app is running in the Cloud (Vercel) OR explicitly set to Read-Only
-    const isCloud = process.env.VERCEL === '1';
+    // If explicitly set to Read-Only mode
     const forceReadOnly = process.env.NEXT_PUBLIC_READ_ONLY_MODE === 'true';
     
-    if ((isCloud || forceReadOnly) && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
-        // Allow ONLY Auth and specific non-data routes if needed
-        const isAuthRoute = url.pathname.startsWith('/api/auth') || url.pathname.startsWith('/login');
+    // We allow POST/PUT/DELETE on Vercel if it's NOT explicitly in Read-Only mode
+    // This allows the Signup/Login flow to work in the cloud.
+    if (forceReadOnly && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
+        // Allow ONLY Auth routes
+        const isAuthRoute = url.pathname.startsWith('/api/auth') || url.pathname.startsWith('/login') || url.pathname === '/signup';
         
         if (!isAuthRoute) {
             return new NextResponse(
@@ -37,7 +39,7 @@ export default auth((req) => {
     })
 })
 
-
 export const config = {
+    // Standard matcher for Next.js middleware
     matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 }
