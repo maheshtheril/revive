@@ -1,10 +1,43 @@
 'use server'
 
 import { prisma } from "@/lib/prisma"
-import { currenciesList, countriesList, modulesList } from "@/lib/static-data"
 import { unstable_noStore as noStore } from 'next/cache'
 
-// Circuit breaker to prevent hanging on slow DB connections
+// HARDCODED FALLBACKS TO PREVENT "ReferenceError: countriesList is not defined"
+const HARDCODED_COUNTRIES = [
+    { id: 'IN', name: 'India', iso2: 'IN' },
+    { id: 'AE', name: 'United Arab Emirates', iso2: 'AE' },
+    { id: 'US', name: 'United States', iso2: 'US' },
+    { id: 'GB', name: 'United Kingdom', iso2: 'GB' },
+    { id: 'CA', name: 'Canada', iso2: 'CA' },
+    { id: 'AU', name: 'Australia', iso2: 'AU' },
+    { id: 'SG', name: 'Singapore', iso2: 'SG' },
+    { id: 'MY', name: 'Malaysia', iso2: 'MY' },
+    { id: 'QA', name: 'Qatar', iso2: 'QA' },
+    { id: 'SA', name: 'Saudi Arabia', iso2: 'SA' },
+    { id: 'OM', name: 'Oman', iso2: 'OM' },
+    { id: 'KW', name: 'Kuwait', iso2: 'KW' },
+    { id: 'BH', name: 'Bahrain', iso2: 'BH' },
+    { id: 'LK', name: 'Sri Lanka', iso2: 'LK' },
+    { id: 'KE', name: 'Kenya', iso2: 'KE' }
+];
+
+const HARDCODED_CURRENCIES = [
+    { id: 'INR', code: 'INR', name: 'Indian Rupee', symbol: '₹' },
+    { id: 'AED', code: 'AED', name: 'United Arab Emirates Dirham', symbol: 'AED' },
+    { id: 'USD', code: 'USD', name: 'United States Dollar', symbol: '$' },
+    { id: 'GBP', code: 'GBP', name: 'British Pound', symbol: '£' },
+    { id: 'EUR', code: 'EUR', name: 'Euro', symbol: '€' },
+    { id: 'SAR', code: 'SAR', name: 'Saudi Riyal', symbol: 'SR' },
+    { id: 'KES', code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh' }
+];
+
+const HARDCODED_MODULES = [
+    { id: 'hms', module_key: 'hms', name: 'Health Management', description: 'Complete Hospital Operations' },
+    { id: 'crm', module_key: 'crm', name: 'CRM', description: 'Patient Relationship Management' },
+    { id: 'finance', module_key: 'finance', name: 'Finance & Accounting', description: 'Billing & Tally' }
+];
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
     return Promise.race([
         promise,
@@ -14,44 +47,39 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
 
 export async function getCountries() {
     noStore();
-    const fallback = countriesList.map(c => ({ id: c.iso2, name: c.name, iso2: c.iso2 }));
     try {
         const query = (async () => {
             const arr: any = await prisma.$queryRaw`SELECT id, name, iso2 FROM countries WHERE is_active = true ORDER BY name ASC`;
-            return (arr && arr.length > 0) ? arr : fallback;
+            return (arr && arr.length > 0) ? arr : HARDCODED_COUNTRIES;
         })();
-        return await withTimeout(query, 3000, fallback); // 3s timeout or return static list
+        return await withTimeout(query, 3000, HARDCODED_COUNTRIES);
     } catch (error) {
-        return fallback;
+        return HARDCODED_COUNTRIES;
     }
 }
 
 export async function getCurrencies() {
     noStore();
-    const fallback = currenciesList.map(c => ({ id: c.code, code: c.code, name: c.name, symbol: c.symbol }));
     try {
         const query = (async () => {
             const arr: any = await prisma.$queryRaw`SELECT id, code, name, symbol FROM currencies WHERE is_active = true ORDER BY code ASC`;
-            return (arr && arr.length > 0) ? arr : fallback;
+            return (arr && arr.length > 0) ? arr : HARDCODED_CURRENCIES;
         })();
-        return await withTimeout(query, 3000, fallback);
+        return await withTimeout(query, 3000, HARDCODED_CURRENCIES);
     } catch (error) {
-        return fallback;
+        return HARDCODED_CURRENCIES;
     }
 }
 
 export async function getModules() {
     noStore();
-    const fallback = modulesList
-        .filter(m => m.key !== 'system')
-        .map(m => ({ id: m.key, module_key: m.key, name: m.name, description: m.desc }));
     try {
         const query = (async () => {
             const arr: any = await prisma.$queryRaw`SELECT id, module_key, name, description FROM modules WHERE is_active = true AND module_key != 'system' ORDER BY name ASC`;
-            return (arr && arr.length > 0) ? arr : fallback;
+            return (arr && arr.length > 0) ? arr : HARDCODED_MODULES;
         })();
-        return await withTimeout(query, 3000, fallback);
+        return await withTimeout(query, 3000, HARDCODED_MODULES);
     } catch (error) {
-        return fallback;
+        return HARDCODED_MODULES;
     }
 }
