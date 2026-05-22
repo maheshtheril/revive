@@ -22,13 +22,46 @@ export default function CampRegistrationForm() {
         bloodGroup: ''
     })
 
+    const [dobDay, setDobDay] = useState('')
+    const [dobMonth, setDobMonth] = useState('')
+    const [dobYear, setDobYear] = useState('')
+
     const [errors, setErrors] = useState<{ [key: string]: string }>({})
+
+    const updateDob = (year: string, month: string, day: string) => {
+        if (year && month && day) {
+            const formattedMonth = month.padStart(2, '0')
+            const formattedDay = day.padStart(2, '0')
+            setFormData(prev => ({ ...prev, dob: `${year}-${formattedMonth}-${formattedDay}` }))
+            setErrors(prev => {
+                const copy = { ...prev }
+                delete copy.dob
+                return copy
+            })
+        } else {
+            setFormData(prev => ({ ...prev, dob: '' }))
+        }
+    }
 
     const validateStep1 = () => {
         const newErrors: { [key: string]: string } = {}
         if (!formData.firstName.trim()) {
             newErrors.firstName = 'First name is required'
         }
+        
+        // Validate partial or invalid DOB
+        if ((dobDay || dobMonth || dobYear) && !(dobDay && dobMonth && dobYear)) {
+            newErrors.dob = 'Please select all parts of Date of Birth'
+        } else if (dobDay && dobMonth && dobYear) {
+            const d = parseInt(dobDay, 10)
+            const m = parseInt(dobMonth, 10) - 1
+            const y = parseInt(dobYear, 10)
+            const dateObj = new Date(y, m, d)
+            if (dateObj.getFullYear() !== y || dateObj.getMonth() !== m || dateObj.getDate() !== d) {
+                newErrors.dob = 'Please enter a valid date'
+            }
+        }
+        
         setErrors(newErrors)
         return Object.keys(newErrors).length === 0
     }
@@ -184,6 +217,9 @@ export default function CampRegistrationForm() {
                                 email: '',
                                 bloodGroup: ''
                             })
+                            setDobDay('')
+                            setDobMonth('')
+                            setDobYear('')
                             setStep(1)
                             setCompleted(false)
                         }}
@@ -249,7 +285,7 @@ export default function CampRegistrationForm() {
                                                 placeholder="John"
                                                 value={formData.firstName}
                                                 onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                                                className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 transition-all ${
+                                                className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-white text-sm focus:outline-none focus:ring-2 transition-all ${
                                                     errors.firstName ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-700 focus:ring-primary/20 focus:border-primary'
                                                 }`}
                                             />
@@ -266,7 +302,7 @@ export default function CampRegistrationForm() {
                                                 placeholder="Doe"
                                                 value={formData.lastName}
                                                 onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                                                className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                                className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                                             />
                                         </div>
                                     </div>
@@ -274,15 +310,75 @@ export default function CampRegistrationForm() {
 
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Date of Birth</label>
-                                    <div className="relative">
-                                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"><Calendar size={16} /></span>
-                                        <input
-                                            type="date"
-                                            value={formData.dob}
-                                            onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
-                                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                                        />
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {/* Day Select */}
+                                        <div className="relative">
+                                            <select
+                                                value={dobDay}
+                                                onChange={(e) => {
+                                                    setDobDay(e.target.value);
+                                                    updateDob(dobYear, dobMonth, e.target.value);
+                                                }}
+                                                className="w-full px-3 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all appearance-none text-slate-300 cursor-pointer"
+                                            >
+                                                <option value="" disabled className="bg-slate-900 text-slate-400">Day</option>
+                                                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                                                    <option key={d} value={d} className="bg-slate-900 text-white">{d}</option>
+                                                ))}
+                                            </select>
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 text-[10px]">▼</span>
+                                        </div>
+
+                                        {/* Month Select */}
+                                        <div className="relative">
+                                            <select
+                                                value={dobMonth}
+                                                onChange={(e) => {
+                                                    setDobMonth(e.target.value);
+                                                    updateDob(dobYear, e.target.value, dobDay);
+                                                }}
+                                                className="w-full px-3 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all appearance-none text-slate-300 cursor-pointer"
+                                            >
+                                                <option value="" disabled className="bg-slate-900 text-slate-400">Month</option>
+                                                {[
+                                                    { val: '1', label: 'Jan' },
+                                                    { val: '2', label: 'Feb' },
+                                                    { val: '3', label: 'Mar' },
+                                                    { val: '4', label: 'Apr' },
+                                                    { val: '5', label: 'May' },
+                                                    { val: '6', label: 'Jun' },
+                                                    { val: '7', label: 'Jul' },
+                                                    { val: '8', label: 'Aug' },
+                                                    { val: '9', label: 'Sep' },
+                                                    { val: '10', label: 'Oct' },
+                                                    { val: '11', label: 'Nov' },
+                                                    { val: '12', label: 'Dec' }
+                                                ].map((m) => (
+                                                    <option key={m.val} value={m.val} className="bg-slate-900 text-white">{m.label}</option>
+                                                ))}
+                                            </select>
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 text-[10px]">▼</span>
+                                        </div>
+
+                                        {/* Year Select */}
+                                        <div className="relative">
+                                            <select
+                                                value={dobYear}
+                                                onChange={(e) => {
+                                                    setDobYear(e.target.value);
+                                                    updateDob(e.target.value, dobMonth, dobDay);
+                                                }}
+                                                className="w-full px-3 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all appearance-none text-slate-300 cursor-pointer"
+                                            >
+                                                <option value="" disabled className="bg-slate-900 text-slate-400">Year</option>
+                                                {Array.from({ length: 120 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+                                                    <option key={y} value={y} className="bg-slate-900 text-white">{y}</option>
+                                                ))}
+                                            </select>
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 text-[10px]">▼</span>
+                                        </div>
                                     </div>
+                                    {errors.dob && <p className="text-xs text-rose-500 font-medium">{errors.dob}</p>}
                                 </div>
 
                                 <div className="space-y-2">
@@ -325,7 +421,7 @@ export default function CampRegistrationForm() {
                                             placeholder="9876543210"
                                             value={formData.phone}
                                             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                                            className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 transition-all ${
+                                            className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-white text-sm focus:outline-none focus:ring-2 transition-all ${
                                                 errors.phone ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-700 focus:ring-primary/20 focus:border-primary'
                                             }`}
                                         />
@@ -342,7 +438,7 @@ export default function CampRegistrationForm() {
                                             placeholder="john.doe@example.com"
                                             value={formData.email}
                                             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                            className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 transition-all ${
+                                            className={`w-full pl-10 pr-4 py-3 rounded-xl border bg-slate-950/20 dark:bg-black/30 text-white text-sm focus:outline-none focus:ring-2 transition-all ${
                                                 errors.email ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-700 focus:ring-primary/20 focus:border-primary'
                                             }`}
                                         />
@@ -360,14 +456,14 @@ export default function CampRegistrationForm() {
                                             className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700 bg-slate-950/20 dark:bg-black/30 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all appearance-none cursor-pointer text-slate-300"
                                         >
                                             <option value="" disabled className="bg-slate-900 text-slate-400">Select Blood Group</option>
-                                            <option value="A+" className="bg-slate-900">A+</option>
-                                            <option value="A-" className="bg-slate-900">A-</option>
-                                            <option value="B+" className="bg-slate-900">B+</option>
-                                            <option value="B-" className="bg-slate-900">B-</option>
-                                            <option value="AB+" className="bg-slate-900">AB+</option>
-                                            <option value="AB-" className="bg-slate-900">AB-</option>
-                                            <option value="O+" className="bg-slate-900">O+</option>
-                                            <option value="O-" className="bg-slate-900">O-</option>
+                                            <option value="A+" className="bg-slate-900 text-white">A+</option>
+                                            <option value="A-" className="bg-slate-900 text-white">A-</option>
+                                            <option value="B+" className="bg-slate-900 text-white">B+</option>
+                                            <option value="B-" className="bg-slate-900 text-white">B-</option>
+                                            <option value="AB+" className="bg-slate-900 text-white">AB+</option>
+                                            <option value="AB-" className="bg-slate-900 text-white">AB-</option>
+                                            <option value="O+" className="bg-slate-900 text-white">O+</option>
+                                            <option value="O-" className="bg-slate-900 text-white">O-</option>
                                         </select>
                                         <span className="absolute right-4 top-1/2 -translate-y-1/2 border-l border-slate-700 pl-3 pointer-events-none text-slate-400">▼</span>
                                     </div>

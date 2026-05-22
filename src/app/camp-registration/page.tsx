@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function CampRegistrationPage() {
     return (
-        <main className="min-h-screen w-full relative flex flex-col items-center justify-center p-4 overflow-hidden bg-slate-950 text-slate-100">
+        <main className="dark min-h-screen w-full relative flex flex-col items-center justify-center p-4 overflow-hidden bg-slate-950 text-slate-100">
             {/* Ambient Background Glows */}
             <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[120px] pointer-events-none" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-teal-500/10 blur-[150px] pointer-events-none" />
