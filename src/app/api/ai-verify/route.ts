@@ -4,6 +4,8 @@ import { auth } from "@/auth";
 import { getAIConfig } from "@/app/actions/settings";
 
 export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function POST(request: NextRequest) {
     try {
@@ -50,7 +52,18 @@ export async function POST(request: NextRequest) {
         for (const config of testConfigs) {
             try {
                 console.log(`[AI-TEST] Testing ${config.model} (${config.apiVersion})...`);
-                const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.apiVersion });
+                const model = genAI.getGenerativeModel(
+                    { model: config.model }, 
+                    { 
+                        apiVersion: config.apiVersion,
+                        customHeaders: {
+                            "Cache-Control": "no-cache",
+                            "Pragma": "no-cache",
+                            "referer": "https://aistudio.google.com",
+                            "origin": "https://aistudio.google.com"
+                        }
+                    }
+                );
                 const result = await model.generateContent("AI_READY");
                 const responseText = result.response.text().trim();
 

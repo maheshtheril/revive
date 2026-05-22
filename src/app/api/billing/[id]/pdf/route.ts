@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
-import { generateInvoicePDFBase64 } from "@/lib/utils/pdf-generator";
+import { generateUniversalPDF } from "@/lib/pdf/universal-engine";
 
 export async function GET(
     request: NextRequest,
@@ -52,7 +52,7 @@ export async function GET(
             where: { id: invoice.company_id }
         });
 
-        const pdfBase64 = await generateInvoicePDFBase64(invoice, company, autoPrint);
+        const pdfBase64 = await generateUniversalPDF('sale_bill', invoice, company, invoice.branch_id || undefined, autoPrint);
         const pdfBuffer = Buffer.from(pdfBase64, 'base64');
 
         return new NextResponse(pdfBuffer, {

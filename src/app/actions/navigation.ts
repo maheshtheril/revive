@@ -19,6 +19,10 @@ export async function getMenuItems() {
 
     // EMERGENCY OVERRIDE REMOVED: Now fully dynamic based on RBAC permissions and Module Subscriptions.
 
+    if (!globalObj.__hms_menu_audited) {
+        await auditAndFixMenuPermissions().catch(e => console.error('[navigation] audit failed:', e));
+    }
+
     // PARALLEL DATA FETCHING (Performance Optimization)
     // We fetch everything at once to minimize database round-trips and latency.
     const [userPermsRaw, globalActiveModules, tenantModules, strictSubsCount, allMenuItems] = await Promise.all([
@@ -40,21 +44,8 @@ export async function getMenuItems() {
         userPerms.add('*');
     }
 
-    // FAILSAFE: Explicit Role-Based Permissions (Emergency Restore)
-    if (session?.user?.role === 'receptionist') {
-        userPerms.add('hms:dashboard:reception');
-        userPerms.add('patients:view');
-        userPerms.add('appointments:view');
-        userPerms.add('billing:view');
-    }
-    const role = session?.user?.role?.toLowerCase() || '';
-    const name = session?.user?.name?.toLowerCase() || '';
-    const email = session?.user?.email?.toLowerCase() || '';
-
-    if (role === 'lab_technician' || name.includes('lab') || email.includes('laab')) {
-        userPerms.add('lab:view');
-        userPerms.add('hms:view'); // Ensure they have base usage rights
-    }
+    // HARDCODED OVERRIDES REMOVED
+    // The system now strictly relies on the Database RBAC engine
 
     try {
         // Removed database side-effects for performance. 
@@ -115,7 +106,7 @@ export async function getMenuItems() {
 
             const hasHMSPerm = userPerms.has('hms:view') || userPerms.has('hms:dashboard:reception') || userPerms.has('hms:dashboard:doctor') || userPerms.has('*');
             const hasCRMPerm = userPerms.has('crm:view') || userPerms.has('crm:admin');
-            const hasFinancePerm = userPerms.has('accounting:view') || userPerms.has('finance:view') || userPerms.has('billing:view') || userPerms.has('*');
+            const hasFinancePerm = userPerms.has('accounting:view') || userPerms.has('finance:view') || userPerms.has('*');
             const hasInventoryPerm = userPerms.has('inventory:view') || userPerms.has('purchasing:view') || userPerms.has('pharmacy:view') || userPerms.has('*');
 
             if (hasHMSPerm) allowedModuleKeys.add('hms');
@@ -134,40 +125,10 @@ export async function getMenuItems() {
         // 1. FETCH ALL ITEMS
         // Moved to parallel block above
 
-        // --- HARD Override for Nurse Role ---
-        // CASE INSENSITIVE CHECK to ensure it catches 'Nurse', 'nurse', 'NURSE'
-        if (session?.user?.role && session.user.role.toLowerCase() === 'nurse') {
-            const nurseMenu = [
-                {
-                    module: { name: 'Clinical', module_key: 'hms' },
-                    items: [
-                        {
-                            key: 'hms-nursing', label: 'Nursing Station', url: '/hms/nursing/dashboard',
-                            icon: 'Activity', sort_order: 1, permission_code: 'hms:dashboard:nurse', is_global: true,
-                            module_key: 'hms', other_menu_items: []
-                        }
-                    ]
-                },
-                {
-                    module: { name: 'General', module_key: 'general' },
-                    items: [
-                        {
-                            key: 'hms-attendance', label: 'My Attendance', url: '/hms/attendance',
-                            icon: 'CalendarClock', sort_order: 10, permission_code: 'attendance:view', is_global: true,
-                            module_key: 'general', other_menu_items: []
-                        },
-                        {
-                            key: 'settings_profile', label: 'Profile', url: '/settings/profile',
-                            icon: 'User', sort_order: 99, permission_code: null, is_global: true,
-                            module_key: 'general', other_menu_items: []
-                        }
-                    ]
-                }
-            ];
-            return nurseMenu as any;
-        }
+        // --- HARD Overrides Removed ---
+        // We now rely purely on the Database RBAC Engine (World Standard)
         // ------------------------------------
-
+        // ------------------------------------
         if (allMenuItems.length === 0) {
             return getFallbackMenuItems(isAdmin);
         }
@@ -268,6 +229,11 @@ export async function getMenuItems() {
                 // Recursively check children
                 if (item.other_menu_items && item.other_menu_items.length > 0) {
                     item.other_menu_items = filterRestricted(item.other_menu_items);
+                    
+                    // If all children were stripped out and this is just a folder container, hide it
+                    if (item.other_menu_items.length === 0 && (!item.url || item.url === '#')) {
+                        return false;
+                    }
                 }
 
                 return true;
@@ -293,7 +259,7 @@ export async function getMenuItems() {
         });
 
         // 6. SORT BY PRIORITY (World Standard Ordering)
-        const priority = ['hms', 'accounting', 'inventory', 'crm', 'general', 'configuration'];
+        const priority = ['hms', 'finance', 'accounting', 'inventory', 'crm', 'general', 'configuration'];
         const result = Object.values(grouped)
             .filter(g => g.items.length > 0)
             .sort((a, b) => {
@@ -320,7 +286,7 @@ export async function getMenuItems() {
         // This ensures that if RBAC filtered out everything (or DB is empty), we still show the structure
         // for modules the user is legally allowed to see.
         const fallback = getFallbackMenuItems(isAdmin);
-        const coreKeys = ['accounting', 'inventory', 'crm', 'hms', 'lab'];
+        const coreKeys = ['finance', 'accounting', 'inventory', 'crm', 'hms', 'lab', 'configuration', 'system'];
         
         // Track already used keys to prevent React duplicate key errors in the UI
         const usedKeys = new Set<string>();
@@ -334,23 +300,29 @@ export async function getMenuItems() {
         });
 
         coreKeys.forEach(key => {
-            // KEY FIX: Only consider injection if the module is in allowedModuleKeys
             if (!allowedModuleKeys.has(key)) return;
 
             const exists = result.find(g => g.module?.module_key === key);
-            if (!exists) {
-                const fallbackGroup = fallback.find((g: any) => g.module?.module_key === key);
-                if (fallbackGroup && allowedModuleKeys.has(fallbackGroup.module.module_key)) {
-                    // Critical Fix: Filter out any items from the fallback that already exist in other groups
-                    const filteredItems = fallbackGroup.items.filter((item: any) => !usedKeys.has(item.key));
+            const fallbackGroup = fallback.find((g: any) => g.module?.module_key === key);
+            
+            if (fallbackGroup && allowedModuleKeys.has(fallbackGroup.module.module_key)) {
+                if (!exists) {
+                    const deduplicated = fallbackGroup.items.filter((item: any) => !usedKeys.has(item.key));
+                    const secureItems = filterRestricted(deduplicated);
                     
-                    if (filteredItems.length > 0) {
+                    if (secureItems.length > 0) {
                         result.push({
                             ...fallbackGroup,
-                            items: filteredItems
+                            items: secureItems
                         });
-                        // Add newly injected keys to usedKeys (for subsequent coreKeys)
-                        filteredItems.forEach((item: any) => usedKeys.add(item.key));
+                        secureItems.forEach((item: any) => usedKeys.add(item.key));
+                    }
+                } else {
+                    const deduplicated = fallbackGroup.items.filter((item: any) => !usedKeys.has(item.key));
+                    const secureItems = filterRestricted(deduplicated);
+                    if (secureItems.length > 0) {
+                        exists.items.push(...secureItems);
+                        secureItems.forEach((item: any) => usedKeys.add(item.key));
                     }
                 }
             }
@@ -368,7 +340,9 @@ export async function getMenuItems() {
             return (a.module?.name || '').localeCompare(b.module?.name || '');
         });
 
-
+        // Non-blocking self-healing seeders (in-memory locked so they only run once per server launch)
+        ensureAdminMenus().catch(() => {});
+        ensureAccountingMenu().catch(() => {});
 
         return result;
 
@@ -394,9 +368,10 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Patient Care',
                 icon: 'Users',
                 url: '#',
+                permission_code: 'patients:view',
                 other_menu_items: [
-                    { key: 'patient-list', label: 'Patient Registry', icon: 'User', url: '/hms/patients' },
-                    { key: 'patient-registration', label: 'Admission / Reg', icon: 'Plus', url: '/hms/patients/new' },
+                    { key: 'patient-list', label: 'Patient Registry', icon: 'User', url: '/hms/patients', permission_code: 'patients:view' },
+                    { key: 'patient-registration', label: 'Admission / Reg', icon: 'Plus', url: '/hms/patients/new', permission_code: 'patients:create' },
                 ]
             },
             {
@@ -404,9 +379,10 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Scheduling',
                 icon: 'Calendar',
                 url: '#',
+                permission_code: 'appointments:view',
                 other_menu_items: [
-                    { key: 'apt-calendar', label: 'Doctor Calendar', icon: 'Calendar', url: '/hms/appointments' },
-                    { key: 'apt-list', label: 'All Attributes', icon: 'List', url: '/hms/appointments/list' },
+                    { key: 'apt-calendar', label: 'Doctor Calendar', icon: 'Calendar', url: '/hms/appointments', permission_code: 'appointments:view' },
+                    { key: 'apt-list', label: 'All Attributes', icon: 'List', url: '/hms/appointments/list', permission_code: 'appointments:view' },
                 ]
             },
             {
@@ -414,10 +390,11 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Clinical Hub',
                 icon: 'Stethoscope',
                 url: '#',
+                permission_code: 'hms:view',
                 other_menu_items: [
-                    { key: 'prescriptions', label: 'Prescriptions', icon: 'FileText', url: '/hms/prescriptions' },
-                    { key: 'nursing-station', label: 'Nursing Station', icon: 'Activity', url: '/hms/nursing' },
-                    { key: 'doctors', label: 'Staff Registry', icon: 'UserCheck', url: '/hms/doctors' },
+                    { key: 'prescriptions', label: 'Prescriptions', icon: 'FileText', url: '/hms/prescriptions', permission_code: 'prescriptions:view' },
+                    { key: 'nursing-station', label: 'Nursing Station', icon: 'Activity', url: '/hms/nursing', permission_code: 'hms:dashboard:nurse' },
+                    { key: 'doctors', label: 'Staff Registry', icon: 'UserCheck', url: '/hms/doctors', permission_code: 'hms:admin' },
                 ]
             }
         ]
@@ -427,16 +404,18 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     items.push({
         module: { name: 'Accounting & Finance', module_key: 'accounting' },
         items: [
-            { key: 'acc-dashboard', label: 'Financial Overview', icon: 'LayoutDashboard', url: '/hms/accounting' },
+            { key: 'acc-dashboard', label: 'Financial Overview', icon: 'LayoutDashboard', url: '/hms/accounting', permission_code: 'accounting:view' },
+            { key: 'accounting-settings', label: 'Accounting Config', icon: 'Calculator', url: '/settings/accounting', permission_code: 'accounting:view' },
             {
                 key: 'acc-receivables',
                 label: 'Income & Sales',
                 icon: 'TrendingUp',
                 url: '#',
+                permission_code: 'accounting:view',
                 other_menu_items: [
-                    { key: 'hms-billing', label: 'Patient Invoices', icon: 'Receipt', url: '/hms/billing' },
-                    { key: 'hms-sales-returns', label: 'Credit Notes', icon: 'RotateCcw', url: '/hms/billing/returns' },
-                    { key: 'acc-payments', label: 'Payments Received', icon: 'CreditCard', url: '/hms/accounting/receipts' },
+                    { key: 'hms-billing', label: 'Patient Invoices', icon: 'Receipt', url: '/hms/billing', permission_code: 'billing:view' },
+                    { key: 'hms-sales-returns', label: 'Credit Notes', icon: 'RotateCcw', url: '/hms/billing/returns', permission_code: 'billing:returns:view' },
+                    { key: 'acc-payments', label: 'Payments Received', icon: 'CreditCard', url: '/hms/accounting/receipts', permission_code: 'accounting:view' },
                 ]
             },
             {
@@ -444,10 +423,11 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Expenses & Buys',
                 icon: 'TrendingDown',
                 url: '#',
+                permission_code: 'accounting:view',
                 other_menu_items: [
-                    { key: 'acc-bills', label: 'Vendor Bills', icon: 'FileMinus', url: '/hms/purchasing/bills' }, // Linked to Purchasing
-                    { key: 'acc-expenses', label: 'Payment Entry (F5)', icon: 'CreditCard', url: '/hms/accounting/payments/new' },
-                    { key: 'acc-payments-list', label: 'Payment Register', icon: 'List', url: '/hms/accounting/payments' },
+                    { key: 'acc-bills', label: 'Vendor Bills', icon: 'FileMinus', url: '/hms/purchasing/bills', permission_code: 'accounting:view' }, // Linked to Purchasing
+                    { key: 'acc-expenses', label: 'Payment Entry (F5)', icon: 'CreditCard', url: '/hms/accounting/payments/new', permission_code: 'accounting:create' },
+                    { key: 'acc-payments-list', label: 'Payment Register', icon: 'List', url: '/hms/accounting/payments', permission_code: 'accounting:view' },
                 ]
             },
             {
@@ -455,9 +435,11 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'General Ledger',
                 icon: 'Book',
                 url: '#',
+                permission_code: 'accounting:view',
                 other_menu_items: [
-                    { key: 'acc-coa', label: 'Chart of Accounts', icon: 'List', url: '/hms/accounting/coa' },
-                    { key: 'acc-journals', label: 'Journal Entries', icon: 'BookOpen', url: '/hms/accounting/journals' },
+                    { key: 'acc-coa', label: 'Chart of Accounts', icon: 'List', url: '/hms/accounting/coa', permission_code: 'accounting:view' },
+                    { key: 'acc-journals', label: 'Journal Entries', icon: 'BookOpen', url: '/hms/accounting/journals', permission_code: 'accounting:view' },
+                    { key: 'acc-shift-audit', label: 'Daily Shift Audit', icon: 'ShieldCheck', url: '/hms/accounting/shifts', permission_code: 'accounting:view' },
                 ]
             }
         ]
@@ -468,8 +450,8 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
         module: { name: 'Pharmacy & Inventory', module_key: 'inventory' },
         items: [
             { key: 'inv-dashboard', label: 'Inventory Overview', icon: 'LayoutDashboard', url: '/hms/inventory', permission_code: 'inventory:view' },
-            { key: 'inv-products', label: 'Product Master', icon: 'Package', url: '/hms/inventory/products' },
-            { key: 'inv-import', label: 'Bulk Import Products', icon: 'Upload', url: '/hms/inventory/products?import=true' },
+            { key: 'inv-products', label: 'Product Master', icon: 'Package', url: '/hms/inventory/products', permission_code: 'inventory:view' },
+            { key: 'inv-import', label: 'Bulk Import Products', icon: 'Upload', url: '/hms/inventory/products?import=true', permission_code: 'inventory:create' },
             {
                 key: 'inv-pharmacy',
                 label: 'Pharmacy Stock',
@@ -482,11 +464,12 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Procurement',
                 icon: 'ShoppingCart',
                 url: '#',
+                permission_code: 'purchasing:view',
                 other_menu_items: [
-                    { key: 'inv-suppliers', label: 'Suppliers', icon: 'Truck', url: '/hms/purchasing/suppliers' },
-                    { key: 'inv-po', label: 'Purchase Orders', icon: 'FileText', url: '/hms/purchasing/orders' },
-                    { key: 'inv-receipts', label: 'Goods Receipts', icon: 'ClipboardList', url: '/hms/purchasing/receipts' },
-                    { key: 'inv-returns', label: 'Purchase Returns', icon: 'Undo2', url: '/hms/purchasing/returns' },
+                    { key: 'inv-suppliers', label: 'Suppliers', icon: 'Truck', url: '/hms/purchasing/suppliers', permission_code: 'suppliers:view' },
+                    { key: 'inv-po', label: 'Purchase Orders', icon: 'FileText', url: '/hms/purchasing/orders', permission_code: 'purchasing:view' },
+                    { key: 'inv-receipts', label: 'Goods Receipts', icon: 'ClipboardList', url: '/hms/purchasing/receipts', permission_code: 'purchasing:view' },
+                    { key: 'inv-returns', label: 'Purchase Returns', icon: 'Undo2', url: '/hms/purchasing/returns', permission_code: 'purchasing:returns:view' },
                 ]
             },
             {
@@ -494,9 +477,10 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
                 label: 'Inventory Reports',
                 icon: 'BarChart3',
                 url: '#',
+                permission_code: 'inventory:view',
                 other_menu_items: [
-                    { key: 'inv-report-stock', label: 'Full Stock Report', icon: 'ClipboardList', url: '/hms/inventory/reports/stock' },
-                    { key: 'inv-report-valuation', label: 'Stock Valuation', icon: 'DollarSign', url: '/hms/inventory/reports/valuation' },
+                    { key: 'inv-report-stock', label: 'Full Stock Report', icon: 'ClipboardList', url: '/hms/inventory/reports/stock', permission_code: 'inventory:view' },
+                    { key: 'inv-report-valuation', label: 'Stock Valuation', icon: 'DollarSign', url: '/hms/inventory/reports/valuation', permission_code: 'inventory:view' },
                 ]
             }
         ]
@@ -506,9 +490,9 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     items.push({
         module: { name: 'Laboratory & Diagnostics', module_key: 'lab' },
         items: [
-            { key: 'lab-dashboard', label: 'Lab Analytics', icon: 'LayoutDashboard', url: '/hms/lab' },
-            { key: 'lab-pending', label: 'Pending Results', icon: 'FlaskConical', url: '/hms/lab/pending' },
-            { key: 'lab-order-all', label: 'Order Register', icon: 'List', url: '/hms/lab/orders' },
+            { key: 'lab-dashboard', label: 'Lab Analytics', icon: 'LayoutDashboard', url: '/hms/lab', permission_code: 'lab:view' },
+            { key: 'lab-pending', label: 'Pending Results', icon: 'FlaskConical', url: '/hms/lab/pending', permission_code: 'lab:view' },
+            { key: 'lab-order-all', label: 'Order Register', icon: 'List', url: '/hms/lab/orders', permission_code: 'lab:view' },
         ]
     });
 
@@ -516,8 +500,8 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     items.push({
         module: { name: 'CRM & Engagement', module_key: 'crm' },
         items: [
-            { key: 'crm-leads', label: 'Leads Pipeline', icon: 'Users', url: '/crm/leads' },
-            { key: 'crm-dashboard', label: 'Performance', icon: 'BarChart', url: '/crm/dashboard' },
+            { key: 'crm-leads', label: 'Leads Pipeline', icon: 'Users', url: '/crm/leads', permission_code: 'crm:view' },
+            { key: 'crm-dashboard', label: 'Performance', icon: 'BarChart', url: '/crm/dashboard', permission_code: 'crm:view' },
         ]
     });
 
@@ -525,12 +509,16 @@ function getFallbackMenuItems(isAdmin: boolean | undefined) {
     // 5. CONFIG
     if (isAdmin) {
         items.push({
-            module: { name: 'System Configuration', module_key: 'system' },
+            module: { name: 'Settings & Administration', module_key: 'configuration' },
             items: [
                 { key: 'users', label: 'User Management', icon: 'Users', url: '/settings/users' },
                 { key: 'roles', label: 'RBAC & Security', icon: 'Shield', url: '/settings/roles' },
-                { key: 'settings', label: 'Global Settings', icon: 'Settings', url: '/settings/global' },
+                { key: 'general-settings', label: 'Global Settings', icon: 'Settings', url: '/settings/global' },
+                { key: 'branch-settings', label: 'Branch Management', icon: 'Building2', url: '/settings/branches' },
+                { key: 'geography-settings', label: 'Geography & Regions', icon: 'Globe', url: '/settings/geography' },
+                { key: 'holiday-settings', label: 'Holiday Masters', icon: 'CalendarDays', url: '/settings/holidays' },
                 { key: 'hms-settings', label: 'HMS Settings', icon: 'Activity', url: '/settings/hms' },
+                { key: 'accounting-settings', label: 'Accounting Config', icon: 'Calculator', url: '/settings/accounting' },
             ]
         });
     }
@@ -553,6 +541,9 @@ export async function auditAndFixMenuPermissions() {
     if (isChecking) return { success: true }; 
 
     isChecking = true;
+    // [CRITICAL] Set global lock immediately to prevent parallel request hammering
+    globalObj.__hms_menu_audited = true; 
+    
     try {
         console.log("Self-healing: Auditing menu consistency...");
 
@@ -597,7 +588,11 @@ export async function auditAndFixMenuPermissions() {
         }
         // -1. ENSURE PERMISSIONS EXIST
         // Run seed check to register any missing permission codes
-        await seedRolesAndPermissions();
+        try {
+            await seedRolesAndPermissions();
+        } catch (seedErr: any) {
+            console.warn("Skipping seedRolesAndPermissions during menu audit:", seedErr?.message);
+        }
         
         // -0.5 ENSURE CORE MENUS EXIST (Self-Healing Structure)
         // We must ensure the physical menu items exist before we can secure them.
@@ -667,7 +662,14 @@ export async function auditAndFixMenuPermissions() {
             // Ensure these settings items require specific module permissions
             { key: 'crm-masters', perm: 'crm:admin' },
             { key: 'crm-settings', perm: 'crm:admin' },
-            { key: 'accounting-settings', perm: 'accounting:view' },
+            { key: 'accounting-settings', perm: 'settings:view' },
+            { key: 'users', perm: 'users:view' },
+            { key: 'roles', perm: 'roles:manage' },
+            { key: 'general-settings', perm: 'settings:view' },
+            { key: 'branch-settings', perm: 'settings:view' },
+            { key: 'geography-settings', perm: 'settings:view' },
+            { key: 'holiday-settings', perm: 'settings:view' },
+            { key: 'custom-fields', perm: 'settings:view' },
 
             // PURCHASING & INVENTORY (Granular)
             { key: 'inv-po', perm: 'purchasing:view' },
@@ -685,7 +687,6 @@ export async function auditAndFixMenuPermissions() {
             { key: 'settings', perm: 'system:admin' }, // Hide Global Settings
             { key: 'configuration', perm: 'system:admin' }, // Hide Configuration Group
             { key: 'hms-settings', perm: 'hms:admin' },
-            { key: 'roles', perm: 'roles:manage' }, // Correct Security: Only Admins manage roles
 
             { key: 'hms-lab', perm: 'lab:view' }, // Strict Lab Access
 
@@ -699,8 +700,8 @@ export async function auditAndFixMenuPermissions() {
             { key: 'hms-doctors', perm: 'hms:admin', label: 'Staff Registry' }, // Only Admins should manage staff registry
 
             // ATTENDANCE
-            { key: 'hms-attendance', perm: 'hms:view' }, // Available to all clinical staff
-            { key: 'crm-attendance', perm: 'hms:view' },
+            { key: 'hms-attendance', perm: 'hms:admin' }, // Only admins/HR should manage attendance
+            { key: 'crm-attendance', perm: 'crm:admin' },
 
             // CORE CLINICAL (Granular Access)
             { key: 'hms-patients', perm: 'patients:view' },
@@ -742,6 +743,27 @@ export async function auditAndFixMenuPermissions() {
                 data: { permission_code: m.perm }
             });
         }
+
+        // Force all accounting menu items (except patient billing and credit notes) to require accounting:view
+        await prisma.menu_items.updateMany({
+            where: {
+                module_key: { in: ['accounting', 'finance'] },
+                key: { notIn: ['hms-billing', 'hms-sales-returns'] }
+            },
+            data: { permission_code: 'accounting:view' }
+        });
+
+        // Force all configuration menu items to require settings:view
+        await prisma.menu_items.updateMany({
+            where: {
+                module_key: { in: ['configuration', 'settings', 'system'] },
+                OR: [
+                    { permission_code: null },
+                    { permission_code: { in: ['billing:view', 'hms:view', 'crm:view', 'inventory:view'] } }
+                ]
+            },
+            data: { permission_code: 'settings:view' }
+        });
 
         // 4. REPORTS & ROGUE ITEMS (Safe Update)
         await prisma.menu_items.updateMany({
@@ -838,10 +860,11 @@ export async function auditAndFixMenuPermissions() {
         }
 
         console.log("Self-healing: Menu permissions audited and fixed.");
-        globalObj.__hms_menu_audited = true;
         return { success: true };
     } catch (error) {
         console.error("Self-healing failed:", error);
+        // Keep audited = true to prevent infinite retry loops in case of persistent DB errors
+        globalObj.__hms_menu_audited = true; 
         return { success: false };
     } finally {
         isChecking = false;

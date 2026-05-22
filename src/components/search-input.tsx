@@ -26,7 +26,11 @@ export default function SearchInput({
             } else {
                 params.delete('q')
             }
-            replace(`${pathname}?${params.toString()}`)
+            
+            // Critical Fix: Prevent infinite loop by checking if the URL actually changed
+            if (searchParams.toString() !== params.toString()) {
+                replace(`${pathname}?${params.toString()}`)
+            }
         }, 300)
 
         return () => clearTimeout(timeoutId)

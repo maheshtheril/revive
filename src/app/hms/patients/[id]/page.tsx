@@ -10,6 +10,7 @@ import { InvoicePreviewDialog } from "@/components/hms/billing/invoice-preview-d
 import { AppointmentManageDialog } from "@/components/hms/appointments/appointment-manage-dialog"
 import { ClinicalTimeline } from "@/components/patients/clinical-timeline"
 import { PatientHistoryLog } from "@/components/patients/patient-history-log"
+import { PatientLedger } from "@/components/patients/patient-ledger"
 
 import { AdmissionDialog } from "@/components/hms/patients/admission-dialog"
 
@@ -121,8 +122,6 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
         })
     })
 
-    const patientAny = patient as any
-
     // Merge Clinical Events for Timeline
     const timelineEvents = [
         ...patient.hms_vitals.map(v => ({
@@ -149,6 +148,9 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
     ].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
 
     // [CRITICAL] Serialize Prisma Decimal objects for Client Components
+    const serializedPatient = JSON.parse(JSON.stringify(patient));
+    const patientAny = serializedPatient; // Use serialized version for all client-side props
+
     const serializedTimelineEvents = JSON.parse(JSON.stringify(timelineEvents));
 
     // Group Timeline Events by Date for World-Class Presentation
@@ -333,21 +335,33 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                         </TabsContent>
 
                         {/* TAB: FINANCIALS */}
-                        <TabsContent value="financials" className="m-0 max-w-7xl mx-auto space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <TabsContent value="financials" className="m-0 max-w-7xl mx-auto space-y-12 pb-20">
+                            {/* WORLD CLASS LEDGER VIEW */}
+                            <div className="space-y-4">
+                              <h3 className="text-xl font-black text-slate-900 flex items-center gap-3 px-2">
+                                <span className="h-8 w-1.5 rounded-full bg-indigo-600" />
+                                Patient Journal Ledger
+                              </h3>
+                              <PatientLedger patientId={id} />
+                            </div>
+
+                            <div className="h-px bg-slate-200 w-full" />
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 opacity-60 grayscale hover:grayscale-0 transition-all duration-700">
                                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                                    <p className="text-slate-500 font-medium text-sm">Total Invoiced</p>
+                                    <p className="text-slate-500 font-medium text-sm">Summary Invoiced</p>
                                     <p className="text-3xl font-black text-slate-900 mt-2">₹{totalInvoiced.toLocaleString()}</p>
                                 </div>
                                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                                    <p className="text-slate-500 font-medium text-sm">Outstanding</p>
+                                    <p className="text-slate-500 font-medium text-sm">Net Outstanding</p>
                                     <p className={`text-3xl font-black mt-2 ${totalOutstanding > 0 ? 'text-red-600' : 'text-emerald-600'}`}>₹{totalOutstanding.toLocaleString()}</p>
                                 </div>
                             </div>
 
-                            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                                <div className="p-6 border-b border-slate-100">
-                                    <h3 className="font-bold text-slate-900 text-lg">Invoices & Payments</h3>
+                            <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden opacity-80 hover:opacity-100 transition-opacity">
+                                <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+                                    <h3 className="font-black text-slate-900 text-lg uppercase tracking-widest">Historical Invoice Stream</h3>
+                                    <p className="text-xs text-slate-500 mt-1">Direct access to individual bill documents</p>
                                 </div>
                                 <div className="divide-y divide-slate-100">
                                     {patient.hms_invoice.map((inv, i) => {
@@ -357,21 +371,21 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                                                 key={i}
                                                 invoice={serializedInv}
                                                 trigger={
-                                                    <div className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group cursor-pointer w-full">
+                                                    <div className="p-5 hover:bg-slate-50 transition-colors flex items-center justify-between group cursor-pointer w-full">
                                                         <div className="flex items-center gap-4">
-                                                            <div className={`h-10 w-10 rounded-full flex items-center justify-center transition-colors ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200' : 'bg-orange-100 text-orange-600 group-hover:bg-orange-200'}`}>
-                                                                <Receipt className="h-5 w-5" />
+                                                            <div className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-all ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white' : 'bg-orange-100 text-orange-600 group-hover:bg-orange-600 group-hover:text-white'}`}>
+                                                                <Receipt className="h-6 w-6" />
                                                             </div>
                                                             <div className="text-left">
-                                                                <p className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                                                                <p className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors">
                                                                     {inv.invoice_no || inv.invoice_number ? `Invoice #${inv.invoice_no || inv.invoice_number}` : 'DRAFT INVOICE'}
                                                                 </p>
-                                                                <p className="text-xs text-slate-500">{new Date(inv.created_at).toLocaleDateString()}</p>
+                                                                <p className="text-xs text-slate-500 font-medium">{new Date(inv.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}</p>
                                                             </div>
                                                         </div>
                                                         <div className="text-right">
-                                                            <p className="font-mono font-bold text-slate-900">₹{Number(inv.total || 0).toLocaleString()}</p>
-                                                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                            <p className="font-mono font-black text-slate-900 text-lg">₹{Number(inv.total || 0).toLocaleString()}</p>
+                                                            <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${inv.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
                                                                 {inv.status}
                                                             </span>
                                                         </div>
@@ -380,7 +394,7 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
                                             />
                                         )
                                     })}
-                                    {patient.hms_invoice.length === 0 && <p className="p-6 text-slate-400 text-center italic">No invoices found.</p>}
+                                    {patient.hms_invoice.length === 0 && <p className="p-12 text-slate-400 text-center italic font-medium">No archived invoices found for this patient.</p>}
                                 </div>
                             </div>
                         </TabsContent>

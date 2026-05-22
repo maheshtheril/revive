@@ -1,6 +1,7 @@
 @echo off
 title WhatsApp Bridge
 color 0E
+cd /d "%~dp0"
 
 echo ===================================================
 echo   WhatsApp Bridge Service

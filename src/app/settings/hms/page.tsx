@@ -1,4 +1,5 @@
 
+// RE-SYNC: 2026-04-16T19:17:00
 import { auth } from "@/auth"
 import { redirect } from "next/navigation"
 import { getHMSSettings, getPaymentGatewaySettings, getWhatsAppSettings, getPDFSettings } from "@/app/actions/settings"
@@ -8,14 +9,18 @@ import { prisma } from "@/lib/prisma"
 
 export const dynamic = 'force-dynamic'
 
-export default async function HMSSettingsPage() {
+export default async function HMSSettingsPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
     const session = await auth()
     if (!session?.user?.id) redirect('/login')
 
+    const sParams = await searchParams;
+    const searchCompanyId = typeof sParams?.companyId === 'string' ? sParams.companyId : undefined;
+    const companyId = searchCompanyId || session.user.companyId;
+
     const [res, doctors, gatewayRes, whatsappRes, pdfRes, company] = await Promise.all([
-        getHMSSettings(),
+        getHMSSettings(companyId, session.user.tenantId),
         prisma.hms_clinicians.findMany({
-            where: { company_id: session.user.companyId!, is_active: true },
+            where: { company_id: companyId!, is_active: true },
             select: {
                 id: true,
                 first_name: true,
@@ -23,11 +28,11 @@ export default async function HMSSettingsPage() {
             },
             orderBy: { first_name: 'asc' }
         }),
-        getPaymentGatewaySettings(session.user.companyId!, session.user.tenantId),
-        getWhatsAppSettings(session.user.companyId!, session.user.tenantId),
-        getPDFSettings(session.user.companyId!, session.user.tenantId),
+        getPaymentGatewaySettings(companyId!, session.user.tenantId),
+        getWhatsAppSettings(companyId!, session.user.tenantId),
+        getPDFSettings(companyId!, session.user.tenantId),
         prisma.company.findUnique({
-            where: { id: session.user.companyId! },
+            where: { id: companyId! },
             select: { name: true, logo_url: true, metadata: true }
         })
     ]);
@@ -62,6 +67,7 @@ export default async function HMSSettingsPage() {
                 gatewaySettings={gatewayRes.success ? gatewayRes.settings : null}
                 whatsappSettings={whatsappRes.success ? whatsappRes.settings : null}
                 pdfSettings={pdfRes.success ? pdfRes.settings : null}
+                searchUsage={typeof sParams?.usage === 'string' ? sParams.usage : undefined}
                 aiSettings={res.aiSettings}
                 company={company}
             />

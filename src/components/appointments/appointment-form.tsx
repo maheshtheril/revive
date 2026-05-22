@@ -20,6 +20,7 @@ import { PatientPaymentDialog } from "@/components/hms/billing/patient-payment-d
 import { getPatientById } from "@/app/actions/patient-v10"
 import { CreditCard as CardIcon, X, Printer, Plus, Receipt } from "lucide-react"
 import { OpSlipDialog } from "@/components/hms/reception/op-slip-dialog"
+import { DEFAULT_REGISTRATION_FEE } from "@/lib/hms-constants"
 
 interface AppointmentFormProps {
     patients: any[]
@@ -59,16 +60,27 @@ export function AppointmentForm({
     const router = useRouter()
     const { patient_id: initialPatientId, date: initialDate, time: initialTime } = initialData
 
+    const handleClose = () => {
+        if (onClose) {
+            onClose();
+        } else {
+            router.back();
+        }
+    };
+
     // State initialized as null to prevent server/client hydration mismatches
     const [localPatients, setLocalPatients] = useState(patients)
+    useEffect(() => {
+        setLocalPatients(patients);
+    }, [patients]);
     const [selectedPatientId, setSelectedPatientId] = useState('')
     const [selectedPatientData, setSelectedPatientData] = useState<any>(null)
     const [showNewPatientModal, setShowNewPatientModal] = useState(false)
     const [selectedClinicianId, setSelectedClinicianId] = useState('')
     const [selectedDate, setSelectedDate] = useState(() => {
         if (initialDate) return initialDate;
-        if (editingAppointment?.start_time) {
-            const d = new Date(editingAppointment.start_time);
+        if (editingAppointment?.starts_at || editingAppointment?.start_time) {
+            const d = new Date(editingAppointment.starts_at || editingAppointment.start_time);
             return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
         }
         const now = new Date();
@@ -76,14 +88,12 @@ export function AppointmentForm({
     })
     const [suggestedTime, setSuggestedTime] = useState(() => {
         if (initialTime && initialTime.length >= 5) return initialTime;
-        if (editingAppointment?.start_time) {
-            const d = new Date(editingAppointment.start_time);
+        if (editingAppointment?.starts_at || editingAppointment?.start_time) {
+            const d = new Date(editingAppointment.starts_at || editingAppointment.start_time);
             return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
         }
-        const slotMs = 15 * 60 * 1000;
-        const nowMs = new Date().getTime();
-        const nowRound = new Date(Math.ceil(nowMs / slotMs) * slotMs);
-        return `${nowRound.getHours().toString().padStart(2, '0')}:${nowRound.getMinutes().toString().padStart(2, '0')}`;
+        const now = new Date();
+        return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     })
     const [isLateHours, setIsLateHours] = useState(false)
     const [isMounted, setIsMounted] = useState(false)
@@ -96,14 +106,16 @@ export function AppointmentForm({
             setNotes(editingAppointment.notes || '')
         }
     }, [editingAppointment, initialPatientId, initialDate, initialTime])
-    const [isMaximized, setIsMaximized] = useState(true)
+    const [isMaximized, setIsMaximized] = useState(false)
     const [isListening, setIsListening] = useState(false)
     const [hmsSettings, setHmsSettings] = useState<any>(null)
     const [notes, setNotes] = useState(editingAppointment?.notes || '')
     const [isPending, setIsPending] = useState(false)
     const [isLoadingPatient, setIsLoadingPatient] = useState(false)
+    const [isAutoSlotEnabled, setIsAutoSlotEnabled] = useState(false) // [NEW] Default to false as per request
     const [saveSuccess, setSaveSuccess] = useState<any>(null) // [NEW] Track save results
     const [paidInvoiceId, setPaidInvoiceId] = useState<string | null>(null) // [NEW] Capture reg fee ID
+    const [isWaivingFee, setIsWaivingFee] = useState(false) // [NEW] Track waiving state
 
     // RCM States
     const [isRCMProcessing, setIsRCMProcessing] = useState(false)
@@ -118,7 +130,7 @@ export function AppointmentForm({
     // [AUTO-OPEN] Trigger registration fee collection automatically when patient is selected
     useEffect(() => {
         if (!selectedPatientId || isCollectingReg) return;
-        
+
         // Only trigger once per patient selection change to avoid annoying loops
         if (lastAutoOpenedId.current === selectedPatientId) return;
 
@@ -138,7 +150,7 @@ export function AppointmentForm({
     useEffect(() => {
         getCurrentCompany().then(res => {
             if (res) setCompanyInfo(res);
-        }).catch(() => {});
+        }).catch(() => { });
     }, []);
 
     // Sync state when editingAppointment changes or prop updates
@@ -146,12 +158,12 @@ export function AppointmentForm({
         if (editingAppointment) {
             setSelectedPatientId(editingAppointment.patient?.id || editingAppointment.patient_id || '')
             setSelectedClinicianId(editingAppointment.clinician?.id || editingAppointment.clinician_id || '')
-            
-            const editDate = new Date(editingAppointment.start_time);
+
+            const editDate = new Date(editingAppointment.starts_at || editingAppointment.start_time);
             const localEditDate = `${editDate.getFullYear()}-${(editDate.getMonth() + 1).toString().padStart(2, '0')}-${editDate.getDate().toString().padStart(2, '0')}`;
             setSelectedDate(localEditDate)
-            
-            setSuggestedTime(new Date(editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+
+            setSuggestedTime(new Date(editingAppointment.starts_at || editingAppointment.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
         }
     }, [editingAppointment])
 
@@ -219,9 +231,14 @@ export function AppointmentForm({
     useEffect(() => {
         if (editingAppointment) return; // Don't override when editing an existing appointment
         getHMSSettings().then(res => {
-            if (res.success && res.settings?.defaultDoctorId) {
-                // Only pre-select if receptionist hasn't already picked a doctor
-                setSelectedClinicianId((prev: string) => prev || res.settings.defaultDoctorId);
+            if (res.success) {
+                // [SETTINGS-SYNC] Ensure settings are stored for RCM/Print logic
+                setHmsSettings(res.settings);
+                
+                if (res.settings?.defaultDoctorId) {
+                    // Only pre-select if receptionist hasn't already picked a doctor
+                    setSelectedClinicianId((prev: string) => prev || res.settings.defaultDoctorId);
+                }
             }
         }).catch(() => { }); // Silent fail — never break the form
     }, []); // Run only once on mount
@@ -233,7 +250,7 @@ export function AppointmentForm({
     useEffect(() => {
         if (selectedClinicianId && selectedDate) {
             import('@/app/actions/appointment').then(mod => {
-                (mod as any).getAppointmentsByClinician(selectedClinicianId, selectedDate).then((res: any) => {
+                (mod as any).getClinicianAppointments(selectedClinicianId, selectedDate).then((res: any) => {
                     if (res && res.success && Array.isArray(res.data)) {
                         console.log("DEBUG: Dynamic Appointments Fetched", res.data.length);
                         setAppointmentsList(res.data);
@@ -243,10 +260,9 @@ export function AppointmentForm({
         }
     }, [selectedClinicianId, selectedDate]);
 
-    // CORE: Dynamic Time Selection Engine (Reactive Triage)
-    useEffect(() => {
-        // Only run for new appointments. If editing, we respect current time unless manually changed.
-        if (editingAppointment || !selectedClinicianId || !selectedDate || !doctors.length) return;
+    // [HELPER] Slot Calculation Logic (Extracted for manual trigger)
+    const handleSuggestSlot = () => {
+        if (!selectedClinicianId || !selectedDate || !doctors.length) return;
 
         const doctor = doctors.find(d => d.id === selectedClinicianId)
         if (!doctor) return;
@@ -254,8 +270,6 @@ export function AppointmentForm({
         const defaultStart = doctor.consultation_start_time || "09:00"
         const defaultEnd = doctor.consultation_end_time || "17:00"
 
-        // Filter for this doctor on selected day
-        // Filter for this doctor on selected day using DYNAMIC LIST
         const doctorApts = appointmentsList.filter(a => {
             const aptDate = new Date(a.starts_at).toISOString().split('T')[0];
             return a.clinician_id === selectedClinicianId && aptDate === selectedDate && a.status !== 'cancelled';
@@ -265,48 +279,47 @@ export function AppointmentForm({
         const localDateStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
         const isToday = selectedDate === localDateStr;
 
-        // Match Date Safely (Local Time to avoid UTC shift)
         const [year, month, dayOfMonth] = selectedDate.split('-').map(Number);
         const dayStart = new Date(year, month - 1, dayOfMonth);
         const [startH, startM] = defaultStart.split(':').map(Number);
         dayStart.setHours(startH, startM, 0, 0);
 
         let nextSlotTime: Date;
-
-        // DYNAMIC SLOT DURATION
         const slotDuration = Number(doctor.consultation_slot_duration) || 15;
-        const slotMs = slotDuration * 60 * 1000;
+        const useRealTime = hmsSettings?.useRealTimeBooking === true || slotDuration === 0;
 
         if (doctorApts.length === 0) {
-            // BASE: Start at doctor's official start time
             let baseTime = dayStart;
-
-            // IF TODAY: Don't suggest past times. Jump to "Now" rounded up to next slot
             if (isToday) {
-                const nowMs = new Date().getTime();
-                const nowRound = new Date(Math.ceil(nowMs / slotMs) * slotMs);
-                if (nowRound > dayStart) {
-                    baseTime = nowRound;
+                const now = new Date();
+                if (!useRealTime) {
+                    const mins = now.getMinutes();
+                    const remainder = mins % slotDuration;
+                    if (remainder !== 0) now.setMinutes(mins + (slotDuration - remainder));
+                    now.setSeconds(0, 0);
                 }
+                if (now > dayStart) baseTime = now;
             }
             nextSlotTime = baseTime;
         } else {
-            // Find the latest ending appointment
             const lastEndApt = doctorApts.reduce((latest, current) => {
                 const latestEnd = new Date(latest.ends_at).getTime();
                 const currentEnd = new Date(current.ends_at).getTime();
                 return currentEnd > latestEnd ? current : latest
             }, doctorApts[0])
-
-            // Start AFTER the last one finishes
             nextSlotTime = new Date(lastEndApt.ends_at);
         }
 
-        // Final Safety: If for some reason nextSlotTime < now (on today), bump it
         if (isToday) {
-            const nowMs = new Date().getTime();
-            if (nextSlotTime.getTime() < nowMs) {
-                nextSlotTime = new Date(Math.ceil(nowMs / slotMs) * slotMs);
+            const now = new Date();
+            if (nextSlotTime.getTime() < now.getTime()) {
+                nextSlotTime = new Date(now);
+                if (!useRealTime) {
+                    const mins = nextSlotTime.getMinutes();
+                    const remainder = mins % slotDuration;
+                    if (remainder !== 0) nextSlotTime.setMinutes(mins + (slotDuration - remainder));
+                    nextSlotTime.setSeconds(0, 0);
+                }
             }
         }
 
@@ -314,23 +327,33 @@ export function AppointmentForm({
         const dayEnd = new Date(year, month - 1, dayOfMonth);
         dayEnd.setHours(endH, endM, 0, 0);
 
-        // Round up to nearest slot duration (e.g. 10m, 15m, 20m)
-        const roundedMs = Math.ceil(nextSlotTime.getTime() / slotMs) * slotMs;
-        const finalTime = new Date(roundedMs);
+        const finalTime = new Date(nextSlotTime);
+        if (!useRealTime) {
+            const mins = finalTime.getMinutes();
+            const remainder = mins % slotDuration;
+            if (remainder !== 0) finalTime.setMinutes(mins + (slotDuration - remainder));
+            finalTime.setSeconds(0, 0);
+        }
 
         const hours = finalTime.getHours().toString().padStart(2, '0')
         const minutes = finalTime.getMinutes().toString().padStart(2, '0')
         setSuggestedTime(`${hours}:${minutes}`)
         setIsLateHours(finalTime >= dayEnd && isToday)
 
-        // Debug Log to reveal mismatch
-        console.log(`Slotting Logic [${selectedDate}]:`, {
-            slotDuration,
-            nextSlot: finalTime.toLocaleTimeString(),
-            dayEnd: dayEnd.toLocaleTimeString(),
-            isFullyBooked: finalTime >= dayEnd
+        toast({
+            title: "Slot Suggested",
+            description: `Auto-assigned next available time: ${hours}:${minutes}`,
+            className: "bg-indigo-600 text-white"
         });
-    }, [selectedClinicianId, selectedDate, appointmentsList, doctors, editingAppointment])
+    }
+
+    // CORE: Dynamic Time Selection Engine (Reactive Triage)
+    useEffect(() => {
+        // [MODIFIED] Only auto-calculate if 'isAutoSlotEnabled' is explicitly set to true
+        if (editingAppointment || !isAutoSlotEnabled || !selectedClinicianId || !selectedDate || !doctors.length) return;
+
+        handleSuggestSlot();
+    }, [selectedClinicianId, selectedDate, appointmentsList, doctors, editingAppointment, isAutoSlotEnabled])
 
     // HMS Settings (Reg Fee, etc.)
     useEffect(() => {
@@ -360,6 +383,13 @@ export function AppointmentForm({
         // [AUDIT] Explicit check for 'awaiting_payment' status set during creation
         if (metadata.status === 'awaiting_payment') {
             return { shouldCharge: true, status: 'awaiting_payment', expiryDate: null };
+        }
+
+        if (!metadata.registration_expiry) {
+            // [SETTINGS-SYNC] Use configured validity for legacy/missing expiry
+            const legacyExpiry = new Date(createdAt);
+            legacyExpiry.setDate(legacyExpiry.getDate() + Number(validityDays));
+            return { shouldCharge: true, status: 'legacy', expiryDate: legacyExpiry };
         }
 
         // Check for the explicit flag first
@@ -398,17 +428,24 @@ export function AppointmentForm({
         // Handle Invalid Date strings
         if (isNaN(expiryDate.getTime())) return { shouldCharge: true, status: 'invalid_date', expiryDate: null };
 
-        const isExpired = expiryDate < new Date();
+        // [POLICY-GUARD] If DB has a legacy 365-day expiry, snap to policy window
+        const policyExpiry = new Date(createdAt);
+        policyExpiry.setDate(policyExpiry.getDate() + Number(validityDays));
+        const correctedExpiry = expiryDate > policyExpiry ? policyExpiry : expiryDate;
+
+        const isExpired = correctedExpiry < new Date();
 
         const result = {
             shouldCharge: isExpired,
             status: isExpired ? 'expired' : 'valid',
-            expiryDate: expiryDateStr,
+            expiryDate: correctedExpiry.toISOString(),
             debug: {
                 metadataStatus: metadata.status,
                 regFeesPaid: metadata.registration_fees_paid,
                 validityDays,
-                createdAt: createdAt.toISOString()
+                createdAt: createdAt.toISOString(),
+                originalExpiry: expiryDateStr,
+                policyExpiry: policyExpiry.toISOString()
             }
         };
         console.log("DEBUG: checkRegistrationStatus Result", JSON.stringify(result, null, 2));
@@ -447,7 +484,27 @@ export function AppointmentForm({
     const executeSave = async (data: FormData) => {
         setIsPending(true)
         try {
-            const res = editingAppointment ? await updateAppointmentDetails(data) : await createAppointment(data) as any;
+            const dateStr = data.get('date') as string;
+            const timeStr = data.get('time') as string;
+            const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+
+            const doctor = doctors.find(d => d.id === selectedClinicianId);
+            const slotDuration = Number(doctor?.consultation_slot_duration) || 15;
+            const endDateTime = new Date(startDateTime.getTime() + slotDuration * 60000);
+
+            const payload = {
+                patient_id: selectedPatientId,
+                clinician_id: selectedClinicianId,
+                starts_at: startDateTime,
+                ends_at: endDateTime,
+                notes: data.get('notes') as string || '',
+                type: data.get('type') as string || 'consultation',
+                mode: data.get('mode') as string || 'in_person',
+                priority: data.get('priority') as string || 'normal',
+                source: data.get('source') as string || 'dashboard'
+            };
+
+            const res = editingAppointment ? await updateAppointmentDetails(editingAppointment.id, payload) : await createAppointment(payload) as any;
             if (res?.error) {
                 toast({ title: "Action Failed", description: res.error, variant: "destructive" });
             } else {
@@ -466,10 +523,8 @@ export function AppointmentForm({
                     className: "bg-emerald-600 text-white"
                 });
 
-                // [WORLD CLASS] Automated Redirect to Dashboard Hub
-                if (onClose) onClose();
-                router.push('/hms/reception/dashboard');
-                router.refresh();
+                // Automatically close/redirect back to dashboard
+                handleClose();
             }
         } catch (error: any) {
             toast({ title: "Terminal Crash", description: error.message, variant: "destructive" })
@@ -486,12 +541,12 @@ export function AppointmentForm({
 
         // [REG-FEE GUARD] Block save if registration fee is outstanding
         const regStatus = checkRegistrationStatus();
-        if (regStatus.shouldCharge) {
+        if (regStatus.shouldCharge && !isWaivingFee) {
             const msg = regStatus.status === 'awaiting_payment'
-                ? "Registration fee is pending. Please collect the registration fee before booking this appointment."
+                ? "Registration fee is pending. Please collect or waive the registration fee before booking."
                 : regStatus.status === 'expired'
-                    ? "Patient's registration has expired. Please renew the registration fee before booking."
-                    : "Registration fee is unpaid. Please collect it before saving this appointment.";
+                    ? "Patient's registration has expired. Please renew or waive the fee before booking."
+                    : "Registration fee is unpaid. Please collect or waive it before saving.";
             toast({
                 title: "⛔ Registration Fee Required",
                 description: msg,
@@ -509,6 +564,58 @@ export function AppointmentForm({
             setIsPending(false)
         }
     }
+
+    const handleWaiveFee = async () => {
+        if (!selectedPatientId) return;
+
+        // [AUDIT-STANDARD] Require a reason for all financial waivers
+        const reason = window.prompt("Enter reason for fee waiver (e.g. Staff, Emergency, Management Approval):");
+        if (!reason || reason.trim().length < 3) {
+            toast({ 
+                title: "Waiver Denied", 
+                description: "A valid reason is mandatory for financial audits.", 
+                variant: "destructive" 
+            });
+            return;
+        }
+
+        setIsWaivingFee(true);
+        try {
+            const { updatePatientMetadata } = await import('@/app/actions/patient-v10');
+            const { getHMSSettings } = await import('@/app/actions/settings');
+
+            // [SETTINGS-SYNC] Fetch dynamic validity from hospital config (defaults to 7 days)
+            const settingsRes = await getHMSSettings();
+            const validityDays = settingsRes.success ? (settingsRes.settings as any).registrationValidity : 7;
+
+            const expiryDate = new Date();
+            expiryDate.setDate(expiryDate.getDate() + Number(validityDays));
+
+            const res = await updatePatientMetadata(selectedPatientId, {
+                status: 'active',
+                registration_fees_paid: true,
+                registration_waived: true,
+                registration_waived_reason: reason, // Store the audit trail
+                registration_waived_at: new Date().toISOString(),
+                registration_expiry: expiryDate.toISOString()
+            });
+
+            if (res.success) {
+                toast({
+                    title: "Fee Waived",
+                    description: `Waived (${reason}). Policy applied: ${validityDays} Days.`,
+                    className: "bg-emerald-600 text-white"
+                });
+                refreshPatientData();
+            } else {
+                toast({ title: "Error", description: "Could not waive fee.", variant: "destructive" });
+                setIsWaivingFee(false);
+            }
+        } catch (err) {
+            toast({ title: "Error", description: "Failed to process waiver.", variant: "destructive" });
+            setIsWaivingFee(false);
+        }
+    };
 
 
     const [selectedPriority, setSelectedPriority] = useState(editingAppointment?.priority || 'normal')
@@ -548,8 +655,8 @@ export function AppointmentForm({
                         <OpSlipDialog
                             appointment={saveSuccess}
                             defaultPrintMode="standard"
-                            hospitalInfo={hospitalInfo}
-                            autoOpen={true}
+                            hospitalInfo={hospitalInfo || companyInfo}
+                            directPrint={true}
                             trigger={
                                 <button
                                     type="button"
@@ -563,7 +670,8 @@ export function AppointmentForm({
                         <OpSlipDialog
                             appointment={saveSuccess}
                             defaultPrintMode="label"
-                            hospitalInfo={hospitalInfo}
+                            hospitalInfo={hospitalInfo || companyInfo}
+                            directPrint={true}
                             trigger={
                                 <button
                                     type="button"
@@ -580,7 +688,8 @@ export function AppointmentForm({
                         <OpSlipDialog
                             appointment={saveSuccess}
                             defaultPrintMode="standard"
-                            hospitalInfo={hospitalInfo}
+                            hospitalInfo={hospitalInfo || companyInfo}
+                            directPrint={true}
                             trigger={
                                 <button
                                     type="button"
@@ -605,13 +714,7 @@ export function AppointmentForm({
                     </button>
 
                     <button
-                        onClick={() => {
-                            if (onClose) {
-                                onClose();
-                            } else {
-                                router.push('/hms/reception/dashboard');
-                            }
-                        }}
+                        onClick={handleClose}
                         className="w-full py-4 text-slate-400 font-bold uppercase text-[9px] tracking-[0.3em] hover:text-slate-500 transition-all"
                     >
                         Return to Dashboard
@@ -631,7 +734,7 @@ export function AppointmentForm({
             <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-white/10 shrink-0 shadow-2xl relative z-30">
                 <div className="flex items-center gap-6">
                     <div className="flex items-center gap-4">
-                        <button type="button" onClick={onClose} className="p-2 hover:bg-white/10 rounded-xl transition-all group">
+                        <button type="button" onClick={handleClose} className="p-2 hover:bg-white/10 rounded-xl transition-all group">
                             <ArrowLeft className="h-6 w-6 text-white/70 group-hover:text-white" />
                         </button>
                     </div>
@@ -647,18 +750,18 @@ export function AppointmentForm({
                     </div>
                 </div>
 
-                    <div className="flex items-center bg-white/5 border border-white/10 p-1 rounded-xl gap-1 px-2">
-                        <button type="button" onClick={onMinimize || onClose} className="p-2 hover:bg-white/10 rounded-lg text-white/50 transition-all"><Minus className="h-4 w-4" /></button>
-                        <div className="h-4 w-[1px] bg-white/10" />
-                        <button type="button" onClick={() => setIsMaximized(!isMaximized)} className="p-2 hover:bg-white/10 rounded-lg text-white/70 transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
-                            {isMaximized ? <Minimize2 className="h-3.5 w-3.5 text-indigo-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
-                            {isMaximized ? 'Dock' : 'Full'}
-                        </button>
-                        <div className="h-4 w-[1px] bg-white/10" />
-                        <button type="button" onClick={onClose} className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 transition-all">
-                            <X className="h-4 w-4" />
-                        </button>
-                    </div>
+                <div className="flex items-center bg-white/5 border border-white/10 p-1 rounded-xl gap-1 px-2">
+                    <button type="button" onClick={onMinimize || onClose} className="p-2 hover:bg-white/10 rounded-lg text-white/50 transition-all"><Minus className="h-4 w-4" /></button>
+                    <div className="h-4 w-[1px] bg-white/10" />
+                    <button type="button" onClick={() => setIsMaximized(!isMaximized)} className="p-2 hover:bg-white/10 rounded-lg text-white/70 transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
+                        {isMaximized ? <Minimize2 className="h-3.5 w-3.5 text-indigo-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
+                        {isMaximized ? 'Dock' : 'Full'}
+                    </button>
+                    <div className="h-4 w-[1px] bg-white/10" />
+                    <button type="button" onClick={handleClose} className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 transition-all">
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
             </div>
 
             <form
@@ -670,7 +773,7 @@ export function AppointmentForm({
                 <input type="hidden" name="source" value="dashboard" />
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 flex-1 overflow-hidden">
-                    <div className="lg:col-span-8 p-6 space-y-6 overflow-y-auto border-r border-gray-100 dark:border-white/5 custom-scrollbar">
+                    <div className="lg:col-span-8 p-6 pb-36 space-y-6 overflow-y-auto border-r border-gray-100 dark:border-white/5 custom-scrollbar">
                         {/* Status Strip (RCM Snapshot) */}
                         <div className="bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-500/5 dark:to-slate-900 rounded-2xl p-4 flex items-center justify-between border border-indigo-100 dark:border-indigo-500/10 shadow-sm">
                             <div className="flex items-center gap-4">
@@ -693,7 +796,11 @@ export function AppointmentForm({
                                     </div>
                                     {activeRegStatus.status !== 'none' && (
                                         <div className="text-[9px] font-bold text-slate-400 leading-none mt-1 uppercase tracking-tighter">
-                                            {activeRegStatus.expiryDate ? `Ends: ${new Date(activeRegStatus.expiryDate).toLocaleDateString()}` :
+                                            {activeRegStatus.expiryDate ? (() => {
+                                                // expiryDate is already policy-corrected in checkRegistrationStatus()
+                                                const d = new Date(activeRegStatus.expiryDate);
+                                                return `Ends: ${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()}`;
+                                            })() :
                                                 activeRegStatus.status === 'expired' ? 'Action Required: Renew Fee' : 'Valid Protocol Active'}
                                         </div>
                                     )}
@@ -701,9 +808,26 @@ export function AppointmentForm({
                                 <div className="text-right">
                                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-0.5 uppercase">Audit Timestamp</div>
                                     <div className={`text-xs font-bold ${activeRegStatus.status === 'loading' ? 'text-slate-400 animate-pulse' : 'text-slate-500 font-mono italic'}`}>
-                                        {activeRegStatus.status === 'loading' ? 'SYNCING...' : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        {activeRegStatus.status === 'loading' ? 'SYNCING...' : (() => {
+                                            const regAt = selectedPatientData?.metadata?.registration_date || selectedPatientData?.metadata?.registration_waived_at || selectedPatientData?.created_at;
+                                            if (!regAt) return 'N/A';
+                                            const d = new Date(regAt);
+                                            return `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                                        })()}
                                     </div>
                                 </div>
+                                {/* Quick-print button — only shown when editing an existing appointment */}
+                                {editingAppointment?.id && (
+                                    <button
+                                        type="button"
+                                        title="Print OP Slip"
+                                        onClick={() => window.open(`/api/print/appointment/${editingAppointment.id}?autoPrint=true`, '_blank')}
+                                        className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-indigo-500/20"
+                                    >
+                                        <Printer className="h-3.5 w-3.5" />
+                                        Print
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -721,7 +845,7 @@ export function AppointmentForm({
                         <PatientPaymentDialog
                             patientId={selectedPatientId}
                             patientName={`${selectedPatientData?.first_name || ''} ${selectedPatientData?.last_name || ''}`.trim() || 'Selected Patient'}
-                            fixedAmount={150}
+                            fixedAmount={hmsSettings?.registrationFee ?? DEFAULT_REGISTRATION_FEE}
                             autoOpen={isCollectingReg}
                             onClose={() => setIsCollectingReg(false)}
                             isRegistrationFee={true}
@@ -743,13 +867,23 @@ export function AppointmentForm({
                                         <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Patient Registration Fee — collect to enable booking</p>
                                     </div>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsCollectingReg(true)}
-                                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-amber-500/20"
-                                >
-                                    Collect
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        disabled={isWaivingFee}
+                                        onClick={handleWaiveFee}
+                                        className="px-4 py-2.5 bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all flex items-center gap-2"
+                                    >
+                                        {isWaivingFee ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Waive'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCollectingReg(true)}
+                                        className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-amber-500/20"
+                                    >
+                                        Collect
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -768,7 +902,32 @@ export function AppointmentForm({
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-900 dark:text-slate-300 mb-1.5 uppercase tracking-tighter"><Clock className="h-3.5 w-3.5 inline mr-1" /> Estimated Slot</label>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <label className="block text-sm font-bold text-gray-900 dark:text-slate-300 uppercase tracking-tighter">
+                                            <Clock className="h-3.5 w-3.5 inline mr-1" /> Estimated Slot
+                                        </label>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSuggestSlot}
+                                                className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest bg-emerald-50 px-2 py-0.5 rounded transition-all flex items-center gap-1"
+                                            >
+                                                <Zap className="h-3 w-3" /> Suggest Slot
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const now = new Date();
+                                                    setSuggestedTime(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
+                                                    const localDate = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
+                                                    setSelectedDate(localDate);
+                                                }}
+                                                className="text-[10px] font-black text-indigo-600 hover:text-indigo-700 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded transition-all"
+                                            >
+                                                Now
+                                            </button>
+                                        </div>
+                                    </div>
                                     <input
                                         type="time"
                                         name="time"
@@ -810,7 +969,7 @@ export function AppointmentForm({
                         </div>
                     </div>
 
-                    <div className="lg:col-span-4 p-6 space-y-6 overflow-y-auto bg-slate-50/30 dark:bg-white/[0.02] custom-scrollbar">
+                    <div className="lg:col-span-4 p-6 pb-36 space-y-6 overflow-y-auto bg-slate-50/30 dark:bg-white/[0.02] custom-scrollbar">
                         <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-xl border border-white dark:border-slate-800 shadow-sm p-4">
                             <div className="space-y-4">
                                 <div>
@@ -855,10 +1014,10 @@ export function AppointmentForm({
                 {/* Elite Footer: World-Standard Action Hub */}
                 <div className="absolute bottom-0 left-0 right-0 px-10 py-8 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200 dark:border-white/10 flex items-center justify-between z-30 shadow-[0_-20px_60px_-10px_rgba(0,0,0,0.15)]">
                     <div className="flex items-center gap-6">
-                        <Button 
+                        <Button
                             type="button"
                             variant="outline"
-                            onClick={onClose}
+                            onClick={handleClose}
                             className="h-16 px-10 rounded-2xl border-slate-200 dark:border-white/10 text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em] hover:bg-slate-100 transition-all active:scale-95 bg-white dark:bg-transparent"
                         >
                             Abort Session
@@ -882,7 +1041,7 @@ export function AppointmentForm({
                                 <BadgeCheck className="h-3.5 w-3.5" /> High-Intensity Mode Active
                             </div>
                         </div>
-                        
+
                         <Button
                             type="submit"
                             disabled={isPending || isLoadingPatient || activeRegStatus.shouldCharge || activeRegStatus.status === 'loading'}
@@ -907,17 +1066,18 @@ export function AppointmentForm({
             {/* Overlays Bridge */}
             {showNewPatientModal && (
                 <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 backdrop-blur-lg p-4 animate-in fade-in duration-300">
-                    <div className="w-full max-w-5xl shadow-2xl relative">
+                    <div className="w-full max-w-5xl h-[90vh] bg-white dark:bg-slate-950 rounded-[2.5rem] border border-white/20 shadow-2xl relative flex flex-col overflow-hidden">
                         <button
                             onClick={() => setShowNewPatientModal(false)}
-                            className="absolute -top-14 right-0 p-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl flex items-center gap-2 font-black uppercase text-[10px] tracking-widest transition-all backdrop-blur-xl border border-white/10"
+                            className="absolute top-4 right-4 z-50 p-2.5 bg-slate-100 hover:bg-rose-500 hover:text-white text-slate-500 rounded-xl flex items-center gap-2 font-black uppercase text-[10px] tracking-widest transition-all shadow-md"
                         >
-                            <X className="h-4 w-4" /> Cancel Overlay (Esc)
+                            <X className="h-4 w-4" /> Close
                         </button>
                         <CreatePatientForm
                             onClose={() => setShowNewPatientModal(false)}
                             onSuccess={handlePatientCreated}
                             hideBilling={true} // Triage terminal will handle fees on finalize
+                            isDialog={true}
                         />
                     </div>
                 </div>

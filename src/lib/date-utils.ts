@@ -5,8 +5,9 @@ import { prisma } from "@/lib/prisma";
  * World Standard Date Helper
  * Returns the current date and time adjusted to the hospital's configured timezone.
  * Defaults to 'Asia/Kolkata' if not specified, ensuring IST compliance for India.
+ * Accepts optional transaction client to prevent connection pool exhaustion deadlocks.
  */
-export async function getHospitalNow(): Promise<Date> {
+export async function getHospitalNow(txClient: any = prisma): Promise<Date> {
     const session = await auth();
     const companyId = session?.user?.companyId;
     
@@ -18,7 +19,7 @@ export async function getHospitalNow(): Promise<Date> {
     }
 
     try {
-        const settings = await prisma.company_settings.findUnique({
+        const settings = await txClient.company_settings.findUnique({
             where: { company_id: companyId },
             select: { timezone: true }
         });
@@ -37,7 +38,7 @@ export async function getHospitalNow(): Promise<Date> {
  * Formats a date string for database persistence (YYYY-MM-DD)
  * adjusted for the hospital timezone.
  */
-export async function getHospitalTodayString(): Promise<string> {
-    const now = await getHospitalNow();
+export async function getHospitalTodayString(txClient: any = prisma): Promise<string> {
+    const now = await getHospitalNow(txClient);
     return now.toISOString().split('T')[0];
 }

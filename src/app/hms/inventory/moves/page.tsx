@@ -13,7 +13,8 @@ export default async function StockMovesPage({
     const query = params.q || '';
     const page = Number(params.page) || 1;
     const today = new Date().toISOString().split('T')[0];
-    const fromDate = params.from || today;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const fromDate = params.from || sevenDaysAgo;
     const toDate = params.to || today;
     const type = params.type || 'ALL';
 
@@ -91,6 +92,46 @@ export default async function StockMovesPage({
                     </div>
                 </form>
             </div>
+
+            {/* Final Report / Current Stock Summary */}
+            {(result as any).productSummary && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-4 duration-500">
+                    <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-[2rem] text-white shadow-2xl shadow-blue-200 flex flex-col justify-between overflow-hidden relative group">
+                        <div className="absolute -right-10 -bottom-10 opacity-10 group-hover:scale-110 transition-transform duration-1000">
+                             <Search className="h-48 w-48" />
+                        </div>
+                        <div className="relative z-10">
+                            <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Selected Product</p>
+                            <h2 className="text-3xl font-black tracking-tighter leading-none mb-1">{(result as any).productSummary.name}</h2>
+                            <p className="text-xs font-bold opacity-80 font-mono">SKU: {(result as any).productSummary.sku}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-xl shadow-gray-100/50 flex flex-col justify-between relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-8 opacity-5">
+                             <Filter className="h-16 w-16" />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 mb-2">Total Movements</p>
+                            <h2 className="text-5xl font-black tracking-tighter text-gray-900 leading-none">{meta.total}</h2>
+                            <p className="text-[10px] font-bold text-gray-400 mt-2 uppercase tracking-widest italic">In Filtered Period</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-emerald-500 p-8 rounded-[2rem] text-white shadow-2xl shadow-emerald-200 flex flex-col justify-between relative overflow-hidden group">
+                         <div className="absolute -right-8 -bottom-8 opacity-20 group-hover:rotate-12 transition-transform duration-1000">
+                             <div className="text-8xl font-black">{(result as any).productSummary.uom.charAt(0).toUpperCase()}</div>
+                        </div>
+                        <div className="relative z-10">
+                            <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60 mb-2">Current Final Stock</p>
+                            <h2 className="text-6xl font-black tracking-tighter leading-none italic">
+                                {(result as any).productSummary.currentStock}
+                            </h2>
+                            <p className="text-xs font-black uppercase tracking-widest mt-2 opacity-80 italic">{(result as any).productSummary.uom} on hand</p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* List Section */}
             <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-100 border border-gray-100 overflow-hidden">

@@ -43,6 +43,18 @@ export function CreatePatientForm({
     const returnPath = searchParams.get('returnPath');
     const autoSelect = searchParams.get('autoSelect') === 'true';
 
+    const handleCloseOrBack = () => {
+        if (onClose) {
+            onClose();
+        } else if (returnPath) {
+            router.push(returnPath);
+        } else if (window.history.length > 1 && document.referrer.includes(window.location.host)) {
+            router.back();
+        } else {
+            router.push('/hms/patients');
+        }
+    };
+
     const [activeTab, setActiveTab] = useState<'basic' | 'identity'>('basic');
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
     const [isPending, setIsPending] = useState(false);
@@ -52,7 +64,7 @@ export function CreatePatientForm({
 
 
     // Dynamic Settings State
-    const [registrationFee, setRegistrationFee] = useState(propFee ?? 100);
+    const [registrationFee, setRegistrationFee] = useState(propFee ?? 150);
     const [registrationValidity, setRegistrationValidity] = useState(0); // [RCM-FIX] Start at 0, sync from settings
     const [registrationProductId, setRegistrationProductId] = useState(propId);
     const [registrationProductName, setRegistrationProductName] = useState(propName);
@@ -281,7 +293,7 @@ export function CreatePatientForm({
                             </h2>
                             <p className="text-xs font-medium text-slate-500 flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                {appName?.includes('Ziona') ? "Digital Registry • Powered by Ziona" : `${appName} • Trusted Digital Registry`}
+                                {`${appName} • Secure Patient Registry`}
                             </p>
                         </div>
                     </div>
@@ -298,7 +310,7 @@ export function CreatePatientForm({
                             </button>
                             <button
                                 type="button"
-                                onClick={onClose || (() => router.back())}
+                                onClick={handleCloseOrBack}
                                 className="h-10 w-10 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 text-slate-400 hover:text-slate-900 rounded-xl flex items-center justify-center transition-all active:scale-95"
                             >
                                 <X className="h-4 w-4" />
@@ -449,28 +461,120 @@ export function CreatePatientForm({
                                     {/* COLUMN 1: Personal & Vitals */}
                                     <div className="lg:col-span-7 space-y-4">
                                         {/* Personal Identity */}
-                                        <div className="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
-                                            <h3 className="text-xs font-black text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                <User className="h-4 w-4" /> Personal Details
+                                        {/* [WORLD-CLASS] PRIORITY REGISTRATION (FAST-TRACK) */}
+                                        <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-5 rounded-3xl border-2 border-indigo-100 dark:border-indigo-900/30 shadow-sm relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 p-12 bg-indigo-500/5 rounded-full blur-3xl"></div>
+                                            <h3 className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2 relative z-10">
+                                                <Activity className="h-3 w-3 animate-pulse" /> Fast-Track Registry
                                             </h3>
-                                            <div className="grid grid-cols-12 gap-3">
-                                                <div className="col-span-3">
-                                                    <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Title</label>
-                                                    <div className="relative">
-                                                        <select autoFocus defaultValue={initialData?.metadata?.title} name="title" className="w-full h-10 px-3 bg-white dark:bg-slate-800 border items-center border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 text-sm outline-none focus:border-indigo-500 transition-all appearance-none">
+                                            
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 relative z-10">
+                                                {/* 1. NAME NODE */}
+                                                <div className="space-y-1">
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Patient Name</label>
+                                                    <div className="flex gap-2">
+                                                        <select 
+                                                            name="title" 
+                                                            defaultValue={initialData?.metadata?.title || 'Mr.'} 
+                                                            onChange={(e) => {
+                                                                const val = e.target.value;
+                                                                if (val === 'Mr.') setGender('male');
+                                                                else if (val === 'Mrs.' || val === 'Ms.') setGender('female');
+                                                            }}
+                                                            className="w-20 h-11 px-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 text-sm outline-none focus:border-indigo-500 appearance-none shadow-sm"
+                                                        >
                                                             <option>Mr.</option><option>Mrs.</option><option>Ms.</option><option>Dr.</option><option>Baby</option>
                                                         </select>
-                                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
+                                                        <input 
+                                                            autoFocus 
+                                                            value={firstName} 
+                                                            onChange={(e) => setFirstName(e.target.value.replace(/\b\w/g, c => c.toUpperCase()))} 
+                                                            name="first_name" 
+                                                            type="text" 
+                                                            placeholder="Full Name" 
+                                                            required 
+                                                            className="flex-1 h-11 px-4 bg-white dark:bg-slate-800 border-2 border-indigo-100 dark:border-slate-700 rounded-xl font-black text-slate-800 dark:text-white text-base outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 transition-all shadow-sm" 
+                                                        />
                                                     </div>
                                                 </div>
-                                                <div className="col-span-9 grid grid-cols-2 gap-3">
-                                                    <div>
-                                                        <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">First Name</label>
-                                                        <input value={firstName} onChange={(e) => setFirstName(e.target.value.replace(/\b\w/g, c => c.toUpperCase()))} name="first_name" type="text" placeholder="First Name" required className="w-full h-10 px-3 pr-10 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all placeholder:text-slate-300" />
+
+                                                {/* [NEW] GENDER NODE - INTEGRATED INTO FAST-TRACK */}
+                                                <div className="space-y-1">
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Gender</label>
+                                                    <div className="flex gap-2 h-11">
+                                                        {[
+                                                            { id: 'male', label: 'Male', icon: 'M' },
+                                                            { id: 'female', label: 'Female', icon: 'F' },
+                                                            { id: 'other', label: 'Other', icon: 'O' }
+                                                        ].map(g => (
+                                                            <button 
+                                                                key={g.id} 
+                                                                type="button" 
+                                                                onClick={() => setGender(g.id)} 
+                                                                className={`flex-1 rounded-xl border-2 font-black text-xs uppercase transition-all flex items-center justify-center gap-2 ${
+                                                                    gender === g.id 
+                                                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-600 shadow-sm' 
+                                                                    : 'border-slate-100 bg-white text-slate-400 hover:border-slate-200'
+                                                                }`}
+                                                            >
+                                                                <span className="text-[10px] opacity-40">{g.icon}</span>
+                                                                {g.label}
+                                                            </button>
+                                                        ))}
+                                                        <input type="hidden" name="gender" value={gender} />
                                                     </div>
-                                                    <div>
-                                                        <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Last Name</label>
-                                                        <input value={lastName} onChange={(e) => setLastName(e.target.value.replace(/\b\w/g, c => c.toUpperCase()))} name="last_name" type="text" placeholder="Last Name" className="w-full h-10 px-3 pr-10 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all placeholder:text-slate-300" />
+                                                </div>
+
+                                                {/* 2. MOBILE NODE */}
+                                                <div className="space-y-1">
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Mobile Number (10 Digits)</label>
+                                                    <div className="relative group">
+                                                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-indigo-400" />
+                                                        <input
+                                                            value={phone}
+                                                            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                                                            name="phone"
+                                                            type="tel"
+                                                            placeholder="9876543210"
+                                                            required
+                                                            className="w-full h-11 pl-10 pr-4 bg-white dark:bg-slate-800 border-2 border-indigo-100 dark:border-slate-700 rounded-xl font-black text-indigo-600 dark:text-indigo-400 text-base outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 transition-all shadow-sm tracking-widest"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {/* 3. AGE NODE */}
+                                                <div className="space-y-1">
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Age & Unit</label>
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="number" 
+                                                            value={age} 
+                                                            onChange={(e) => handleAgeChange(e.target.value, ageUnit)} 
+                                                            className="flex-1 h-11 px-4 bg-white dark:bg-slate-800 border-2 border-emerald-100 dark:border-slate-700 rounded-xl font-black text-emerald-600 text-lg outline-none focus:border-emerald-500 shadow-sm" 
+                                                            placeholder="0" 
+                                                        />
+                                                        <select 
+                                                            value={ageUnit} 
+                                                            onChange={(e) => handleAgeChange(age, e.target.value)} 
+                                                            className="w-28 h-11 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-xs outline-none focus:border-emerald-500 shadow-sm"
+                                                        >
+                                                            <option>Years</option><option>Months</option><option>Days</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+
+                                                {/* 4. PLACE NODE */}
+                                                <div className="space-y-1">
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">Place / Area Name</label>
+                                                    <div className="relative group">
+                                                        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-rose-400" />
+                                                        <input 
+                                                            value={street} 
+                                                            onChange={(e) => setStreet(e.target.value.replace(/\b\w/g, c => c.toUpperCase()))} 
+                                                            name="street" 
+                                                            placeholder="e.g. Calicut, Kerala" 
+                                                            className="w-full h-11 pl-10 pr-4 bg-white dark:bg-slate-800 border-2 border-rose-50 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-white text-sm outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-500/5 transition-all shadow-sm" 
+                                                        />
                                                     </div>
                                                 </div>
                                             </div>
@@ -482,17 +586,6 @@ export function CreatePatientForm({
                                                 <Activity className="h-4 w-4" /> Vitals & Demographics
                                             </h3>
                                             <div className="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Gender</label>
-                                                    <div className="flex gap-2">
-                                                        {['male', 'female', 'other'].map(g => (
-                                                            <button key={g} type="button" onClick={() => setGender(g)} className={`flex-1 h-10 rounded-lg border font-bold uppercase text-[10px] transition-all ${gender === g ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300'}`}>
-                                                                {g}
-                                                            </button>
-                                                        ))}
-                                                        <input type="hidden" name="gender" value={gender} />
-                                                    </div>
-                                                </div>
                                                 <div>
                                                     <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Blood Group</label>
                                                     <div className="relative">
@@ -534,7 +627,7 @@ export function CreatePatientForm({
                                             </div>
                                             <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-12 gap-3">
                                                 <div className="col-span-2 md:col-span-5">
-                                                    <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Date of Birth</label>
+                                                    <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">Date of Birth (Optional)</label>
                                                     <input name="dob" type="date" value={dob} onChange={(e) => handleDobChange(e.target.value)} className="w-full h-10 px-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 text-sm outline-none focus:border-indigo-500" />
                                                 </div>
                                                 <div className="col-span-2 md:col-span-2 flex items-center justify-center pt-2 md:pt-4">
@@ -553,37 +646,22 @@ export function CreatePatientForm({
                                             </div>
                                         </div>
                                     </div>
-
-                                    {/* COLUMN 2: Contact & Address */}
+                                    {/* COLUMN 2: Additional Metadata */}
                                     <div className="lg:col-span-5 space-y-4">
                                         <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
                                             <div className="flex items-center gap-3 mb-4">
-                                                <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
-                                                    <Phone className="h-4 w-4" />
+                                                <div className="h-8 w-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-600">
+                                                    <FileText className="h-4 w-4" />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Contact & Location</h3>
-                                                    <p className="text-[9px] text-slate-400 font-medium uppercase tracking-wide">Communication</p>
+                                                    <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Secondary Info</h3>
+                                                    <p className="text-[9px] text-slate-400 font-medium uppercase tracking-wide">Email & Address Details</p>
                                                 </div>
                                             </div>
                                             <div className="space-y-4">
                                                 <div>
-                                                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">Mobile Number <span className="text-rose-500">*</span></label>
-                                                    <div className="relative group">
-                                                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-300 group-focus-within:text-indigo-500 transition-colors" />
-                                                        <input
-                                                            value={phone}
-                                                            onChange={(e) => {
-                                                                const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                                                                setPhone(val);
-                                                            }}
-                                                            name="phone"
-                                                            type="tel"
-                                                            placeholder="e.g. 9876543210"
-                                                            required
-                                                            className="w-full h-10 pl-9 pr-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-indigo-500 transition-all text-sm tracking-wide"
-                                                        />
-                                                    </div>
+                                                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">Last Name / Surname</label>
+                                                    <input value={lastName} onChange={(e) => setLastName(e.target.value.replace(/\b\w/g, c => c.toUpperCase()))} name="last_name" type="text" placeholder="Surname" className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 text-sm outline-none focus:border-indigo-500 transition-all" />
                                                 </div>
                                                 <div>
                                                     <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">Email Address</label>
@@ -592,17 +670,20 @@ export function CreatePatientForm({
                                                         <input defaultValue={initialData?.contact?.email} name="email" type="email" placeholder="email@example.com" className="w-full h-10 pl-9 pr-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-indigo-500 transition-all text-sm" />
                                                     </div>
                                                 </div>
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">Address</label>
-                                                    <textarea value={street} onChange={(e) => setStreet(e.target.value)} name="street" placeholder="Street Address, Area" className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-slate-200 text-xs outline-none focus:border-indigo-500 transition-all min-h-[50px] resize-none" />
-                                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">City</label>
                                                         <input defaultValue={initialData?.contact?.address?.city} name="city" type="text" placeholder="City" className="w-full h-9 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all text-xs" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide">Pincode</label>
                                                         <input defaultValue={initialData?.contact?.address?.zip} name="zip" type="text" placeholder="Pincode" className="w-full h-9 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 outline-none focus:border-indigo-500 transition-all text-xs" />
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
+
                                 </div>
                             </div>
 
@@ -679,7 +760,7 @@ export function CreatePatientForm({
                         <div className="flex items-center gap-4">
                             <button
                                 type="button"
-                                onClick={() => onClose ? onClose() : router.back()}
+                                onClick={handleCloseOrBack}
                                 className="px-6 py-3 bg-white border-2 border-slate-100 text-slate-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all active:scale-95 hover:border-slate-200"
                             >
                                 Cancel

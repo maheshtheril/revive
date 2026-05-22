@@ -10,7 +10,7 @@ import { getUserPermissions } from "@/app/actions/rbac"
 
 
 export default async function DashboardPage() {
-    await ensureHmsMenus()
+    // [OPTIMIZATION] Removed blocking ensureHmsMenus() - Self-healing handled in background or on-demand
     const session = await auth()
 
     if (!session?.user) {

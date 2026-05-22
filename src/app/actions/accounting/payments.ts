@@ -249,6 +249,7 @@ export async function upsertPayment(data: {
             },
             created_at: data.date,
             journal_id: data.journalId,
+            created_by: session.user.id,
         };
 
         const result = await prisma.$transaction(async (tx) => {
@@ -368,7 +369,8 @@ export async function upsertPayment(data: {
                                 amount: allocAmount,
                                 method: data.method as any,
                                 payment_reference: payment.payment_number,
-                                paid_at: data.date
+                                paid_at: data.date,
+                                created_by: session.user.id
                             }
                         });
 

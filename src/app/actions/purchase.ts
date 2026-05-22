@@ -209,30 +209,41 @@ export async function deleteSupplier(id: string) {
     }
 }
 
-export async function createProductQuick(name: string) {
+export async function createProductQuick(name: string, price: number = 0, isService: boolean = false) {
     const session = await auth()
     if (!session?.user?.companyId) return null
+    const companyId = session.user.companyId;
 
     try {
         const sku = "SKU-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+        console.log(`[QUICK-CREATE-PRODUCT] Name: ${name}, SKU: ${sku}, Price: ${price}, User: ${session.user.email}`);
 
         const product = await prisma.hms_product.create({
             data: {
                 tenant_id: session.user.tenantId!,
-                company_id: session.user.companyId!,
+                company_id: companyId,
                 name: name,
                 sku: sku,
-                is_stockable: true,
-                price: 0,
+                is_stockable: !isService,
+                is_service: isService,
+                price: price,
                 default_cost: 0,
+                uom: isService ? 'SVC' : 'PCS',
                 is_active: true
             }
         })
 
+        // [WORLD-STANDARD-REVALIDATION]
+        // Ensure the new product appears immediately in Inventory and Billing lists
+        revalidatePath('/hms/inventory/products');
+        revalidatePath('/hms/billing/new');
+        revalidatePath('/hms/billing');
+
         return {
             id: product.id,
             label: product.name,
-            subLabel: sku
+            sku: sku, // Included for registry sync
+            subLabel: `${sku} • ${isService ? 'Service' : 'Goods'}`
         }
     } catch (error) {
         console.error("Quick Create Product Failed:", error)

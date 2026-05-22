@@ -40,7 +40,8 @@ export async function getTenant() {
         });
 
         if (!tenant) {
-            console.error("[TENANT-ACTION] Tenant entity not found in DB for ID:", tenantId);
+            const { redirect } = await import("next/navigation");
+            redirect("/api/auth/signout");
         }
 
         return tenant;

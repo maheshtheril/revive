@@ -145,21 +145,26 @@ export function SearchableSelect({
     React.useEffect(() => {
         if (usePortal && open && containerRef.current) {
             const updatePosition = () => {
-                const rect = containerRef.current?.getBoundingClientRect();
-                if (rect) {
-                    setPosition({
+                if (!containerRef.current) return;
+                const rect = containerRef.current.getBoundingClientRect();
+                setPosition(prev => {
+                    if (prev.top === rect.bottom && prev.left === rect.left && prev.width === rect.width) return prev;
+                    return {
                         top: rect.bottom,
                         left: rect.left,
                         width: rect.width,
-                    });
-                }
+                    };
+                });
             };
 
             updatePosition();
+            const interval = setInterval(updatePosition, 16); // 60 FPS tracking during animations/resizing
+
             window.addEventListener('resize', updatePosition);
             window.addEventListener('scroll', updatePosition, true); // true for capture (all scrollable ancestors)
 
             return () => {
+                clearInterval(interval);
                 window.removeEventListener('resize', updatePosition);
                 window.removeEventListener('scroll', updatePosition, true);
             };
@@ -267,17 +272,18 @@ export function SearchableSelect({
         switch (e.key) {
             case 'ArrowDown':
                 e.preventDefault();
-                setActiveIndex(prev => (prev < options.length - 1 ? prev + 1 : prev));
+                e.stopPropagation();
+                setActiveIndex(prev => (prev < options.length - 1 ? prev + 1 : 0)); // Wrap to top
                 break;
             case 'ArrowUp':
                 e.preventDefault();
-                setActiveIndex(prev => (prev > 0 ? prev - 1 : prev));
+                e.stopPropagation();
+                setActiveIndex(prev => (prev > 0 ? prev - 1 : options.length - 1)); // Wrap to bottom
                 break;
             case 'Enter':
                 e.preventDefault();
-                e.stopPropagation(); // Stop Radix from interfering
+                e.stopPropagation();
                 
-                // [FIX] Auto-select logic for high-speed counter
                 const currentPool = options.length > 0 ? options : propOptions;
                 const match = currentPool[activeIndex] || currentPool[0];
                 
@@ -286,12 +292,19 @@ export function SearchableSelect({
                 } else if (onCreate && query.length > 1) {
                     handleCreate();
                 } else {
-                  setOpen(false); // At least close if no items to keep moving
+                  setOpen(false);
                 }
                 break;
             case 'Escape':
                 e.preventDefault();
+                e.stopPropagation();
                 setOpen(false);
+                break;
+            case 'Tab':
+                // Auto-select top item on tab out for maximum speed
+                if (options.length > 0) {
+                    handleSelect(options[activeIndex] || options[0]);
+                }
                 break;
         }
     };
@@ -311,15 +324,17 @@ export function SearchableSelect({
         <div
             className={`
                 ${usePortal ? 'fixed' : 'absolute'} 
-                z-[9999] mt-1 overflow-hidden rounded-xl py-1 text-base shadow-2xl ring-1 ring-black/5 focus:outline-none sm:text-sm 
-                ${isDark ? 'bg-neutral-900 border border-white/10 text-white shadow-black' : 'bg-white border border-gray-100 text-gray-900 shadow-lg'}
+                z-[999999] mt-1 overflow-hidden rounded-xl py-1 text-base shadow-2xl ring-1 ring-black/5 focus:outline-none sm:text-sm 
+                bg-white dark:bg-neutral-900 border border-gray-100 dark:border-white/10 text-gray-900 dark:text-white shadow-lg dark:shadow-black
                 ${usePortal ? '' : 'w-full top-full left-0'}
             `}
             style={{
                 top: usePortal ? position.top : undefined,
                 left: usePortal ? position.left : undefined,
-                width: usePortal ? position.width : undefined,
-                maxHeight: '240px',
+                minWidth: usePortal ? position.width : undefined,
+                width: usePortal ? 'max-content' : '100%',
+                maxWidth: '90vw',
+                maxHeight: '400px',
                 pointerEvents: 'auto'
             }}
         >
@@ -363,16 +378,24 @@ export function SearchableSelect({
                                 handleSelect(option);
                             }}
                             className={`
-                                relative cursor-pointer select-none py-2.5 pl-3 pr-9 
-                                ${index === activeIndex ? (isDark ? 'bg-white/10' : 'bg-indigo-50 dark:bg-white/10') : ''}
-                                ${isDark ? 'text-white hover:bg-white/10' : 'text-gray-900 dark:text-neutral-200 hover:bg-indigo-50 dark:hover:bg-white/5'}
-                                transition-colors flex flex-col
+                                relative cursor-pointer select-none py-3 pl-3 pr-9 
+                                ${index === activeIndex 
+                                    ? 'bg-indigo-600 text-white shadow-inner' 
+                                    : 'text-gray-900 dark:text-white hover:bg-indigo-50 dark:hover:bg-white/5'
+                                }
+                                transition-all flex flex-col
                             `}
                             onMouseEnter={() => setActiveIndex(index)}
                         >
-                            <span className="block truncate font-medium">{option.label}</span>
+                            <span className="block whitespace-nowrap font-bold tracking-tight">{option.label}</span>
                             {option.subLabel && (
-                                <span className="block truncate text-xs text-gray-500 dark:text-neutral-500 mt-0.5">{option.subLabel}</span>
+                                <span className={`block whitespace-nowrap text-[10px] mt-1 font-black uppercase tracking-widest ${
+                                    index === activeIndex 
+                                        ? 'text-white/70' 
+                                        : 'text-slate-500 dark:text-neutral-500'
+                                }`}>
+                                    {option.subLabel}
+                                </span>
                             )}
 
                             {value === option.id && (
@@ -425,7 +448,7 @@ export function SearchableSelect({
                                 <div className="flex flex-col overflow-hidden">
                                     <span className={`block truncate font-medium text-gray-900 dark:text-neutral-200`}>{selectedOption.label}</span>
                                     {selectedOption.subLabel && (
-                                        <span className={`block truncate text-xs text-gray-500 dark:text-neutral-500`}>{selectedOption.subLabel}</span>
+                                        <span className={`block truncate text-xs text-slate-500 dark:text-neutral-400`}>{selectedOption.subLabel}</span>
                                     )}
                                 </div>
                                 {!disabled && (
@@ -439,7 +462,7 @@ export function SearchableSelect({
                                 ref={inputRef}
                                 id={inputId}
                                 type="text"
-                                className={`w-full border-none p-0 focus:ring-0 bg-transparent ring-2 ring-indigo-500/30 rounded-sm px-2 ${variant === 'ghost' ? `${isDark ? 'text-[#ffffcc] font-black' : 'text-gray-900 font-bold'} font-inherit placeholder:text-inherit/60` : `text-sm ${isDark ? 'text-white' : 'text-gray-900'} placeholder:text-gray-400`}`}
+                                className={`w-full border-none p-0 focus:ring-0 bg-transparent ring-2 ring-indigo-500/30 rounded-sm px-2 ${variant === 'ghost' ? 'text-slate-900 dark:text-[#ffffcc] font-black font-inherit placeholder:text-inherit/60' : 'text-sm text-slate-900 dark:text-white placeholder:text-gray-400'}`}
                                 placeholder={selectedOption ? selectedOption.label : placeholder}
                                 value={query}
                                 onChange={handleInputChange}

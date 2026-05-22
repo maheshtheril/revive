@@ -16,7 +16,7 @@ export async function GET(
         console.log(`[GET /api/prescriptions/by-appointment/${id}] Fetching for tenant: ${session.user.tenantId}`)
 
         // Use Raw SQL for consistency and better error detection
-        const prescriptions: any[] = await prisma.$queryRaw`
+        const rawPrescriptions: any[] = await prisma.$queryRaw`
             SELECT p.*, 
                 JSON_AGG(JSON_BUILD_OBJECT(
                     'id', pi.id,
@@ -26,6 +26,8 @@ export async function GET(
                     'evening', pi.evening,
                     'night', pi.night,
                     'days', pi.days,
+                    'batch_id', pi.batch_id,
+                    'batch_no', pi.batch_no,
                     'hms_product', JSON_BUILD_OBJECT(
                         'id', prod.id,
                         'name', prod.name,
@@ -42,6 +44,48 @@ export async function GET(
             ORDER BY p.created_at DESC
             LIMIT 1
         `;
+
+        // Parse JSON_AGG if it's returned as a string (common in some Node/Prisma versions)
+        const prescriptions = rawPrescriptions.map(p => ({
+            ...p,
+            prescription_items: typeof p.prescription_items === 'string' 
+                ? JSON.parse(p.prescription_items) 
+                : p.prescription_items
+        }));
+
+        // Fetch nursing consumption items independently
+        const consumptionItems: any[] = await prisma.$queryRaw`
+            SELECT 
+                sm.id, sm.qty, sm.uom, sm.created_at,
+                p.name as product_name,
+                u.full_name as nurse_name
+            FROM hms_stock_move sm
+            LEFT JOIN hms_product p ON sm.product_id = p.id
+            LEFT JOIN app_user u ON sm.created_by = u.id
+            WHERE sm.source_reference::text = CAST(${id} AS text)
+            AND sm.source = 'Nursing Consumption'
+            AND sm.tenant_id::text = CAST(${session.user.tenantId} AS text)
+            ORDER BY sm.created_at DESC
+        `;
+
+        const clinicalPrescriptionNode = prescriptions[0];
+        
+        // Format for frontend (handle the aggregate JSON structure safely)
+        let medicines = [];
+        if (clinicalPrescriptionNode && Array.isArray(clinicalPrescriptionNode.prescription_items)) {
+            medicines = clinicalPrescriptionNode.prescription_items
+                .filter((item: any) => item && item.medicine_id && item.hms_product && (item.hms_product.id || item.hms_product.name))
+                .map((item: any) => ({
+                    id: item.hms_product.id,
+                    name: item.hms_product.name,
+                    dosage: `${item.morning || 0}-${item.afternoon || 0}-${item.evening || 0}-${item.night || 0}`,
+                    days: (item.days || 3).toString(),
+                    timing: 'After Food',
+                    batchId: item.batch_id,
+                    batchNo: item.batch_no,
+                    quantity: ((item.morning || 0) + (item.afternoon || 0) + (item.evening || 0) + (item.night || 0)) * (item.days || 0)
+                }));
+        }
 
         const vitalsArr: any[] = await prisma.$queryRaw`
             SELECT v.* FROM hms_vitals v
@@ -71,62 +115,46 @@ export async function GET(
             LIMIT 1
         `;
 
-        const prescription = prescriptions[0];
-        const vitals = vitalsArr[0];
-        const labOrder = labOrders[0];
+        const clinicalVitalsNode = vitalsArr[0];
+        const clinicalLabOrderNode = labOrders[0];
 
-        // Fetch nursing consumption items independently
-        const consumptionItems: any[] = await prisma.$queryRaw`
-            SELECT 
-                sm.id, sm.qty, sm.uom, sm.created_at,
-                p.name as product_name,
-                u.full_name as nurse_name
-            FROM hms_stock_move sm
-            LEFT JOIN hms_product p ON sm.product_id = p.id
-            LEFT JOIN app_user u ON sm.created_by = u.id
-            WHERE sm.source_reference::text = CAST(${id} AS text)
-            AND sm.source = 'Nursing Consumption'
-            AND sm.tenant_id::text = CAST(${session.user.tenantId} AS text)
-            ORDER BY sm.created_at DESC
-        `;
+        // Aggregate consumption items by product to prevent "fetching a list" confusion
+        const aggregatedConsumption = consumptionItems.reduce((acc: any[], curr: any) => {
+            const existing = acc.find(a => a.product_name === curr.product_name && a.uom === curr.uom);
+            if (existing) {
+                existing.qty = Number(existing.qty) + Number(curr.qty);
+                // Keep the latest timestamp
+                if (new Date(curr.created_at) > new Date(existing.created_at)) {
+                    existing.created_at = curr.created_at;
+                }
+            } else {
+                acc.push({ ...curr });
+            }
+            return acc;
+        }, []);
 
         console.log(`[GET /api/prescriptions/by-appointment/${id}] Found:`, {
-            prescriptionId: prescription?.id,
-            vitalsId: vitals?.id,
-            labOrderId: labOrder?.id,
-            itemCount: prescription?.prescription_items?.length,
-            labCount: labOrder?.tests?.length,
-            consumptionCount: consumptionItems.length
+            prescriptionId: clinicalPrescriptionNode?.id,
+            vitalsId: clinicalVitalsNode?.id,
+            labOrderId: clinicalLabOrderNode?.id,
+            itemCount: medicines.length,
+            labCount: (clinicalLabOrderNode?.tests as any)?.length,
+            consumptionCount: aggregatedConsumption.length
         })
 
-        if (!prescription && !vitals && consumptionItems.length === 0) {
+        if (!clinicalPrescriptionNode && !clinicalVitalsNode && aggregatedConsumption.length === 0) {
             return NextResponse.json({ success: true, prescription: null, vitals: null, consumption: [] })
-        }
-
-        // Format for frontend (handle the aggregate JSON structure safely)
-        let medicines = [];
-        if (prescription && Array.isArray(prescription.prescription_items)) {
-            medicines = prescription.prescription_items
-                .filter((item: any) => item && item.medicine_id && item.hms_product && item.hms_product.id)
-                .map((item: any) => ({
-                    id: item.hms_product.id,
-                    name: item.hms_product.name,
-                    dosage: `${item.morning || 0}-${item.afternoon || 0}-${item.evening || 0}-${item.night || 0}`,
-                    days: (item.days || 3).toString(),
-                    timing: 'After Food',
-                    quantity: ((item.morning || 0) + (item.afternoon || 0) + (item.evening || 0) + (item.night || 0)) * (item.days || 0)
-                }));
         }
 
         return NextResponse.json({
             success: true,
-            prescription: prescription ? {
-                ...prescription,
+            prescription: clinicalPrescriptionNode ? {
+                ...clinicalPrescriptionNode,
                 medicines,
-                labTests: labOrder?.tests || []
+                labTests: clinicalLabOrderNode?.tests || []
             } : null,
-            vitals: vitals || null,
-            consumption: consumptionItems
+            vitals: clinicalVitalsNode || null,
+            consumption: aggregatedConsumption
         })
     } catch (error) {
         console.error('Error fetching prescription by appointment:', error)

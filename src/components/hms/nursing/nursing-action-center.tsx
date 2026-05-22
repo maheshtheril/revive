@@ -8,7 +8,7 @@ import {
     Clock, Search, Filter, ChevronRight, X
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { differenceInYears } from "date-fns"
+import { differenceInYears, format } from "date-fns"
 import { Dialog, DialogContent, DialogTitle, DialogHeader } from "@/components/ui/dialog"
 import NursingVitalsForm from "@/components/nursing/vitals-form"
 import { UsageForm } from "./usage-form"
@@ -212,9 +212,9 @@ export function NursingActionCenter({ pendingTriage, completedTriage = [], activ
                                             </div>
                                         </div>
                                         <div className="flex flex-col items-end gap-1.5 md:gap-2 text-right shrink-0">
-                                            <div className="text-[10px] md:text-xs font-bold text-slate-400 flex items-center gap-1">
+                                            <div className="text-[10px] md:text-xs font-bold text-slate-400 flex items-center gap-1" suppressHydrationWarning>
                                                 <Clock className="h-3 w-3" />
-                                                {new Date(task.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {format(new Date(task.time), 'hh:mm a')}
                                             </div>
                                             <div className="flex items-center gap-1.5">
                                                 <button

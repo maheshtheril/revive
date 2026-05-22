@@ -53,9 +53,10 @@ interface PaymentVoucherFormProps {
     onSuccess?: () => void;
     headerActions?: React.ReactNode; // For injecting top-right controls
     initialData?: any;
+    simplified?: boolean;
 }
 
-export function PaymentVoucherForm({ onClose, className, onSuccess, headerActions, initialData }: PaymentVoucherFormProps) {
+export function PaymentVoucherForm({ onClose, className, onSuccess, headerActions, initialData, simplified }: PaymentVoucherFormProps) {
     const { toast } = useToast();
     const [loading, setLoading] = useState(false);
 
@@ -255,48 +256,50 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
     }));
 
     return (
-        <div className={cn("bg-[#fff9e6] dark:bg-slate-900 font-mono text-sm flex flex-col h-full overflow-hidden", className)}>
+        <div className={cn("bg-gradient-to-br from-slate-50 via-indigo-50/20 to-emerald-50/20 dark:from-slate-950 dark:via-indigo-950/30 dark:to-emerald-950/20 font-sans text-sm flex flex-col h-full overflow-hidden text-slate-900 dark:text-slate-100", className)}>
             <Toaster />
 
             {/* Header - Fixed Stick Top */}
-            <div className="bg-teal-700 text-yellow-400 px-6 py-3 flex justify-between items-center shadow-md shrink-0 relative z-50">
+            <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-emerald-700 text-white px-8 py-4 flex justify-between items-center shadow-lg shrink-0 relative z-50 border-b border-indigo-500/30">
                 <div className="flex items-center gap-4">
                     {onClose && (
-                        <Button variant="ghost" size="icon" onClick={onClose} className="text-yellow-400 hover:text-white hover:bg-teal-600">
+                        <Button variant="ghost" size="icon" onClick={onClose} className="text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition-all">
                             <ArrowLeft className="h-5 w-5" />
                         </Button>
                     )}
                     <div>
-                        <span className="font-bold text-xl tracking-wider block">Payment / Expense Voucher</span>
-                        <span className="text-[10px] text-teal-200 font-bold uppercase tracking-widest">
-                            {mode === 'GENERAL' ? 'General Expenses & Direct Payments' : 'Bill-Wise Settlement (Accounts Payable)'}
+                        <span className="font-black text-xl tracking-tight block italic">{simplified ? 'Petty Cash & Expense Entry Terminal' : 'Financial Voucher Terminal'}</span>
+                        <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-[0.2em]">
+                            {simplified ? 'Quick Expense Record (General Ledgers)' : (mode === 'GENERAL' ? 'General Expenses & Direct Payments (F5)' : 'Bill-Wise Settlement (Accounts Payable)')}
                         </span>
                     </div>
                 </div>
 
                 {/* Right Side: Mode Switcher + Custom Actions */}
                 <div className="flex items-center gap-4">
-                    <div className="flex gap-2">
-                        <Button
-                            size="sm"
-                            variant={mode === 'GENERAL' ? 'secondary' : 'ghost'}
-                            className={`font-bold ${mode === 'GENERAL' ? 'bg-yellow-400 text-teal-900 hover:bg-yellow-300' : 'text-teal-100 hover:text-white hover:bg-teal-600'}`}
-                            onClick={() => setMode('GENERAL')}
-                        >
-                            General (F5)
-                        </Button>
-                        <Button
-                            size="sm"
-                            variant={mode === 'BILL_SETTLEMENT' ? 'secondary' : 'ghost'}
-                            className={`font-bold ${mode === 'BILL_SETTLEMENT' ? 'bg-yellow-400 text-teal-900 hover:bg-yellow-300' : 'text-teal-100 hover:text-white hover:bg-teal-600'}`}
-                            onClick={() => setMode('BILL_SETTLEMENT')}
-                        >
-                            Bill Pay (Adv)
-                        </Button>
-                    </div>
-                    {/* Injected Header Actions (like Min/Max) */}
+                    {!simplified && (
+                        <div className="flex bg-black/20 p-1.5 rounded-2xl gap-1 border border-white/10 shadow-inner">
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                className={`font-black uppercase tracking-wider text-xs px-4 h-9 rounded-xl transition-all ${mode === 'GENERAL' ? 'bg-white text-indigo-900 shadow-md hover:bg-white/90' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                                onClick={() => setMode('GENERAL')}
+                            >
+                                General (F5)
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                className={`font-black uppercase tracking-wider text-xs px-4 h-9 rounded-xl transition-all ${mode === 'BILL_SETTLEMENT' ? 'bg-white text-indigo-900 shadow-md hover:bg-white/90' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                                onClick={() => setMode('BILL_SETTLEMENT')}
+                            >
+                                Bill Pay (Adv)
+                            </Button>
+                        </div>
+                    )}
+                    {/* Injected Header Actions */}
                     {headerActions && (
-                        <div className="border-l border-teal-600 pl-4 ml-2">
+                        <div className="border-l border-white/20 pl-4 ml-2">
                             {headerActions}
                         </div>
                     )}
@@ -304,35 +307,35 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
             </div>
 
             {/* Top Info Bar */}
-            <div className="bg-[#fff9e6] dark:bg-slate-900 p-6 border-b border-teal-700/20 grid grid-cols-2 gap-8 shrink-0">
-                <div className="flex items-center gap-2">
-                    <span className="font-bold text-teal-900 dark:text-teal-400 w-24">Voucher No:</span>
-                    <span className="font-bold text-black dark:text-white">{voucherNo}</span>
+            <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl px-8 py-5 border-b border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-8 shrink-0 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <span className="text-xs font-black uppercase tracking-widest text-slate-400">Voucher No:</span>
+                    <span className="text-sm font-black font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1 rounded-xl border border-indigo-100 dark:border-indigo-900/50">{voucherNo}</span>
                 </div>
-                <div className="flex items-center gap-2 justify-end">
-                    <span className="font-bold text-teal-900 dark:text-teal-400">Date:</span>
+                <div className="flex items-center gap-3 justify-end">
+                    <span className="text-xs font-black uppercase tracking-widest text-slate-400">Date:</span>
                     <Popover>
                         <PopoverTrigger asChild>
-                            <Button variant="outline" className="h-8 border-teal-700/30 bg-white text-teal-900 font-bold">
+                            <Button variant="outline" className="h-10 px-4 rounded-xl border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white shadow-sm hover:border-indigo-500/30 transition-all">
                                 {format(form.watch("date"), "dd-MMM-yyyy")}
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0">
+                        <PopoverContent className="w-auto p-0 rounded-2xl shadow-xl">
                             <Calendar mode="single" selected={form.watch("date")} onSelect={(d) => d && form.setValue("date", d)} initialFocus />
                         </PopoverContent>
                     </Popover>
                 </div>
             </div>
 
-            {/* Scrollable Content Area: flex-1 ensures it takes remaining space */}
-            <div className="flex-1 overflow-y-auto p-8 bg-[#fff9e6] dark:bg-slate-950 min-h-0">
+            {/* Scrollable Content Area */}
+            <div className="flex-1 overflow-y-auto p-8 bg-transparent min-h-0 custom-scrollbar">
                 <Form {...form}>
                     <form className="space-y-8 max-w-5xl mx-auto pb-6">
 
-                        {/* Source Account (Common) */}
-                        <div className="flex items-center gap-6 py-4 px-6 border border-teal-700/20 bg-teal-50/30 dark:bg-teal-900/10 rounded-xl mb-8 shadow-sm">
-                            <div className="flex items-center gap-4 flex-1">
-                                <span className="font-extrabold text-teal-900 dark:text-teal-300 w-48 text-right tracking-tight text-sm uppercase">Credit Account (Cash/Bank) :</span>
+                        {/* Credit Account Box */}
+                        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex items-center gap-6 transition-all hover:shadow-md mb-8">
+                            <div className="flex items-center gap-6 flex-1">
+                                <span className="font-black text-xs uppercase tracking-widest text-indigo-600 dark:text-indigo-400 w-56 text-right">Credit Account (Cash/Bank) :</span>
                                 <div className="w-[450px]">
                                     <FormField
                                         control={form.control}
@@ -340,14 +343,31 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
                                         render={({ field }) => (
                                             <SearchableSelect
                                                 value={field.value}
-                                                onChange={(val) => field.onChange(val || "")}
+                                                inputId="voucher-credit-account"
+                                                autoFocus={true}
+                                                onChange={(val) => {
+                                                    field.onChange(val || "");
+                                                    if (val) {
+                                                        setTimeout(() => {
+                                                            if (mode === 'GENERAL') {
+                                                                const firstLedger = document.getElementById('voucher-ledger-0');
+                                                                if (firstLedger) {
+                                                                    firstLedger.focus();
+                                                                }
+                                                            } else {
+                                                                const vendorSelect = document.getElementById('voucher-vendor-select');
+                                                                if (vendorSelect) vendorSelect.focus();
+                                                            }
+                                                        }, 50);
+                                                    }
+                                                }}
                                                 options={journals.map(j => ({ id: j.id, label: j.name, subLabel: j.type.toUpperCase() }))}
                                                 onSearch={async (q) => {
                                                     const res = await getJournals(['cash', 'bank']);
                                                     return res.success && res.data ? (res.data as any).filter((j: any) => j.name.toLowerCase().includes(q.toLowerCase())).map((j: any) => ({ id: j.id, label: j.name, subLabel: j.type.toUpperCase() })) : [];
                                                 }}
                                                 placeholder="Select Cash / Bank Account..."
-                                                className="bg-white border-b-2 border-teal-700/20 rounded-none focus:ring-0 font-bold"
+                                                className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-2xl font-bold h-11 text-xs shadow-sm"
                                             />
                                         )}
                                     />
@@ -357,110 +377,147 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
 
                         {mode === 'GENERAL' ? (
                             // --- GENERAL MODE ---
-                            <div className="border border-teal-700/30 bg-white dark:bg-slate-900 shadow-sm animate-in fade-in duration-300">
+                            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm overflow-hidden animate-in fade-in duration-500 transition-all">
                                 {/* Grid Header */}
-                                <div className="flex border-b border-teal-700/30 bg-teal-50 dark:bg-teal-900/20 font-bold text-teal-900 dark:text-teal-400">
-                                    <div className="flex-1 p-3 border-r border-teal-700/30 text-center">Particulars (Expense / Liability)</div>
-                                    <div className="w-48 p-3 text-right">Amount</div>
-                                    <div className="w-12"></div>
+                                <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 font-black text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 py-4">
+                                    <div className="flex-1 px-6 border-r border-slate-200 dark:border-slate-800 text-left">Particulars (Expense / Liability)</div>
+                                    <div className="w-56 px-6 text-right">Amount</div>
+                                    <div className="w-16"></div>
                                 </div>
 
-                                {fields.map((field, index) => (
-                                    <div key={field.id} className="flex border-b border-dashed border-slate-300 items-start">
-                                        <div className="flex-1 p-2 border-r border-slate-300">
-                                            <FormField
-                                                control={form.control}
-                                                name={`lines.${index}.categoryId`}
-                                                render={({ field }) => (
-                                                    <SearchableSelect
-                                                        value={field.value}
-                                                        onChange={(val) => field.onChange(val || "")}
-                                                        onSearch={async (q) => {
-                                                            const res = await getAccounts(q, ['Expense', 'Liability', 'Equity', 'Asset', 'Cost of Goods Sold']);
-                                                            return res.success && res.data ? res.data.map((a: any) => ({ id: a.id, label: a.name, subLabel: a.type })) : [];
-                                                        }}
-                                                        options={accountOptions}
-                                                        placeholder="Select Ledger..."
-                                                        className="border-0 shadow-none bg-transparent hover:bg-teal-50 text-base h-10"
-                                                    />
-                                                )}
-                                            />
+                                <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                                    {fields.map((field, index) => (
+                                        <div key={field.id} className="flex items-center group hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                            <div className="flex-1 p-3 border-r border-slate-100 dark:border-slate-800/50">
+                                                <FormField
+                                                    control={form.control}
+                                                    name={`lines.${index}.categoryId`}
+                                                    render={({ field }) => (
+                                                        <SearchableSelect
+                                                            value={field.value}
+                                                            onChange={(val) => {
+                                                                field.onChange(val || "");
+                                                                if (val) {
+                                                                    setTimeout(() => {
+                                                                        const amtInput = document.getElementById(`voucher-amount-${index}`);
+                                                                        if (amtInput) {
+                                                                            amtInput.focus();
+                                                                            (amtInput as HTMLInputElement).select();
+                                                                        }
+                                                                    }, 50);
+                                                                }
+                                                            }}
+                                                            onSearch={async (q) => {
+                                                                const res = await getAccounts(q, ['Expense', 'Liability', 'Equity', 'Asset', 'Cost of Goods Sold']);
+                                                                return res.success && res.data ? res.data.map((a: any) => ({ id: a.id, label: a.name, subLabel: a.type })) : [];
+                                                            }}
+                                                            options={accountOptions}
+                                                            placeholder="Select Ledger..."
+                                                            inputId={`voucher-ledger-${index}`}
+                                                            autoFocus={index > 0 && index === fields.length - 1}
+                                                            className="border-0 shadow-none bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl font-bold h-11 text-xs"
+                                                        />
+                                                    )}
+                                                />
+                                            </div>
+                                            <div className="w-56 p-3">
+                                                <FormField
+                                                    control={form.control}
+                                                    name={`lines.${index}.amount`}
+                                                    render={({ field }) => (
+                                                        <Input
+                                                            id={`voucher-amount-${index}`}
+                                                            type="number"
+                                                            {...field}
+                                                            value={(field.value as number) || ''}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    if (index === fields.length - 1) {
+                                                                        const addBtn = document.getElementById('add-ledger-row-btn');
+                                                                        if (addBtn) addBtn.focus();
+                                                                    } else {
+                                                                        const nextAmt = document.getElementById(`voucher-amount-${index + 1}`);
+                                                                        if (nextAmt) {
+                                                                            nextAmt.focus();
+                                                                            (nextAmt as HTMLInputElement).select();
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="text-right border-0 shadow-none bg-transparent h-11 font-black text-base font-mono focus-visible:ring-1 focus-visible:ring-indigo-500 rounded-xl"
+                                                            placeholder="0.00"
+                                                        />
+                                                    )}
+                                                />
+                                            </div>
+                                            <div className="w-16 flex items-center justify-center p-3">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => remove(index)}
+                                                    disabled={fields.length === 1}
+                                                    className="h-9 w-9 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-all"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
                                         </div>
-                                        <div className="w-48 p-2">
-                                            <FormField
-                                                control={form.control}
-                                                name={`lines.${index}.amount`}
-                                                render={({ field }) => (
-                                                    <Input
-                                                        type="number"
-                                                        {...field}
-                                                        value={(field.value as number) || ''}
-                                                        className="text-right border-0 shadow-none bg-transparent h-10 font-bold text-base"
-                                                        placeholder="0.00"
-                                                    />
-                                                )}
-                                            />
-                                        </div>
-                                        <div className="w-12 flex items-center justify-center">
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={() => remove(index)}
-                                                disabled={fields.length === 1}
-                                                className="h-8 w-8 text-slate-400 hover:text-red-500"
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ))}
-
-                                <div className="p-3 cursor-pointer hover:bg-teal-50 text-teal-700 text-xs font-bold border-t border-slate-100" onClick={() => append({ categoryId: "", amount: 0 })}>
-                                    + Add Ledger
+                                    ))}
                                 </div>
+
+                                <button
+                                    type="button"
+                                    id="add-ledger-row-btn"
+                                    onClick={() => append({ categoryId: "", amount: 0 })}
+                                    className="p-4 bg-slate-50/50 dark:bg-slate-800/30 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 text-xs font-black uppercase tracking-widest border-t border-slate-100 dark:border-slate-800 flex items-center justify-center gap-2 transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none w-full font-sans"
+                                >
+                                    <span className="text-base font-bold leading-none">+</span> Add Ledger Row
+                                </button>
                             </div>
                         ) : (
                             // --- BILL SETTLEMENT MODE ---
-                            <div className="space-y-6 animate-in fade-in duration-300">
-                                <div className="flex items-center gap-4">
-                                    <span className="font-bold text-teal-900 dark:text-teal-400 w-32 text-right">Select Vendor :</span>
-                                    <div className="w-[400px]">
+                            <div className="space-y-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm animate-in fade-in duration-500">
+                                <div className="flex items-center gap-6">
+                                    <span className="font-black text-xs uppercase tracking-widest text-indigo-600 dark:text-indigo-400 w-48 text-right">Select Vendor :</span>
+                                    <div className="w-[450px]">
                                         <SearchableSelect
                                             value={selectedVendorId}
+                                            inputId="voucher-vendor-select"
                                             onChange={handleVendorSelect}
                                             onSearch={async (q) => searchSuppliers(q)}
                                             placeholder="Search Supplier Name..."
-                                            className="bg-white border-b-2 border-teal-700/20 rounded-none focus:ring-0"
+                                            className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-2xl font-bold h-11 text-xs shadow-sm"
                                         />
                                     </div>
                                 </div>
 
                                 {bills.length > 0 && (
-                                    <div className="border border-teal-700/30 bg-white dark:bg-slate-900 p-0 shadow-sm">
+                                    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                                         <table className="w-full text-left">
-                                            <thead className="bg-teal-50 text-teal-900 font-bold border-b border-teal-700/30 text-xs uppercase">
+                                            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-black border-b border-slate-200 dark:border-slate-800 text-[10px] tracking-widest uppercase">
                                                 <tr>
-                                                    <th className="p-3">Bill #</th>
-                                                    <th className="p-3">Date</th>
-                                                    <th className="p-3 text-right">Bill Amount</th>
-                                                    <th className="p-3 text-right">Due Amount</th>
-                                                    <th className="p-3 text-right bg-yellow-50">Payment Allocation</th>
+                                                    <th className="p-4 px-6">Bill #</th>
+                                                    <th className="p-4 px-6">Date</th>
+                                                    <th className="p-4 px-6 text-right">Bill Amount</th>
+                                                    <th className="p-4 px-6 text-right">Due Amount</th>
+                                                    <th className="p-4 px-6 text-right bg-amber-50/50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400">Payment Allocation</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="text-sm">
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50 text-xs font-bold">
                                                 {bills.map(bill => (
-                                                    <tr key={bill.id} className="border-b border-dashed border-slate-200 hover:bg-slate-50">
-                                                        <td className="p-3 font-medium">{bill.number}</td>
-                                                        <td className="p-3 text-slate-500">{new Date(bill.date).toLocaleDateString()}</td>
-                                                        <td className="p-3 text-right font-mono">{bill.total.toLocaleString()}</td>
-                                                        <td className="p-3 text-right font-mono font-bold text-red-500">{bill.outstanding.toLocaleString()}</td>
-                                                        <td className="p-3 text-right bg-yellow-50/30">
+                                                    <tr key={bill.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                                        <td className="p-4 px-6 font-mono font-black">{bill.number}</td>
+                                                        <td className="p-4 px-6 text-slate-400">{new Date(bill.date).toLocaleDateString()}</td>
+                                                        <td className="p-4 px-6 text-right font-mono">₹{bill.total.toLocaleString()}</td>
+                                                        <td className="p-4 px-6 text-right font-mono font-black text-rose-500 dark:text-rose-400">₹{bill.outstanding.toLocaleString()}</td>
+                                                        <td className="p-3 px-6 text-right bg-amber-50/30 dark:bg-amber-950/10">
                                                             <Input
                                                                 type="number"
                                                                 value={allocations[bill.id] || ''}
                                                                 onChange={(e) => handleAllocationChange(bill.id, e.target.value)}
-                                                                className="text-right h-8 w-32 ml-auto bg-white border-slate-300 font-bold"
+                                                                className="text-right h-10 w-36 ml-auto bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 font-black font-mono rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500 text-sm"
                                                                 placeholder="0.00"
                                                             />
                                                         </td>
@@ -471,28 +528,28 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
                                     </div>
                                 )}
                                 {selectedVendorId && bills.length === 0 && (
-                                    <div className="text-center p-8 text-slate-400 italic">No outstanding bills found for this vendor.</div>
+                                    <div className="text-center p-12 text-slate-400 font-bold uppercase tracking-widest text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">No outstanding bills found for this vendor.</div>
                                 )}
                             </div>
                         )}
 
                         {/* Total & Narration */}
                         <div className="flex flex-col gap-6 pt-6">
-                            <div className="flex justify-end gap-16 pr-16 text-xl font-bold text-teal-900 border-t border-teal-700 w-full pt-4">
-                                <span>Total Payment</span>
-                                <span>₹ {mode === 'GENERAL' ? generalTotal.toFixed(2) : totalAllocated.toLocaleString()}</span>
+                            <div className="flex justify-end items-center gap-16 px-8 py-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm">
+                                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Total Voucher Payment</span>
+                                <span className="text-3xl font-black font-mono bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-300 bg-clip-text text-transparent">₹ {mode === 'GENERAL' ? generalTotal.toFixed(2) : totalAllocated.toLocaleString()}</span>
                             </div>
 
-                            <div className="flex items-start gap-4 p-4 bg-teal-50/50 border border-teal-100 rounded-lg">
-                                <span className="font-bold text-teal-900 w-32 mt-2 text-right">Narration :</span>
+                            <div className="flex items-start gap-6 p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm">
+                                <span className="font-black text-xs uppercase tracking-widest text-indigo-600 dark:text-indigo-400 w-32 mt-3 text-right">Narration / Memo :</span>
                                 <FormField
                                     control={form.control}
                                     name="narration"
                                     render={({ field }) => (
                                         <Textarea
                                             {...field}
-                                            className="bg-white border-teal-700/30 font-mono text-sm min-h-[80px] flex-1 max-w-2xl"
-                                            placeholder="Enter transaction details..."
+                                            className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 font-mono text-sm min-h-[90px] flex-1 max-w-2xl rounded-2xl p-4 shadow-sm focus-visible:ring-1 focus-visible:ring-indigo-500"
+                                            placeholder="Enter transaction details, check number, or references..."
                                         />
                                     )}
                                 />
@@ -503,15 +560,15 @@ export function PaymentVoucherForm({ onClose, className, onSuccess, headerAction
             </div>
 
             {/* Sticky Footer */}
-            <div className="p-4 bg-teal-700 flex justify-end gap-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] shrink-0 z-50">
+            <div className="p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800 flex justify-end items-center gap-6 shadow-2xl shrink-0 z-50">
                 {onClose && (
-                    <Button variant="ghost" className="text-teal-100 hover:bg-teal-800 hover:text-white" onClick={onClose}>
+                    <Button variant="ghost" className="text-xs font-black uppercase tracking-widest rounded-2xl h-12 px-6 hover:bg-slate-100 dark:hover:bg-slate-800" onClick={onClose}>
                         Quit (Esc)
                     </Button>
                 )}
-                <Button onClick={form.handleSubmit(onSubmit)} disabled={loading} className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold h-10 px-8">
-                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Accept (Yes)
+                <Button onClick={form.handleSubmit(onSubmit)} disabled={loading} className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs uppercase tracking-widest h-12 px-10 rounded-2xl shadow-lg active:scale-95 transition-all flex items-center gap-2">
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {simplified ? 'Record Expense (Yes)' : 'Accept (Yes)'}
                 </Button>
             </div>
         </div>

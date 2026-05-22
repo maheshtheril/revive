@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getPurchaseReturns } from '@/app/actions/returns';
-import { ArrowLeft, Loader2, Undo2, Calendar, Box, Search, FileText } from 'lucide-react';
+import { ArrowLeft, Loader2, Undo2, Calendar, Box, Search, FileText, Plus } from 'lucide-react';
 import Link from 'next/link';
 
 type PurchaseReturn = {
@@ -68,6 +68,11 @@ export default function PurchaseReturnsPage() {
                     <Link href="/hms/purchasing/receipts">
                         <button className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest shadow-sm">
                             Back to Receipts
+                        </button>
+                    </Link>
+                    <Link href="/hms/purchasing/returns/new">
+                        <button className="bg-red-600 hover:bg-red-700 text-white font-bold transition-all px-5 py-2.5 rounded-full text-xs uppercase tracking-widest shadow-md shadow-red-500/20 flex items-center gap-2">
+                            <Plus className="h-4 w-4" /> New Direct Return
                         </button>
                     </Link>
                 </div>

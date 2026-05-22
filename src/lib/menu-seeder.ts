@@ -32,14 +32,26 @@ async function ensureAccountingMasters() {
     let masterParent = await prisma.menu_items.findFirst({ where: { key: 'acc-masters' } });
     if (!masterParent) {
         masterParent = await prisma.menu_items.create({
-            data: { label: 'MASTERS', url: '#', key: 'acc-masters', module_key: 'finance', icon: 'Settings', sort_order: 10, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'MASTERS', url: '#', key: 'acc-masters', module_key: 'finance', icon: 'Settings', sort_order: 10, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const coaMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-coa' } });
     if (!coaMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Chart of Accounts', url: '/hms/accounting/coa', key: 'acc-coa', module_key: 'finance', icon: 'ListTree', parent_id: masterParent.id, sort_order: 10, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Chart of Accounts', url: '/hms/accounting/coa', key: 'acc-coa', module_key: 'finance', icon: 'ListTree', parent_id: masterParent.id, sort_order: 10, is_global: true, permission_code: 'accounting:view' }
+        });
+    }
+
+    const accConfig = await prisma.menu_items.findFirst({ where: { key: 'accounting-settings' } });
+    if (!accConfig) {
+        await prisma.menu_items.create({
+            data: { label: 'Accounting & Security PIN', url: '/settings/accounting', key: 'accounting-settings', module_key: 'finance', icon: 'Calculator', parent_id: masterParent.id, sort_order: 20, is_global: true, permission_code: 'accounting:view' }
+        });
+    } else {
+        await prisma.menu_items.update({
+            where: { id: accConfig.id },
+            data: { module_key: 'finance', parent_id: masterParent.id, label: 'Accounting & Security PIN' }
         });
     }
 }
@@ -48,42 +60,42 @@ async function ensureTransactionMenus() {
     let transParent = await prisma.menu_items.findFirst({ where: { key: 'acc-transactions' } });
     if (!transParent) {
         transParent = await prisma.menu_items.create({
-            data: { label: 'TRANSACTIONS', url: '#', key: 'acc-transactions', module_key: 'finance', icon: 'ArrowRightLeft', sort_order: 20, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'TRANSACTIONS', url: '#', key: 'acc-transactions', module_key: 'finance', icon: 'ArrowRightLeft', sort_order: 20, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const paymentMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-payments' } });
     if (!paymentMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Payment Vouchers', url: '/hms/accounting/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: transParent.id, sort_order: 10, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Payment Vouchers', url: '/hms/accounting/payments', key: 'acc-payments', module_key: 'finance', icon: 'ArrowUpRight', parent_id: transParent.id, sort_order: 10, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const receiptMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-receipts' } });
     if (!receiptMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Receipt Vouchers', url: '/hms/accounting/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: transParent.id, sort_order: 20, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Receipt Vouchers', url: '/hms/accounting/receipts', key: 'acc-receipts', module_key: 'finance', icon: 'ArrowDownLeft', parent_id: transParent.id, sort_order: 20, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const journalMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-journals' } });
     if (!journalMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Journal Register', url: '/hms/accounting/journals', key: 'acc-journals', module_key: 'finance', icon: 'BookOpen', parent_id: transParent.id, sort_order: 30, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Journal Register', url: '/hms/accounting/journals', key: 'acc-journals', module_key: 'finance', icon: 'BookOpen', parent_id: transParent.id, sort_order: 30, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const creditNoteMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-credit-note' } });
     if (!creditNoteMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Credit Note', url: '/hms/accounting/credit-notes', key: 'acc-credit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 40, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Credit Note', url: '/hms/accounting/credit-notes', key: 'acc-credit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 40, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const debitNoteMenu = await prisma.menu_items.findFirst({ where: { key: 'acc-debit-note' } });
     if (!debitNoteMenu) {
         await prisma.menu_items.create({
-            data: { label: 'Debit Note', url: '/hms/accounting/debit-notes', key: 'acc-debit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 50, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'Debit Note', url: '/hms/accounting/debit-notes', key: 'acc-debit-note', module_key: 'finance', icon: 'Ticket', parent_id: transParent.id, sort_order: 50, is_global: true, permission_code: 'accounting:view' }
         });
     }
 }
@@ -92,16 +104,17 @@ async function ensureLedgerReports() {
     let reportParent = await prisma.menu_items.findFirst({ where: { key: 'acc-reports' } });
     if (!reportParent) {
         reportParent = await prisma.menu_items.create({
-            data: { label: 'REPORTS', url: '#', key: 'acc-reports', module_key: 'finance', icon: 'BarChart3', sort_order: 30, is_global: true, permission_code: 'billing:view' }
+            data: { label: 'REPORTS', url: '#', key: 'acc-reports', module_key: 'finance', icon: 'BarChart3', sort_order: 30, is_global: true, permission_code: 'accounting:view' }
         });
     }
 
     const reports = [
-        { key: 'acc-bs', label: 'Balance Sheet', url: '/hms/accounting/page?view=classic&tab=bs', icon: 'Scale', sort: 10 },
-        { key: 'acc-pl', label: 'Profit & Loss A/c', url: '/hms/accounting/page?view=classic&tab=pl', icon: 'TrendingUp', sort: 20 },
+        { key: 'acc-bs', label: 'Balance Sheet', url: '/hms/accounting/balance-sheet', icon: 'Scale', sort: 10 },
+        { key: 'acc-pl', label: 'Profit & Loss A/c', url: '/hms/accounting/profit-and-loss', icon: 'TrendingUp', sort: 20 },
         { key: 'acc-tb', label: 'Trial Balance', url: '/hms/accounting/trial-balance', icon: 'Activity', sort: 30 },
         { key: 'acc-db', label: 'Day Book', url: '/hms/accounting/daybook', icon: 'BookOpen', sort: 40 },
         { key: 'acc-cb', label: 'Cash / Bank Book', url: '/hms/accounting/cashbook', icon: 'Banknote', sort: 50 },
+        { key: 'acc-shift-audit', label: 'Daily Shift Audit', url: '/hms/accounting/shifts', icon: 'ShieldCheck', sort: 55 },
         { key: 'acc-ageing', label: 'Bill-wise Ageing Analysis', url: '/hms/accounting/ageing', icon: 'History', sort: 60 },
     ];
 
@@ -109,7 +122,7 @@ async function ensureLedgerReports() {
         const existing = await prisma.menu_items.findFirst({ where: { key: r.key } });
         if (!existing) {
             await prisma.menu_items.create({
-                data: { label: r.label, url: r.url, key: r.key, module_key: 'finance', icon: r.icon, parent_id: reportParent.id, sort_order: r.sort, is_global: true, permission_code: 'billing:view' }
+                data: { label: r.label, url: r.url, key: r.key, module_key: 'finance', icon: r.icon, parent_id: reportParent.id, sort_order: r.sort, is_global: true, permission_code: 'accounting:view' }
             });
         }
     }
@@ -130,7 +143,7 @@ export async function ensureAdminMenus() {
             { key: 'geography-settings', label: 'Geography & Regions', url: '/settings/geography', icon: 'Globe', sort: 96, permission: 'settings:view' },
             { key: 'holiday-settings', label: 'Holiday Masters', url: '/settings/holidays', icon: 'CalendarDays', sort: 97, permission: 'settings:view' },
             { key: 'hms-settings', label: 'HMS Settings', url: '/settings/hms', icon: 'Activity', sort: 95, permission: 'hms:admin' },
-            { key: 'accounting-settings', label: 'Accounting Config', url: '/settings/accounting', icon: 'Calculator', sort: 94, permission: 'billing:view' },
+            { key: 'accounting-settings', label: 'Accounting & Security PIN', url: '/settings/accounting', icon: 'Calculator', sort: 94, permission: 'settings:view' },
         ];
 
         for (const item of adminItems) {
@@ -155,13 +168,14 @@ export async function ensureAdminMenus() {
                     });
                     console.log(`Auto-seeded Admin Menu: ${item.label}`);
                 } else {
-                    // Update permission if missing
-                    if (!existing.permission_code || existing.module_key !== 'configuration') {
+                    // Update permission if missing or label if out of date
+                    if (!existing.permission_code || existing.module_key !== 'configuration' || existing.label !== item.label) {
                         await prisma.menu_items.update({
                             where: { id: existing.id },
                             data: {
                                 module_key: 'configuration',
-                                permission_code: item.permission
+                                permission_code: item.permission,
+                                label: item.label
                             }
                         });
                     }
@@ -415,20 +429,18 @@ export async function ensureHmsMenus() {
             { key: 'hms-reception', label: 'Reception', url: '/hms/reception/dashboard', icon: 'MonitorCheck', sort: 12, permission: 'hms:dashboard:reception' },
             { key: 'hms-patients', label: 'Patients', url: '/hms/patients', icon: 'UserCircle', sort: 20, permission: 'patients:view' },
             { key: 'hms-appointments', label: 'Appointments', url: '/hms/appointments', icon: 'Calendar', sort: 30, permission: 'appointments:view' },
-            { key: 'hms-doctors', label: 'Staff Registry', url: '/hms/doctors', icon: 'Stethoscope', sort: 40, permission: 'hms:admin' },
-            { key: 'hms-doctor-dash', label: 'Doctor Dashboard', url: '/hms/doctor/dashboard', icon: 'AppWindow', sort: 41, permission: 'hms:dashboard:doctor' },
-            { key: 'hms-nursing', label: 'Nursing Station', url: '/hms/nursing/dashboard', icon: 'Activity', sort: 45, permission: 'hms:dashboard:nurse' },
-            { key: 'hms-lab', label: 'Laboratory', url: '/hms/lab', icon: 'FlaskConical', sort: 46, permission: 'lab:view' },
-            { key: 'lab-pending', label: 'Pending Results', url: '/hms/lab/pending', icon: 'Timer', sort: 47, permission: 'lab:view' },
-            { key: 'lab-orders', label: 'Lab Orders', url: '/hms/lab/orders', icon: 'List', sort: 48, permission: 'lab:view' },
+            { key: 'hms-clinical-hub', label: 'Clinical Hub', url: '#', icon: 'Stethoscope', sort: 40, permission: 'hms:view' },
+            { key: 'hms-doctors', label: 'Clinicians & Staff', url: '/hms/doctors', icon: 'UserCheck', sort: 10, parent_key: 'hms-clinical-hub', permission: 'hms:admin' },
+            { key: 'hms-doctor-dash', label: 'Doctor Dashboard', url: '/hms/doctor/dashboard', icon: 'AppWindow', sort: 11, parent_key: 'hms-clinical-hub', permission: 'hms:dashboard:doctor' },
+            { key: 'hms-nursing', label: 'Nursing Station', url: '/hms/nursing/dashboard', icon: 'Activity', sort: 12, parent_key: 'hms-clinical-hub', permission: 'hms:dashboard:nurse' },
+            { key: 'hms-lab', label: 'Laboratory', url: '/hms/lab', icon: 'FlaskConical', sort: 13, parent_key: 'hms-clinical-hub', permission: 'lab:view' },
             { key: 'hms-attendance', label: 'Attendance', url: '/hms/attendance', icon: 'Clock', sort: 50, permission: 'hms:admin' },
             { key: 'hms-roster', label: 'Staff Roster', url: '/hms/attendance/roster', icon: 'Layers', sort: 51, permission: 'hms:admin' },
             { key: 'hms-attendance-logs', label: 'Daily Logs', url: '/hms/attendance/logs', icon: 'ListChecks', sort: 52, permission: 'hms:admin' },
             { key: 'hms-attendance-analytics', label: 'Staff Analytics', url: '/hms/attendance/analytics', icon: 'BarChart3', sort: 53, permission: 'hms:admin' },
             { key: 'hms-billing', label: 'Billing', url: '/hms/billing', icon: 'Receipt', sort: 60, permission: 'billing:view' },
             { key: 'hms-pharmacy-billing', label: 'Pharmacy Billing', url: '/hms/pharmacy/billing', icon: 'Pill', sort: 61, permission: 'billing:view' },
-            // { key: 'hms-inventory', label: 'Pharmacy/Inventory', url: '/hms/inventory', icon: 'Package', sort: 70 }, // Removed to allow migration to Inventory Module
-            { key: 'hms-wards', label: 'Clinics/Wards', url: '/hms/wards', icon: 'LayoutGrid', sort: 80, permission: 'hms:admin' },
+            { key: 'hms-wards', label: 'Clinics / Wards', url: '/hms/wards', icon: 'LayoutGrid', sort: 80, permission: 'hms:admin' },
         ];
 
         // --- HELPER FOR RAW SQL INSERT (Duplicate for scope) ---
@@ -470,15 +482,27 @@ export async function ensureHmsMenus() {
                     console.log(`Auto-seeded HMS Menu: ${item.label}`);
                 } else {
                     // Always update permission_code to ensure security
-                    if (existing.permission_code !== item.permission || existing.url !== item.url) {
+                await prisma.menu_items.update({
+                    where: { id: existing.id },
+                    data: {
+                        label: item.label,
+                        url: item.url,
+                        icon: item.icon,
+                        sort_order: item.sort,
+                        permission_code: item.permission
+                    }
+                });
+                
+                // Nesting Fix: If it has a parent_key, find that parent and set it
+                if ((item as any).parent_key) {
+                    const parent = await prisma.menu_items.findFirst({ where: { key: (item as any).parent_key } });
+                    if (parent) {
                         await prisma.menu_items.update({
                             where: { id: existing.id },
-                            data: {
-                                url: item.url,
-                                permission_code: item.permission
-                            }
+                            data: { parent_id: parent.id }
                         });
                     }
+                }
                 }
             } catch (innerError: any) {
                 console.error(`Failed to seed HMS menu item ${item.label} (Prisma):`, innerError?.message);
@@ -506,6 +530,9 @@ export async function ensurePurchasingMenus() {
     if (isPurchasingMenuSeeded) return;
     isPurchasingMenuSeeded = true; // Lock immediately
     try {
+        // 0. Ensure Reports Parent Exists
+        await ensureInventoryReports();
+
         // 1. Ensure 'Procurement' Parent Exists
         let procParent = await prisma.menu_items.findFirst({ where: { key: 'inv-procurement' } });
 
@@ -524,6 +551,7 @@ export async function ensurePurchasingMenus() {
             { key: 'inv-po', label: 'Purchase Orders', url: '/hms/purchasing/orders', icon: 'FileText', sort: 20, permission: 'purchasing:view' },
             { key: 'inv-receipts', label: 'Goods Receipts', url: '/hms/purchasing/receipts', icon: 'ClipboardList', sort: 30, permission: 'purchasing:view' },
             { key: 'inv-returns', label: 'Purchase Returns', url: '/hms/purchasing/returns', icon: 'Undo2', sort: 40, permission: 'purchasing:returns:view' },
+            { key: 'inv-audit', label: 'Audit Terminal', url: '/hms/inventory/audit', icon: 'ShieldCheck', sort: 50, permission: 'inventory:view' },
         ];
 
         // Ensure Dashboard is Top Level
@@ -707,9 +735,38 @@ async function ensureAccountingDashboard() {
                 icon: 'LayoutDashboard',
                 sort_order: 1,
                 is_global: true,
-                permission_code: 'billing:view'
+                permission_code: 'accounting:view'
             }
         });
         console.log("Auto-seeded Accounting Dashboard");
+    }
+}
+
+async function ensureInventoryReports() {
+    let reportParent = await prisma.menu_items.findFirst({ where: { key: 'inv-reports' } });
+    if (!reportParent) {
+        reportParent = await prisma.menu_items.create({
+            data: { label: 'REPORTS', url: '#', key: 'inv-reports', module_key: 'inventory', icon: 'BarChart3', sort_order: 80, is_global: true, permission_code: 'inventory:view' }
+        });
+    }
+
+    const reports = [
+        { key: 'inv-report-stock', label: 'Stock Report', url: '/hms/inventory/reports/stock', icon: 'BarChart3', sort: 10 },
+        { key: 'inv-report-ledger', label: 'Movement Register', url: '/hms/inventory/reports/ledger', icon: 'Database', sort: 20 },
+        { key: 'inv-report-valuation', label: 'Stock Valuation', url: '/hms/inventory/reports/stock', icon: 'DollarSign', sort: 30 },
+    ];
+
+    for (const r of reports) {
+        const existing = await prisma.menu_items.findFirst({ where: { key: r.key } });
+        if (!existing) {
+            await prisma.menu_items.create({
+                data: { label: r.label, url: r.url, key: r.key, module_key: 'inventory', icon: r.icon, parent_id: reportParent.id, sort_order: r.sort, is_global: true, permission_code: 'inventory:view' }
+            });
+        } else if (existing.label !== r.label || existing.url !== r.url) {
+            await prisma.menu_items.update({
+                where: { id: existing.id },
+                data: { label: r.label, url: r.url, parent_id: reportParent.id }
+            });
+        }
     }
 }

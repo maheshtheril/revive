@@ -12,7 +12,6 @@ export async function getCompanies() {
 
     return prisma.company.findMany({
         where: { tenant_id: session.user.tenantId, enabled: true },
-        include: { countries: true },
         orderBy: { created_at: 'asc' }
     })
 }

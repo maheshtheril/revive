@@ -38,7 +38,7 @@ export default function TrialBalancePage() {
             <div className="h-8 bg-[#004d4d] flex items-center justify-between px-4 border-b border-[#006666] text-[10px] font-bold no-print">
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">TRIAL BALANCE</span>
-                    <span className="text-[#ffffcc]">Ziona HMS v4.5</span>
+                    <span className="text-[#ffffcc]">System Integrated Report</span>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">Financial Year: 2025-26</span>

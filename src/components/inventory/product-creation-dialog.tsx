@@ -9,7 +9,7 @@ import { Loader2 } from "lucide-react";
 interface ProductCreationDialogProps {
     isOpen: boolean;
     onClose: () => void;
-    onSuccess?: (newlyCreatedProductId?: string) => void;
+    onSuccess?: (newlyCreatedProductId?: string, newlyCreatedProductName?: string) => void;
 }
 
 export function ProductCreationDialog({ isOpen, onClose, onSuccess }: ProductCreationDialogProps) {
@@ -85,10 +85,11 @@ export function ProductCreationDialog({ isOpen, onClose, onSuccess }: ProductCre
                             categories={data.categories}
                             manufacturers={data.manufacturers}
                             uomCategories={data.uomCategories}
-                            onSuccess={() => {
-                                if (onSuccess) onSuccess();
+                            onSuccess={(createdId, createdName) => {
+                                if (onSuccess) onSuccess(createdId, createdName);
                                 onClose();
                             }}
+                            onCancel={onClose}
                         />
                     </div>
                 )}

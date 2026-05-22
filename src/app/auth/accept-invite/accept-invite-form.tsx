@@ -74,6 +74,9 @@ export default function AcceptInviteForm({ token, email }: { token: string, emai
                                     <Input
                                         type={showPassword ? "text" : "password"}
                                         placeholder="Min 8 characters..."
+                                        autoCapitalize="none"
+                                        autoCorrect="off"
+                                        spellCheck="false"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         className="pl-10 h-12 bg-slate-900/50 border-white/10 text-white rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all"
@@ -90,12 +93,15 @@ export default function AcceptInviteForm({ token, email }: { token: string, emai
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-slate-300 ml-1">Confirm Identity</label>
+                                <label className="text-sm font-bold text-slate-300 ml-1">Confirm Password</label>
                                 <div className="relative group">
                                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
                                     <Input
                                         type={showPassword ? "text" : "password"}
                                         placeholder="Repeat password..."
+                                        autoCapitalize="none"
+                                        autoCorrect="off"
+                                        spellCheck="false"
                                         value={confirm}
                                         onChange={(e) => setConfirm(e.target.value)}
                                         className="pl-10 h-12 bg-slate-900/50 border-white/10 text-white rounded-xl focus:ring-2 focus:ring-indigo-500 transition-all"

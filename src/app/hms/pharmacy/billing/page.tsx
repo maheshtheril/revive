@@ -96,8 +96,8 @@ export default async function PharmacyBillingPage({
         <div className="p-4 sm:p-8">
             <div className="mb-6 flex items-center gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-800 dark:text-white leading-tight">Pharmacy Billing</h1>
-                    <p className="text-slate-500 text-sm">Create bills for prescribed medicines and OTC sales.</p>
+                    <h1 className="text-2xl font-bold text-slate-800 dark:text-white leading-tight">PHARMACY BILLING</h1>
+                    <p className="text-slate-500 text-sm">Direct Dispensing Registry</p>
                 </div>
             </div>
 
@@ -110,6 +110,7 @@ export default async function PharmacyBillingPage({
                 initialMedicines={initialItems}
                 currency={currency}
                 defaultTaxMode={(companySettings?.hms_billing_mode as any) || 'exclusive'}
+                currentUser={session?.user}
             />
         </div>
     )

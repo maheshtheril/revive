@@ -35,8 +35,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                     className
                 )}
                 ref={ref}
-                spellCheck={true}
-                autoCapitalize="sentences"
+                spellCheck={type !== 'password' && type !== 'email'}
+                autoCapitalize={type === 'password' || type === 'email' || type === 'url' ? "none" : "sentences"}
                 onChange={handleChange}
                 {...props}
             />

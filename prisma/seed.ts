@@ -1,10 +1,8 @@
 
 import 'dotenv/config'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../src/lib/prisma'
 import { countriesList } from './data/countries'
 import { currenciesList } from './data/currencies'
-
-const prisma = new PrismaClient()
 
 async function main() {
     console.log('--- Seeding Database ---')

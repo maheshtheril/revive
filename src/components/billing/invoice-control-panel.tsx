@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import {
     CreditCard,
@@ -313,45 +314,13 @@ export function InvoiceControlPanel({
             )
             }
 
-            {/* PRINT & SHARE ACTIONS - Always Available */}
-            {/* PRINT CHOICE DIALOG */}
-            <Dialog>
-                <DialogTrigger asChild>
-                    <Button variant="outline" disabled={isLoading} className="border-indigo-200 hover:border-indigo-400">
-                        {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
-                        Print A4 Bill
-                    </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[400px]">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <Printer className="h-5 w-5 text-indigo-600" />
-                            Print Options
-                        </DialogTitle>
-                        <DialogDescription className="text-xs font-bold uppercase tracking-tight py-2 border-b border-slate-100">
-                            Choose Layout for A4 Invoice
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid grid-cols-1 gap-3 py-4">
-                        <Button
-                            variant="outline"
-                            className="h-20 flex flex-col items-center justify-center gap-1 border-2 hover:border-indigo-500 hover:bg-slate-50 transition-all group"
-                            onClick={() => handlePrintPdf('standard')}
-                        >
-                            <span className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 group-hover:text-indigo-600">Option 1</span>
-                            <span className="font-bold text-slate-800 italic">Standard Full Print</span>
-                        </Button>
-                        <Button
-                            variant="outline"
-                            className="h-20 flex flex-col items-center justify-center gap-1 border-2 hover:border-indigo-500 hover:bg-slate-50 transition-all group"
-                            onClick={() => handlePrintPdf('letterhead')}
-                        >
-                            <span className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 group-hover:text-indigo-600">Option 2</span>
-                            <span className="font-bold text-slate-800 italic">Preprinted Letterhead</span>
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+            {/* DIRECT PRINT - Using the Original Engine */}
+            <Link href={`/api/invoice-printer/${invoiceId}?autoPrint=true`} target="_blank">
+                <Button variant="outline" className="border-indigo-200 hover:border-indigo-400 text-indigo-700 shadow-sm transition-all active:scale-95">
+                    <Printer className="mr-2 h-4 w-4" />
+                    Print Bill
+                </Button>
+            </Link>
 
             <Button
                 variant="outline"

@@ -10,20 +10,16 @@ import { Loader2 } from "lucide-react"
 export const dynamic = 'force-dynamic'
 
 function serialize(obj: any): any {
-    if (obj === null || typeof obj !== 'object') return obj;
-    if (Array.isArray(obj)) return obj.map(serialize);
-    if (obj instanceof Date) return obj.toISOString();
-
-    // Prisma Decimals usually have a toJSON or toNumber method
-    if (typeof (obj as any).toNumber === 'function') {
-        return (obj as any).toNumber();
+    try {
+        return JSON.parse(JSON.stringify(obj, (key, value) => {
+            if (value && typeof value.toNumber === 'function') return value.toNumber();
+            if (value instanceof Date) return value.toISOString();
+            return value;
+        }));
+    } catch (e) {
+        console.error("Serialization Fail:", e);
+        return obj;
     }
-
-    const newObj: any = {};
-    for (const key in obj) {
-        newObj[key] = serialize(obj[key]);
-    }
-    return newObj;
 }
 
 export default async function ReceptionDashboardPage({
@@ -33,13 +29,12 @@ export default async function ReceptionDashboardPage({
 }) {
     const params = await searchParams
     const dateStr = params.date as string
-    const targetDate = dateStr ? new Date(dateStr) : new Date()
 
     try {
         const session = await auth()
 
         if (!session?.user?.id) {
-            redirect("/auth/signin")
+            redirect("/login")
         }
 
         const tenantId = session.user.tenantId as string
@@ -59,11 +54,28 @@ export default async function ReceptionDashboardPage({
         const currentCompany = await getCurrentCompany()
         const isAdmin = !!session?.user?.isAdmin || !!session?.user?.isTenantAdmin
 
-        // [ELITE DATE DYNAMIC RANGE] Adjusted to target specific date from URL
-        const todayStart = new Date(targetDate)
-        todayStart.setHours(0, 0, 0, 0)
-        const todayEnd = new Date(targetDate)
-        todayEnd.setHours(23, 59, 59, 999)
+        // [ELITE DATE DYNAMIC RANGE] World Standard Medical Day Logic (8 AM Cut-off)
+        // For a 24h hospital, the day resets at 8 AM, not midnight.
+        const IST_OFFSET = "+05:30";
+        const now = new Date();
+        const istNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+        const istHours = istNow.getHours();
+        
+        let activeMedicalDate = dateStr;
+        if (!activeMedicalDate) {
+            const tempDate = new Date(istNow);
+            // If it's currently between midnight and 7:59 AM, we are still in the previous "Medical Day"
+            if (istHours < 8) {
+                tempDate.setDate(tempDate.getDate() - 1);
+            }
+            activeMedicalDate = `${tempDate.getFullYear()}-${(tempDate.getMonth() + 1).toString().padStart(2, '0')}-${tempDate.getDate().toString().padStart(2, '0')}`;
+        }
+
+        // The Medical Day starts at 08:00 AM and ends at 07:59:59 AM the next morning
+        const todayStart = new Date(`${activeMedicalDate}T08:00:00${IST_OFFSET}`);
+        const todayEnd = new Date(todayStart.getTime() + (24 * 60 * 60 * 1000) - 1000);
+
+        console.log(`[DASHBOARD-24H] Reporting Window: ${todayStart.toISOString()} to ${todayEnd.toISOString()} (Medical Date: ${activeMedicalDate})`);
 
         // Parallel Data Fetching
         const [
@@ -88,6 +100,7 @@ export default async function ReceptionDashboardPage({
                 select: {
                     id: true,
                     patient_id: true,
+                    branch_id: true,
                     clinician_id: true,
                     starts_at: true,
                     ends_at: true,
@@ -286,6 +299,7 @@ export default async function ReceptionDashboardPage({
             return {
                 id: apt.id,
                 patient_id: apt.patient_id,
+                branch_id: apt.branch_id,
                 clinician_id: apt.clinician_id,
                 start_time: apt.starts_at,
                 status: apt.status,
@@ -322,7 +336,7 @@ export default async function ReceptionDashboardPage({
         }));
 
         return (
-            <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-6 max-w-7xl mx-auto space-y-6">
+            <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-50/80 via-slate-50 to-emerald-50/40 dark:from-indigo-950/40 dark:via-slate-950 dark:to-emerald-950/20 p-6 space-y-6">
                 {/* ShiftManager moved to Action Center */}
                 <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-slate-300" /></div>}>
                     <ReceptionActionCenter
@@ -348,6 +362,9 @@ export default async function ReceptionDashboardPage({
             </div>
         )
     } catch (err: any) {
+        if (err.message && err.message.includes('NEXT_REDIRECT')) {
+            throw err;
+        }
         console.error("DASHBOARD CRASH:", err);
         return (
             <div className="p-10 border-4 border-dashed border-red-500 rounded-3xl bg-red-50 text-red-900 m-6">

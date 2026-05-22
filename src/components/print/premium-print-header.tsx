@@ -22,6 +22,9 @@ interface PremiumPrintHeaderProps {
     addressSize?: number;
     showContactInfo?: boolean;
     hospitalPrimaryColor?: string;
+    hospitalNameColor?: string;
+    hospitalNameFont?: 'times' | 'helvetica';
+    hospitalNameLetterSpacing?: number;
     logoLayout?: 'beside' | 'stack';
     logoPosition?: 'left' | 'center' | 'right';
     logoSize?: number;
@@ -66,6 +69,7 @@ export function PremiumPrintHeader({
     company, title, subtitle, documentNumber, hide = false,
     alignment = 'right', showLogo = true, hospitalNameSize = 18, 
     addressSize = 10, showContactInfo = true, hospitalPrimaryColor = '#4f46e5',
+    hospitalNameColor = '#000000', hospitalNameFont = 'times', hospitalNameLetterSpacing = 0,
     logoLayout = 'beside', logoPosition = 'left', logoPositionVal = 'left', logoSize = 80,
     coordinates, patient, invoice, prescription
 }: PremiumPrintHeaderProps & { logoPositionVal?: string }) {
@@ -153,8 +157,8 @@ export function PremiumPrintHeader({
                         style={{ 
                             left: `${coordinates.logo?.x}px`, 
                             top: `${coordinates.logo?.y}px`,
-                            height: `${coordinates.logo?.size || logoSize}px`,
-                            width: `${coordinates.logo?.size || logoSize}px`
+                            height: `${coordinates.logo?.size || coordinates.logo?.width || logoSize}px`,
+                            width: `${coordinates.logo?.size || coordinates.logo?.width || logoSize}px`
                         }}
                     />
                 ) : (
@@ -179,8 +183,9 @@ export function PremiumPrintHeader({
                         top: `${coordinates.name?.y}px`,
                         fontSize: `${coordinates.name?.fontSize || hospitalNameSize}px`,
                         fontWeight: coordinates.name?.fontWeight || '900',
-                        color: coordinates.name?.color || '#000000',
-                        letterSpacing: `${coordinates.name?.letterSpacing || 0}px`,
+                        color: coordinates.name?.color || hospitalNameColor,
+                        fontFamily: (coordinates.name as any)?.fontType === 'times' || hospitalNameFont === 'times' ? 'Times New Roman, serif' : 'Inter, sans-serif',
+                        letterSpacing: `${coordinates.name?.letterSpacing || hospitalNameLetterSpacing}px`,
                         padding: `${coordinates.name?.padding || 0}px`,
                         backgroundColor: coordinates.name?.backgroundColor || 'transparent',
                         borderRadius: `${coordinates.name?.borderRadius || 0}px`,
@@ -449,8 +454,13 @@ export function PremiumPrintHeader({
 
                     <div className={`space-y-1.5 min-w-[300px] ${isStack ? 'flex flex-col items-center' : ''}`}>
                         <h1 
-                            className="font-black text-slate-900 tracking-tighter leading-tight" 
-                            style={{ fontSize: `${hospitalNameSize}px` }}
+                            className="font-black tracking-tighter leading-tight" 
+                            style={{ 
+                                fontSize: `${hospitalNameSize}px`,
+                                color: hospitalNameColor,
+                                fontFamily: hospitalNameFont === 'times' ? 'Times New Roman, serif' : 'Inter, sans-serif',
+                                letterSpacing: `${hospitalNameLetterSpacing}px`
+                            }}
                         >
                             {company.name.toUpperCase()}
                         </h1>

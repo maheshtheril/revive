@@ -132,7 +132,7 @@ export function SearchableSelect({
                 </button>
             </PopoverTrigger>
             <PopoverContent
-                className="w-[300px] sm:w-[350px] p-0 bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 z-[100]"
+                className="w-[var(--radix-popover-trigger-width)] min-w-[400px] max-w-[95vw] p-0 bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 z-[100] shadow-2xl rounded-2xl overflow-hidden animate-in zoom-in-95 duration-200"
                 align="start"
                 onOpenAutoFocus={(e) => e.preventDefault()} // Prevent auto-focusing the content wrapper, let input autofocus handle it? Actually input autoFocus works.
             >

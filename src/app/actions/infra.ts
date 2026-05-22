@@ -16,13 +16,14 @@ export async function getSyncStatus() {
 
         // 2. Check Active Replication Connections
         const replication: any[] = await prisma.$queryRaw`
-            SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn
+            SELECT client_addr, state, 
+                   sent_lsn::text, write_lsn::text, flush_lsn::text, replay_lsn::text
             FROM pg_stat_replication
         `;
 
         // 3. Last Local Transaction
         const lastTx: any[] = await prisma.$queryRaw`
-            SELECT now() as current_time, pg_current_wal_lsn() as last_lsn
+            SELECT now() as current_time, pg_current_wal_lsn()::text as last_lsn
         `;
 
         const isActive = slots.some(s => s.active === true) || replication.length > 0;

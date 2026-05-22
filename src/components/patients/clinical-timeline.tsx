@@ -73,10 +73,10 @@ export function ClinicalTimeline({ patientId }: { patientId: string }) {
                             <h1 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight uppercase leading-none">
                                 {patient?.first_name} {patient?.last_name}
                             </h1>
-                            <p className="text-slate-500 dark:text-slate-400 mt-2 font-bold flex items-center gap-2">
+                            <div className="text-slate-500 dark:text-slate-400 mt-2 font-bold flex items-center gap-2">
                                 <Badge variant="outline" className="border-indigo-100 text-indigo-600 uppercase font-bold text-[10px] tracking-widest">{patient?.patient_number || 'REG-ID'}</Badge>
                                 <span>• {patient?.gender} • {patient?.blood_group || 'O+'}</span>
-                            </p>
+                            </div>
                         </div>
                     </div>
 

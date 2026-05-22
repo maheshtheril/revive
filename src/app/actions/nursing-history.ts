@@ -27,7 +27,22 @@ export async function getConsumptionHistory(encounterId: string) {
         orderBy: { recorded_at: 'desc' }
     })
 
-    console.log(`[DEBUG] getConsumptionHistory: Found ${moves.length} moves and ${vitals.length} vitals sets.`);
+    // 3. Query Stock Ledger to get NOTES (since they are stored in ledger metadata)
+    const ledgerEntries = await prisma.hms_stock_ledger.findMany({
+        where: {
+            related_id: encounterId as any,
+            related_type: 'hms_encounter'
+        },
+        select: { product_id: true, metadata: true, qty: true, created_at: true }
+    })
+
+    const ledgerMap = new Map();
+    ledgerEntries.forEach(le => {
+        const key = `${le.product_id}-${le.qty}-${le.created_at?.getTime()}`;
+        ledgerMap.set(key, (le.metadata as any)?.notes || '');
+    });
+
+    console.log(`[DEBUG] getConsumptionHistory: Found ${moves.length} moves, ${vitals.length} vitals sets, and ${ledgerEntries.length} ledger entries.`);
 
     // Fetch user details manually
     const userIds = [...new Set([
@@ -67,6 +82,10 @@ export async function getConsumptionHistory(encounterId: string) {
     moves.forEach(move => {
         const moveTime = new Date(move.created_at).getTime()
         const product = productMap.get(move.product_id)
+        
+        // Find matching ledger note
+        const ledgerKey = `${move.product_id}-${move.qty}-${new Date(move.created_at).getTime()}`;
+        const note = ledgerMap.get(ledgerKey) || '';
 
         // Group by Time Window (within 5 seconds)
         let event = events.find(e => e.type === 'consumption' && Math.abs(new Date(e.timestamp).getTime() - moveTime) < 5000 && e.nurseId === move.created_by)
@@ -78,7 +97,8 @@ export async function getConsumptionHistory(encounterId: string) {
                 timestamp: move.created_at,
                 nurseName: userMap.get(move.created_by || '') || 'Clinical Staff',
                 nurseId: move.created_by,
-                status: move.source === 'Nursing Consumption (Pending)' ? 'Pending Confirmation' : globalStatus,
+                status: move.source === 'Nursing Consumption (Pending)' ? 'pending' : 'confirmed',
+                invoiceStatus: globalStatus,
                 invoiceNumber: globalInvoiceNo,
                 items: [],
                 moveIds: []
@@ -91,8 +111,9 @@ export async function getConsumptionHistory(encounterId: string) {
             productName: product?.name || 'Unknown Item',
             quantity: Math.abs(Number(move.qty || 1)),
             uom: move.uom,
-            price: Number((move as any).metadata?.custom_price || product?.price || 0), // Auth support for manual rates
-            status: move.source === 'Nursing Consumption (Pending)' ? 'pending' : 'confirmed'
+            price: Number(move.cost || product?.price || 0), // Use authoritative cost from stock move
+            status: move.source === 'Nursing Consumption (Pending)' ? 'pending' : 'confirmed',
+            notes: note
         })
     })
 

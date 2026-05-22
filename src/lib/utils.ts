@@ -5,13 +5,13 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs))
 }
 
-export function copyToClipboard(text: string): boolean {
+export async function copyToClipboard(text: string): Promise<boolean> {
     if (typeof window === 'undefined') return false;
 
     try {
         // 1. Try Modern API (Security exceptions apply on non-HTTPS)
         if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(text);
+            await navigator.clipboard.writeText(text);
             return true;
         }
 
@@ -19,8 +19,12 @@ export function copyToClipboard(text: string): boolean {
         const textArea = document.createElement("textarea");
         textArea.value = text;
         textArea.style.position = "fixed";
-        textArea.style.left = "-9999px";
+        textArea.style.left = "0";
         textArea.style.top = "0";
+        textArea.style.width = "1px";
+        textArea.style.height = "1px";
+        textArea.style.opacity = "0";
+        textArea.style.pointerEvents = "none";
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();

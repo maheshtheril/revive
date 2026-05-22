@@ -10,7 +10,11 @@ type ThemeContextType = {
     setTheme: (theme: Theme) => void
 }
 
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
+const ThemeContext = createContext<ThemeContextType>({
+    theme: 'dark',
+    toggleTheme: () => { },
+    setTheme: () => { }
+})
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [theme, setThemeState] = useState<Theme>('dark')
@@ -45,7 +49,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     return (
         <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
-            <div className={!mounted ? 'invisible' : ''} style={{ display: 'contents' }}>
+            <div style={{ display: 'contents' }}>
                 {children}
             </div>
         </ThemeContext.Provider>
@@ -53,9 +57,5 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useTheme() {
-    const context = useContext(ThemeContext)
-    if (context === undefined) {
-        throw new Error('useTheme must be used within a ThemeProvider')
-    }
-    return context
+    return useContext(ThemeContext)
 }

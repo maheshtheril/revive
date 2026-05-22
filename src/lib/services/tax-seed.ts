@@ -81,20 +81,24 @@ export async function seedCompanyTaxes(companyId: string, tx?: any) {
     await ensureGlobalTaxes(db);
 
     const company = await db.company.findUnique({
-        where: { id: companyId },
-        include: { countries: true }
+        where: { id: companyId }
     });
 
     if (!company) return { error: "Company not found" };
+
+    let countryRow = null;
+    if (company.country_id) {
+        countryRow = await db.countries.findUnique({ where: { id: company.country_id } });
+    }
 
     const tenantId = company.tenant_id;
     const existingMaps = await db.company_tax_maps.count({ where: { company_id: companyId } });
     if (existingMaps > 0) return { success: true, message: "Company taxes already mapped" };
 
-    console.log(`[TaxSeed] Mapping default taxes for Company: ${company.name} (${company.countries?.name || 'Global'})`);
+    console.log(`[TaxSeed] Mapping default taxes for Company: ${company.name} (${countryRow?.name || 'Global'})`);
     
     // 2. Determine which taxes to map
-    const countryIso = company.countries?.iso2 || 'IN'; // Fallback to IN if not set
+    const countryIso = countryRow?.iso2 || 'IN'; // Fallback to IN if not set
     const config = COUNTRY_TAX_CONFIGS.find(c => c.countryIso2 === countryIso);
     const taxNamesToMap = config ? config.taxNames : GLOBAL_DEFAULT_TAXES;
 

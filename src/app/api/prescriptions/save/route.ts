@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
                     INSERT INTO prescription_items (
                         id, prescription_id, medicine_id, 
                         morning, afternoon, evening, night, days, 
-                        uom, uom_id, created_at
+                        uom, uom_id, batch_id, batch_no, created_at
                     ) VALUES (
                         gen_random_uuid(),
                         CAST(${pId} AS uuid),
@@ -148,6 +148,8 @@ export async function POST(request: NextRequest) {
                         ${parseInt(med.days) || 3},
                         ${med.uom || 'Unit'},
                         CAST(${med.uom_id || null} AS uuid),
+                        CAST(${med.batchId || null} AS uuid),
+                        ${med.batchNo || null},
                         NOW()
                     )
                 `;

@@ -1,10 +1,10 @@
 @echo off
 setlocal
-title ZIONA HMS - HIGH-SPEED PRODUCTION CONSOLE
+title HMS - HIGH-SPEED PRODUCTION CONSOLE
 color 0B
 
 echo ========================================================
-echo   ZIONA HMS - PRODUCTION GATEWAY [v3.3]
+echo   HOSPITAL MANAGEMENT SYSTEM - PRODUCTION GATEWAY
 echo ========================================================
 echo.
 
@@ -32,7 +32,7 @@ echo.
 
 :: Start WhatsApp Bridge in background
 cd /d "%~dp0whatsapp-bridge"
-start /B "ZIONA_BRIDGE" cmd /c "node server.js > bridge.log 2>&1"
+start /B "HMS_BRIDGE" cmd /c "node server.js > bridge.log 2>&1"
 
 :: Wait 3 seconds for server readiness
 timeout /t 3 /nobreak >nul

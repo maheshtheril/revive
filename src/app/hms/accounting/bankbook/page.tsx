@@ -13,7 +13,7 @@ export default async function BankbookPage() {
         <DetailedLedgerReport
             type="bankbook"
             currencyCode={session?.user?.currencyCode || 'INR'}
-            currencySymbol={session?.user?.currencySymbol || '₹'}
+            currencySymbol={session?.user?.currencySymbol || '\u20B9'}
         />
     )
 }

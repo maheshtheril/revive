@@ -8,9 +8,16 @@ import { Button } from "@/components/ui/button"
 import { InvoiceControlPanel } from "@/components/billing/invoice-control-panel";
 import { InvoiceReturnClient } from "./invoice-return-client";
 
-export default async function InvoiceDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InvoiceDetailsPage({ 
+    params, 
+    searchParams 
+}: { 
+    params: Promise<{ id: string }>,
+    searchParams: Promise<{ action?: string }>
+}) {
     const session = await auth();
     const { id } = await params;
+    const { action } = await searchParams;
 
     if (!session?.user?.tenantId) return <div>Unauthorized</div>;
 
@@ -83,6 +90,7 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                         patientId={invoice.hms_patient?.id || ''}
                         patientName={`${invoice.hms_patient?.first_name || 'Guest'} ${invoice.hms_patient?.last_name || ''}`}
                         items={JSON.parse(JSON.stringify(invoice.hms_invoice_lines))}
+                        autoOpen={action === 'return'}
                     />
                     <Link href={invoice.hms_patient?.id ? `/hms/billing/new?patientId=${invoice.hms_patient.id}` : '/hms/billing/new'}>
                         <Button variant="outline" size="sm">
@@ -101,18 +109,30 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
             </div>
 
             {/* Status Banner */}
-            <div className={`p-4 rounded-lg flex items-center justify-between ${invoice.status === 'paid' ? 'bg-green-50 text-green-700 border border-green-100' :
+            <div className={`p-4 rounded-lg flex items-center justify-between ${
+                invoice.status === 'paid' ? 'bg-green-50 text-green-700 border border-green-100' :
                 invoice.status === 'posted' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                    'bg-slate-50 text-slate-700 border border-slate-200'
-                }`}>
+                invoice.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-200' :
+                'bg-slate-50 text-slate-700 border border-slate-200'
+            }`}>
                 <div className="flex items-center gap-3">
-                    <div className={`h-2 w-2 rounded-full ${invoice.status === 'paid' ? 'bg-green-500' :
-                        invoice.status === 'posted' ? 'bg-blue-500' : 'bg-slate-500'
+                    {invoice.status === 'cancelled' ? <AlertTriangle className="h-5 w-5 text-red-500" /> : (
+                        <div className={`h-2 w-2 rounded-full ${
+                            invoice.status === 'paid' ? 'bg-green-500' :
+                            invoice.status === 'posted' ? 'bg-blue-500' : 
+                            'bg-slate-500'
                         }`} />
-                    <span className="font-semibold capitalize">{invoice.status}</span>
+                    )}
+                    <span className="font-bold uppercase tracking-wide">
+                        {invoice.status === 'cancelled' ? 'VOIDED / CANCELLED' : invoice.status}
+                    </span>
                 </div>
-                <div className="font-mono font-medium text-lg">
-                    Outstanding: ₹{Number(invoice.outstanding_amount || 0).toFixed(2)}
+                <div className="font-mono font-black text-xl">
+                    {invoice.status === 'cancelled' ? (
+                        <span className="text-slate-400 line-through">Outstanding: ₹{Number(invoice.outstanding_amount || 0).toFixed(2)}</span>
+                    ) : (
+                        `Outstanding: ₹${Number(invoice.outstanding_amount || 0).toFixed(2)}`
+                    )}
                 </div>
             </div>
 
@@ -129,9 +149,22 @@ export default async function InvoiceDetailsPage({ params }: { params: Promise<{
                             </div>
                             <div className="text-slate-500 text-sm">{invoice.hms_patient.patient_number}</div>
                         </div>
-                    ) : (
-                        <div className="text-slate-400 italic">Guest Patient</div>
-                    )}
+                    ) : (() => {
+                        const m = invoice.billing_metadata;
+                        const bMeta = typeof m === 'string' ? (JSON.parse(m || '{}')) : (m || {});
+                        const walkInName = bMeta.patient_name || bMeta.name || bMeta.customer_name || (invoice as any).patient_name;
+                        const walkInPhone = bMeta.patient_phone || bMeta.phone || bMeta.mobile || (invoice as any).patient_phone;
+                        
+                        return walkInName ? (
+                            <div className="space-y-1">
+                                <div className="font-medium text-lg text-slate-900">{walkInName}</div>
+                                {walkInPhone && <div className="text-slate-500 text-sm">{walkInPhone}</div>}
+                                <div className="text-[10px] text-pink-500 font-black uppercase tracking-widest bg-pink-50 w-fit px-2 py-0.5 rounded-md mt-1">Walk-in Guest</div>
+                            </div>
+                        ) : (
+                            <div className="text-slate-400 italic">Guest Patient</div>
+                        );
+                    })()}
                 </div>
 
                 {/* Invoice Meta */}

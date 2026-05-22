@@ -6,10 +6,10 @@
  */
 
 export const SYSTEM_DEFAULT_CURRENCY_CODE = typeof process !== 'undefined' ? (process.env.NEXT_PUBLIC_DEFAULT_CURRENCY_CODE || 'INR') : 'INR';
-export const SYSTEM_DEFAULT_CURRENCY_SYMBOL = typeof process !== 'undefined' ? (process.env.NEXT_PUBLIC_DEFAULT_CURRENCY_SYMBOL || '₹') : '₹';
+export const SYSTEM_DEFAULT_CURRENCY_SYMBOL = typeof process !== 'undefined' ? (process.env.NEXT_PUBLIC_DEFAULT_CURRENCY_SYMBOL || '\u20B9') : '\u20B9';
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
-    'IN': '₹',   // India - Rupee
+    'IN': '\u20B9',   // India - Rupee
     'US': '$',   // United States - Dollar
     'GB': '£',   // United Kingdom - Pound
     'EU': '€',   // European Union - Euro

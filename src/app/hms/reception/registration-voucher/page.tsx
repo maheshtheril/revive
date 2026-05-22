@@ -3,6 +3,7 @@ import { getHMSSettings } from "@/app/actions/settings"
 import { getBillableItems, getTaxConfiguration, getUoms } from "@/app/actions/billing"
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
+import { DEFAULT_REGISTRATION_FEE, REG_FEE_SKU, REG_FEE_DESCRIPTION } from "@/lib/hms-constants"
 
 export const dynamic = 'force-dynamic'
 
@@ -58,9 +59,9 @@ export default async function RegistrationVoucherPage() {
     } else {
         // Fallback if settings missing
         initialItems.push({
-            id: 'reg-fee',
-            name: 'Patient Registration Fee',
-            price: Number(settings?.registrationFee || 100),
+            id: REG_FEE_SKU,
+            name: REG_FEE_DESCRIPTION,
+            price: Number(settings?.registrationFee || DEFAULT_REGISTRATION_FEE),
             quantity: 1,
             type: 'service'
         });

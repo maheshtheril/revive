@@ -97,22 +97,45 @@ export async function getProductsPremium(query?: string, page: number = 1, suppl
             })
         ]);
 
-        const processed = products.map(p => {
+        const processed = [];
+        for (const p of products) {
             const totalStock = p.hms_stock_levels.reduce((sum, lvl) => sum + Number(lvl.quantity || 0), 0);
             const metadata = p.metadata as Record<string, any> || {};
             const { hms_stock_levels, ...rest } = p;
-            return {
+            
+            let uomName = p.hms_uom?.name || p.uom || 'Unit';
+            let uomId = p.uom_id;
+
+            // [SERIOUS-JIT-HEALING] 
+            // If master link is missing but name exists, resolve it once and cache the link
+            if (!p.hms_uom && p.uom) {
+                const resolvedId = await findOrCreateUOM(p.uom);
+                if (resolvedId) {
+                    uomId = resolvedId;
+                    const uomData = await prisma.hms_uom.findUnique({ where: { id: resolvedId }, select: { name: true } });
+                    if (uomData) uomName = uomData.name;
+                    
+                    // Silently fix the database record for future speed
+                    await prisma.hms_product.update({
+                        where: { id: p.id },
+                        data: { uom_id: resolvedId }
+                    }).catch(() => {});
+                }
+            }
+
+            processed.push({
                 ...rest,
                 price: Number(p.price || 0),
                 totalStock,
                 stockStatus: totalStock === 0 ? 'Out of Stock' : totalStock < 10 ? 'Low Stock' : 'In Stock',
                 category: p.hms_product_category_rel[0]?.hms_product_category?.name || 'Uncategorized',
                 brand: metadata.brand || '',
-                uom: p.hms_uom?.name || p.uom,
+                uom: uomName,
+                uom_id: uomId,
                 default_cost: Number(metadata.cost_price || p.default_cost || 0),
                 mrp: Number(metadata.mrp || p.price || 0)
-            };
-        });
+            });
+        }
 
         return {
             success: true,
@@ -139,10 +162,14 @@ export async function getProduct(id: string) {
         });
         if (!product) return null;
         const metadata = product.metadata as Record<string, any> || {};
+        const savedPrice = Number(metadata.last_sale_price || product.price || 0);
         return serialize({
             ...product,
-            price: Number(product.price || 0),
-            mrp: Number(metadata.mrp || product.price || 0),
+            price: savedPrice,
+            mrp: Number(metadata.last_mrp || metadata.mrp || savedPrice || 0),
+            marginPct: Number(metadata.last_margin_pct || 0),
+            markupPct: Number(metadata.last_markup_pct || 0),
+            pricingStrategy: metadata.pricing_strategy || 'manual',
             hsn: (metadata.hsn as string) || '',
             packing: (metadata.packing as string) || '',
             brand: metadata.brand || '',
@@ -210,12 +237,29 @@ export async function findOrCreateProductsBatch(items: any[]) {
 export async function getUOMs() {
     const session = await auth();
     if (!session?.user?.companyId) return [];
+    
     try {
-        const uoms = await prisma.hms_uom.findMany({
+        let uoms = await prisma.hms_uom.findMany({
             where: { company_id: session.user.companyId, is_active: true },
             orderBy: { name: 'asc' },
-            select: { id: true, name: true, ratio: true }
+            select: { id: true, name: true, ratio: true, category_id: true, uom_type: true }
         });
+
+        // [WORLD-STANDARD-AUTO-SEEDING]
+        // If no UOMs exist, auto-initialize with industry standards
+        if (uoms.length === 0) {
+            const defaults = ['PCS', 'Unit', 'Tablet', 'Strip', 'Box', 'Bottle', 'KG', 'Gram', 'ML', 'Litre'];
+            for (const name of defaults) {
+                await findOrCreateUOM(name);
+            }
+            // Re-fetch after seeding
+            uoms = await prisma.hms_uom.findMany({
+                where: { company_id: session.user.companyId, is_active: true },
+                orderBy: { name: 'asc' },
+                select: { id: true, name: true, ratio: true, category_id: true, uom_type: true }
+            });
+        }
+
         return uoms.map(u => ({ ...u, ratio: Number(u.ratio) }));
     } catch (error) { return []; }
 }
@@ -223,28 +267,52 @@ export async function getUOMs() {
 export async function findOrCreateUOM(name: string): Promise<string> {
     const session = await auth();
     if (!session?.user?.companyId || !session?.user?.tenantId) return "";
-    const cleanName = name.trim().toUpperCase() || "PCS";
+    const cleanName = (name || "Unit").trim().toUpperCase();
+    
     try {
+        // 1. Check for existing
         const existing = await prisma.hms_uom.findFirst({
             where: { company_id: session.user.companyId, name: { equals: cleanName, mode: 'insensitive' } }
         });
         if (existing) return existing.id;
 
-        const catName = `${cleanName} Category`;
-        let category = await prisma.hms_uom_category.findFirst({ where: { company_id: session.user.companyId, name: catName } });
+        // 2. Resolve Category (Standardize names)
+        let catName = 'General Units';
+        if (['KG', 'GRAM', 'LB'].includes(cleanName)) catName = 'Weight / Mass';
+        if (['ML', 'LITRE', 'OZ'].includes(cleanName)) catName = 'Volume / Liquid';
+        if (['TABLET', 'STRIP', 'BOX', 'PCS', 'UNIT', 'CAPSULE'].includes(cleanName)) catName = 'Quantity / Discrete';
+
+        let category = await prisma.hms_uom_category.findFirst({ 
+            where: { company_id: session.user.companyId, name: catName } 
+        });
+
         if (!category) {
             category = await prisma.hms_uom_category.create({
-                data: { id: crypto.randomUUID(), tenant_id: session.user.tenantId, company_id: session.user.companyId, name: catName }
+                data: { 
+                    tenant_id: session.user.tenantId, 
+                    company_id: session.user.companyId, 
+                    name: catName 
+                }
             });
         }
+
+        // 3. Create UOM
         const newUom = await prisma.hms_uom.create({
             data: {
-                id: crypto.randomUUID(), tenant_id: session.user.tenantId, company_id: session.user.companyId,
-                category_id: category.id, name: cleanName, uom_type: 'reference', ratio: 1, is_active: true
+                tenant_id: session.user.tenantId, 
+                company_id: session.user.companyId,
+                category_id: category.id, 
+                name: cleanName, 
+                uom_type: 'reference', 
+                ratio: 1, 
+                is_active: true
             }
         });
         return newUom.id;
-    } catch (error) { return ""; }
+    } catch (error) { 
+        console.error("findOrCreateUOM Critical Failure:", error);
+        return ""; 
+    }
 }
 
 export async function findOrCreateUOMsBatch(names: string[]): Promise<Map<string, string>> {

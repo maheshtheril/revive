@@ -29,7 +29,8 @@ interface AddDocFormProps {
     specializations: Specialization[]
 }
 
-function renderDepartmentOptions(departments: Department[], parentId: string | null = null, depth = 0): any {
+function renderDepartmentOptions(departments: Department[] = [], parentId: string | null = null, depth = 0): any {
+    if (!Array.isArray(departments)) return [];
     return departments
         .filter(dept => {
             const normalizedParentId = dept.parent_id || null;
@@ -64,6 +65,7 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
     const [profileImageUrl, setProfileImageUrl] = useState('')
     const [signatureUrl, setSignatureUrl] = useState('')
     const [documentUrls, setDocumentUrls] = useState<string[]>([])
+    const [notes, setNotes] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -275,7 +277,7 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
                                                 <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Institutional Role <span className="text-red-500">*</span></label>
                                                 <select name="role_id" required className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                     <option value="">Select Role</option>
-                                                    {roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+                                                    {(roles || []).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
                                                 </select>
                                             </div>
                                         </div>
@@ -283,14 +285,14 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
                                             <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Specialization</label>
                                             <select name="specialization_id" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                 <option value="">None / General</option>
-                                                {specializations.map(spec => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
+                                                {(specializations || []).map(spec => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
                                             </select>
                                         </div>
                                         <div>
                                             <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Functional Unit</label>
                                             <select name="department_id" className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                 <option value="">Select Department</option>
-                                                {renderDepartmentOptions(departments)}
+                                                {renderDepartmentOptions(departments || [])}
                                             </select>
                                         </div>
                                     </div>
@@ -332,6 +334,25 @@ export function AddDoctorDialog({ isOpen, onClose, departments: initialDepartmen
                                                 ))}
                                             </div>
                                             {selectedDays.map(day => <input key={day} type="hidden" name="working_days" value={day} />)}
+                                        </div>
+ 
+                                        {/* NEW: DYNAMIC PRINT FOOTER */}
+                                        <div className="p-6 bg-slate-900 rounded-[2rem] border border-slate-700 shadow-xl overflow-hidden relative group">
+                                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+                                            <label className="block text-[11px] font-black text-emerald-400 mb-3 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                <Sparkles className="h-4 w-4" />
+                                                Digital Print Footer
+                                            </label>
+                                            <textarea 
+                                                name="notes" 
+                                                value={notes}
+                                                onChange={(e) => setNotes(e.target.value)}
+                                                placeholder="Enter schedule, disclaimers, or specialty notes for OP Slips..."
+                                                className="w-full h-32 bg-slate-800/50 border-2 border-slate-700 rounded-2xl p-4 text-white font-bold text-sm focus:border-emerald-500/50 focus:ring-4 focus:ring-emerald-500/10 outline-none scrollbar-hide resize-none transition-all"
+                                            />
+                                            <p className="mt-3 text-[10px] text-slate-400 font-bold uppercase leading-relaxed tracking-wider">
+                                                Tip: Use Enter key for multiple lines. These will appear at the bottom of all OP Slips for this doctor.
+                                            </p>
                                         </div>
                                     </div>
 

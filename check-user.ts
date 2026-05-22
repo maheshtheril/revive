@@ -1,30 +1,12 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from './src/lib/prisma';
 
 async function main() {
-    console.log("Searching for acer@live.com...");
     const user = await prisma.app_user.findFirst({
-        where: { email: 'acer@live.com' },
-        include: {
-            tenant: true,
-            company: true
-        }
+        orderBy: { created_at: 'desc' }
     });
-
-    if (user) {
-        console.log("USER FOUND:");
-        console.log("ID:", user.id);
-        console.log("Email:", user.email);
-        console.log("Active:", user.is_active);
-        console.log("Role:", user.role);
-        console.log("Tenant:", user.tenant ? `${user.tenant.name} (${user.tenant.slug})` : 'NULL');
-        console.log("Company:", user.company ? user.company.name : 'NULL');
-    } else {
-        console.log("USER NOT FOUND IN DATABASE.");
-    }
+    console.log("Latest user:", user?.email);
+    console.log("is_active:", user?.is_active);
+    console.log("password exists?", !!user?.password);
 }
 
-main()
-    .catch(console.error)
-    .finally(() => prisma.$disconnect());
+main().catch(console.error).finally(() => prisma.$disconnect());

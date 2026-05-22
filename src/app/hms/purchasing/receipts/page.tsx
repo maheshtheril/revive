@@ -3,9 +3,16 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getPurchaseReceipts } from '@/app/actions/receipt';
-import { ArrowLeft, Loader2, Plus, FileText, Calendar, Box, Search } from 'lucide-react';
+import { getPurchaseReceipts, deletePurchaseReceipt } from '@/app/actions/receipt';
+import { ArrowLeft, Loader2, Plus, FileText, Calendar, Box, Search, Trash2, Printer, MoreHorizontal, Undo2, Eye } from 'lucide-react';
 import { ReceiptEntryDialog } from '@/components/hms/purchasing/receipt-entry-dialog';
+import {
+    DropdownMenu,
+    DropdownMenuTrigger,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator
+} from '@/components/ui/dropdown-menu';
 
 type Receipt = {
     id: string;
@@ -25,6 +32,22 @@ export default function PurchaseReceiptsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+    const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+
+    async function handleDelete(id: string, number: string) {
+        if (!confirm(`Are you sure you want to delete purchase receipt ${number} and reverse all stock impacts? This action cannot be undone.`)) return;
+        setIsDeletingId(id);
+        try {
+            const res = await deletePurchaseReceipt(id);
+            if (res.success) {
+                await load();
+            }
+        } catch (e: any) {
+            alert(e.message || "Failed to delete receipt");
+        } finally {
+            setIsDeletingId(null);
+        }
+    }
 
     async function load() {
         setIsLoading(true);
@@ -59,11 +82,6 @@ export default function PurchaseReceiptsPage() {
                     <p className="text-muted-foreground text-sm">Review stock inward records. (Goods Received Notes)</p>
                 </div>
                 <div className="flex items-center gap-4">
-                    <Link href="/hms/purchasing/returns">
-                        <button className="bg-white border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest shadow-sm flex items-center gap-2">
-                            Debit Notes
-                        </button>
-                    </Link>
                     <div className="relative group">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-indigo-500 transition-colors" />
                         <input
@@ -75,8 +93,11 @@ export default function PurchaseReceiptsPage() {
                         />
                     </div>
                     <button
-                        onClick={() => setIsDialogOpen(true)}
-                        className="bg-primary text-primary-foreground hover:bg-primary/90 transition-colors px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-2 shadow-md hover:shadow-lg"
+                        onClick={() => {
+                            setSelectedReceiptId(null);
+                            setIsDialogOpen(true);
+                        }}
+                        className="bg-primary text-primary-foreground hover:bg-primary/90 transition-colors px-4 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 shadow-md hover:shadow-lg"
                     >
                         <Plus className="h-4 w-4" /> New Receipt
                     </button>
@@ -97,7 +118,10 @@ export default function PurchaseReceiptsPage() {
                         <h3 className="text-lg font-medium text-foreground mb-1">No receipts found</h3>
                         <p className="text-muted-foreground text-sm mb-6">Create a new purchase receipt to record incoming stock.</p>
                         <button
-                            onClick={() => setIsDialogOpen(true)}
+                            onClick={() => {
+                                setSelectedReceiptId(null);
+                                setIsDialogOpen(true);
+                            }}
                             className="text-indigo-500 hover:text-indigo-600 text-sm font-medium"
                         >
                             + Create First Receipt
@@ -133,10 +157,11 @@ export default function PurchaseReceiptsPage() {
                                 <div className="col-span-2">Receipt #</div>
                                 <div className="col-span-2">Date</div>
                                 <div className="col-span-3">Supplier</div>
-                                <div className="col-span-2">Ref Invoice</div>
+                                <div className="col-span-1">Ref Invoice</div>
                                 <div className="col-span-1 text-right">Qty</div>
                                 <div className="col-span-1 text-right whitespace-nowrap">Bill Amount</div>
-                                <div className="col-span-1 text-right">Status</div>
+                                <div className="col-span-1 text-center">Status</div>
+                                <div className="col-span-1 text-right whitespace-nowrap">Actions</div>
                             </div>
 
                             {filteredReceipts.map((receipt) => (
@@ -158,19 +183,72 @@ export default function PurchaseReceiptsPage() {
                                     <div className="col-span-3 text-sm text-foreground font-medium truncate">
                                         {receipt.supplierName}
                                     </div>
-                                    <div className="col-span-2 text-sm text-muted-foreground font-mono truncate">
+                                    <div className="col-span-1 text-sm text-muted-foreground font-mono truncate">
                                         {receipt.reference}
                                     </div>
                                     <div className="col-span-1 text-right text-sm text-muted-foreground font-mono">
                                         {receipt.itemCount}
                                     </div>
-                                    <div className="col-span-1 text-right text-sm font-bold text-foreground font-mono">
+                                    <div className="col-span-1 text-right text-sm font-bold text-foreground font-mono whitespace-nowrap">
                                         ₹{receipt.totalAmount?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
-                                    <div className="col-span-1 text-right">
+                                    <div className="col-span-1 flex items-center justify-center">
                                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wide">
                                             {receipt.status}
                                         </span>
+                                    </div>
+                                    <div className="col-span-1 flex items-center justify-end">
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <button
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    className="p-2 hover:bg-muted rounded-lg transition-colors"
+                                                >
+                                                    <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                                                </button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end" className="w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-2 z-50">
+                                                <DropdownMenuItem
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedReceiptId(receipt.id);
+                                                        setIsDialogOpen(true);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+                                                >
+                                                    <Eye className="h-4 w-4 text-indigo-500" /> View / Edit GRN
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        window.open(`/api/receipt-printer/${receipt.id}`, '_blank');
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+                                                >
+                                                    <Printer className="h-4 w-4 text-emerald-500" /> Print GRN Document
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        router.push(`/hms/purchasing/returns/new?receiptId=${receipt.id}`);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-600 text-sm font-medium"
+                                                >
+                                                    <Undo2 className="h-4 w-4 text-rose-500" /> Return / Debit Note
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator className="my-1 bg-slate-200 dark:bg-slate-800" />
+                                                <DropdownMenuItem
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDelete(receipt.id, receipt.number || 'Unnamed');
+                                                    }}
+                                                    disabled={isDeletingId === receipt.id}
+                                                    className="flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-600 text-sm font-medium"
+                                                >
+                                                    {isDeletingId === receipt.id ? <Loader2 className="h-4 w-4 animate-spin text-rose-500" /> : <Trash2 className="h-4 w-4 text-rose-500" />} Delete & Reverse
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
                                     </div>
                                 </div>
                             ))}

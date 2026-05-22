@@ -34,13 +34,15 @@ export async function GET(req: NextRequest) {
                 metadata: true,
                 hms_product_batch: {
                     orderBy: { created_at: 'desc' },
-                    take: 1,
+                    take: 5, // Include more batches for visibility
                     select: {
+                        id: true,
                         batch_no: true,
                         expiry_date: true,
                         mrp: true,
                         cost: true,
-                        sale_price: true
+                        sale_price: true,
+                        qty_on_hand: true
                     }
                 }
             }

@@ -1,21 +1,68 @@
 'use client'
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { updateHMSSettings, updatePaymentGatewaySettings, updateWhatsAppSettings, updatePDFSettings, setAsDefaultTemplate, deletePDFTemplate, renamePDFCategory, updateAISettings, resetWhatsAppSession } from "@/app/actions/settings"
 import { Shield, CreditCard, Save, Calendar, Sparkles, AlertCircle, CheckCircle, Stethoscope, Eye, EyeOff, MessageSquare, FileText, AlignLeft, AlignCenter, AlignRight, Printer, Zap, X, Loader2, Trash2, Layout } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { Label } from "@/components/ui/label"
-import { PremiumPrintHeader } from "@/components/print/premium-print-header"
-import { VisualInvoiceDesigner } from "@/components/print/visual-header-designer"
-import { VisualOpSlipDesigner } from "@/components/print/visual-op-slip-designer"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { DynamicPrintDesigner } from "@/components/print/dynamic-print-designer"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog"
 
-export function HMSSettingsForm({ settings, products, doctors = [], gatewaySettings, whatsappSettings, pdfSettings, aiSettings, company }: { settings: any, products: any[], doctors?: any[], gatewaySettings?: any, whatsappSettings?: any, pdfSettings?: any, aiSettings?: any, company: any }) {
+export function HMSSettingsForm({ 
+    settings, 
+    products, 
+    doctors = [], 
+    gatewaySettings, 
+    whatsappSettings, 
+    pdfSettings, 
+    aiSettings, 
+    company,
+    searchUsage 
+}: { 
+    settings: any, 
+    products: any[], 
+    doctors?: any[], 
+    gatewaySettings?: any, 
+    whatsappSettings?: any, 
+    pdfSettings?: any, 
+    aiSettings?: any, 
+    company: any,
+    searchUsage?: string 
+}) {
     const router = useRouter()
     const { toast } = useToast()
+    const [mounted, setMounted] = useState(false)
+    const autosaverRef = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => {
+        setMounted(true)
+        setQrTime(Date.now())
+    }, [])
     const [loading, setLoading] = useState(false)
     const [msg, setMsg] = useState<{ type: 'success' | 'error', text: string, debug?: string } | null>(null)
+
+    const handleSetLive = async (id: string, usage: string) => {
+        try {
+            const res = await setAsDefaultTemplate(id, usage, settings.company_id);
+            if (!res.success) {
+                toast({ 
+                    title: "Activation Failed", 
+                    description: res.error || "System could not finalize design.", 
+                    variant: "destructive" 
+                });
+            } else {
+                toast({ 
+                    title: "System Live", 
+                    description: "The selected layout is now active for production.",
+                    variant: "default"
+                });
+                router.refresh();
+            }
+        } catch (err: any) {
+            toast({ title: "Critical Error", description: err.message, variant: "destructive" });
+        }
+    }
 
     const [registrationFee, setRegistrationFee] = useState(settings.registrationFee)
     const [registrationValidity, setRegistrationValidity] = useState(settings.registrationValidity)
@@ -28,7 +75,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [billPreprintedLetterhead, setBillPreprintedLetterhead] = useState(settings.billPreprintedLetterhead ?? false)
     const [billHeaderHeight, setBillHeaderHeight] = useState<string>(settings.billHeaderHeight || '4.5')
     const [allowRateEdit, setAllowRateEdit] = useState(settings.allowRateEdit ?? true)
-    
+
     // OP Slip Customization State
     const [opSlipShowVitals, setOpSlipShowVitals] = useState(settings.opSlipShowVitals ?? true)
     const [opSlipVitalsPosition, setOpSlipVitalsPosition] = useState<'left' | 'right'>(settings.opSlipVitalsPosition || 'right')
@@ -36,10 +83,11 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [opSlipRxStyle, setOpSlipRxStyle] = useState<'centered_small' | 'large_left' | 'none'>(settings.opSlipRxStyle || 'centered_small')
     const [opSlipCoordinates, setOpSlipCoordinates] = useState(settings.opSlipCoordinates || null)
     const [useCustomOpSlipLayout, setUseCustomOpSlipLayout] = useState(!!settings.opSlipCoordinates)
+    const [enableDirectPrinting, setEnableDirectPrinting] = useState(settings.enableDirectPrinting ?? false)
 
     // Bridge Status
     const [bridgeStatus, setBridgeStatus] = useState<{ connected: boolean, hasQr: boolean } | null>(null)
-    const [qrTime, setQrTime] = useState(Date.now())
+    const [qrTime, setQrTime] = useState(0)
 
     // Payment Gateway Settings
     const [gatewayEnabled, setGatewayEnabled] = useState(gatewaySettings?.enabled ?? false)
@@ -53,7 +101,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     // WhatsApp Settings
     const [whatsappEnabled, setWhatsappEnabled] = useState(whatsappSettings?.enabled ?? true)
     const [whatsappProvider, setWhatsappProvider] = useState<'ultramsg' | 'evolution'>(whatsappSettings?.provider || 'evolution')
-    const [whatsappInstanceId, setWhatsappInstanceId] = useState(whatsappSettings?.instanceId ?? 'ZIONA-HMS')
+    const [whatsappInstanceId, setWhatsappInstanceId] = useState(whatsappSettings?.instanceId ?? 'HMS-CORE')
     const [whatsappToken, setWhatsappToken] = useState('') // Masked
     const [whatsappAutoSendBill, setWhatsappAutoSendBill] = useState(whatsappSettings?.autoSendBill ?? true)
     const [showWhatsappToken, setShowWhatsappToken] = useState(false)
@@ -75,14 +123,18 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
     const [pdfCoordinates, setPdfCoordinates] = useState(pdfSettings?.coordinates || null);
     const [useCustomLayout, setUseCustomLayout] = useState(!!pdfSettings?.coordinates);
     const [showVisualDesigner, setShowVisualDesigner] = useState(false);
-    const [designerTab, setDesignerTab] = useState<'invoice' | 'op_slip'>('invoice');
 
     // AI Settings Mirror
     const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
     const [aiApiKey, setAiApiKey] = useState('')
-    const [aiModel, setAiModel] = useState(aiSettings?.model || 'gemini-1.5-flash')
+    const [aiModel, setAiModel] = useState(aiSettings?.model || 'gemini-2.5-flash')
     const [showAiApiKey, setShowAiApiKey] = useState(false)
     const [hasExistingAiKey, setHasExistingAiKey] = useState(aiSettings?.hasKey ?? false)
+    
+    // Patient ID Configuration (Bridged from Company Metadata)
+    const [patientIdPrefix, setPatientIdPrefix] = useState(company?.metadata?.patient_id_prefix || 'PAT')
+    const [patientIdMode, setPatientIdMode] = useState(company?.metadata?.patient_id_mode || 'timestamp')
+    const [patientIdStartNumber, setPatientIdStartNumber] = useState(company?.metadata?.patient_id_start_number || '1000')
 
     // Sync local state when settings props change
     useEffect(() => {
@@ -97,8 +149,14 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         setBillPreprintedLetterhead(settings.billPreprintedLetterhead ?? false);
         setBillHeaderHeight(settings.billHeaderHeight || '4.5');
         setAllowRateEdit(settings.allowRateEdit ?? true);
-        setOpSlipCoordinates(settings.opSlipCoordinates || null);
-        setUseCustomOpSlipLayout(!!settings.opSlipCoordinates);
+        
+        // Sync Patient ID Metadata
+        if (company?.metadata) {
+            setPatientIdPrefix(company.metadata.patient_id_prefix || 'PAT');
+            setPatientIdMode(company.metadata.patient_id_mode || 'timestamp');
+            setPatientIdStartNumber(company.metadata.patient_id_start_number || '1000');
+        }
+        // REMOVED LEGACY COORDINATE SYNC TO PREVENT OVERWRITING MODERN TEMPLATES
     }, [settings]);
 
     useEffect(() => {
@@ -127,12 +185,12 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             // NEW WORLD SYNC: Resolve active templates for both financial and clinical
             const billId = pdfSettings.usageDefaults?.['sale_bill'];
             const opId = pdfSettings.usageDefaults?.['op_slip'];
-            
+
             const billTemplate = pdfSettings.templates?.find((t: any) => t.id === billId);
             const opTemplate = pdfSettings.templates?.find((t: any) => t.id === opId);
 
             // 1. Financial Sync (Sale Bill)
-            const billConfig = billTemplate?.config || pdfSettings; 
+            const billConfig = billTemplate?.config || pdfSettings;
             setPdfHeaderAlignment(billConfig.headerAlignment || 'right');
             setPdfShowLogo(billConfig.showLogo ?? true);
             setPdfHospitalNameSize(billConfig.hospitalNameSize || 16);
@@ -145,7 +203,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             setPdfLogoLayout(billConfig.logoLayout || 'beside');
             setPdfLogoPosition(billConfig.logoPosition || 'left');
             setPdfLogoSize(billConfig.logoSize || 80);
-            
+
             const billCoords = billTemplate?.config?.coordinates || billTemplate?.config || pdfSettings.coordinates || null;
             setPdfCoordinates(billCoords);
             setUseCustomLayout(!!billCoords);
@@ -225,27 +283,21 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         toast({ title: "Testing AI...", description: "Connecting to Google Gemini..." });
 
         try {
-            const res = await fetch('/api/ai-test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ testKey: aiApiKey })
-            });
-
-            const result = await res.json();
-            
+            const formData = new FormData();
+            formData.append('apiKey', aiApiKey);
+            const result = await testAIConnection(formData);
             if (result.success) {
-                toast({ 
-                    title: "AI Connection OK! ✓", 
-                    description: "Your key is working perfectly. Don't forget to SAVE all settings.",
-                    variant: "default",
+                toast({
+                    title: "AI Test SUCCESS ✓",
+                    description: "Connected to Gemini Pro 1.5 successfully.",
                     className: "bg-emerald-600 text-white"
                 });
                 setHasExistingAiKey(true);
             } else {
-                toast({ 
-                    title: "AI Test FAILED ✗", 
-                    description: result.error || "Connection error. Please check your key.", 
-                    variant: "destructive" 
+                toast({
+                    title: "AI Test FAILED ✗",
+                    description: result.error || "Connection error. Please check your key.",
+                    variant: "destructive"
                 });
             }
         } catch (err: any) {
@@ -253,6 +305,17 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         } finally {
             setLoading(false);
         }
+    };
+
+    const renameCategory = async (oldUsage: string, newUsage: string) => {
+        const res = await renamePDFCategory(oldUsage, newUsage);
+        if (res.success) {
+            toast({ title: "Category Renamed", description: `Changed to ${newUsage}` });
+            router.refresh();
+        } else {
+            toast({ title: "Error", description: res.error || "Failed to rename", variant: "destructive" });
+        }
+        return res;
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -266,7 +329,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         });
 
         try {
-            const [res, gatewayRes, whatsappRes, pdfRes, aiRes] = await Promise.all([
+            const [res, gatewayRes, whatsappRes, aiRes] = await Promise.all([
                 updateHMSSettings({
                     registrationFee: parseFloat(String(registrationFee)),
                     registrationValidity: parseInt(String(registrationValidity)),
@@ -280,9 +343,19 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     opSlipVitalsPosition: opSlipVitalsPosition,
                     opSlipVitalsList: opSlipVitalsList,
                     opSlipRxStyle: opSlipRxStyle,
+                    enableDirectPrinting: !!enableDirectPrinting,
+                    showTaxOnBill: pdfShowTaxInvoiceTitle,
                     productId: selectedProductId,
                     defaultDoctorId: defaultDoctorId || null,
-                    allowRateEdit: allowRateEdit
+                    allowRateEdit: allowRateEdit,
+                    // Pass Patient ID Metadata
+                    patientIdPrefix,
+                    patientIdMode,
+                    patientIdStartNumber: Number(patientIdStartNumber)
+                }),
+                updatePDFSettings({
+                    showTaxOnBill: pdfShowTaxInvoiceTitle,
+                    showTaxInvoiceTitle: pdfShowTaxInvoiceTitle
                 }),
                 updatePaymentGatewaySettings({
                     enabled: gatewayEnabled,
@@ -298,38 +371,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     token: whatsappToken || undefined,
                     autoSendBill: whatsappAutoSendBill
                 }),
-                // Save active templates for both usage types
-                updatePDFSettings({
-                    id: pdfSettings?.usageDefaults?.['sale_bill'] || 'default_bill',
-                    name: pdfSettings?.templates?.find((t: any) => t.id === pdfSettings?.usageDefaults?.['sale_bill'])?.name || 'Standard Bill',
-                    usage: 'sale_bill',
-                    config: {
-                        headerAlignment: pdfHeaderAlignment,
-                        showLogo: pdfShowLogo,
-                        hospitalNameSize: pdfHospitalNameSize,
-                        addressSize: pdfAddressSize,
-                        showContactInfo: pdfShowContactInfo,
-                        autoPrint: pdfAutoPrint,
-                        showTaxInvoiceTitle: pdfShowTaxInvoiceTitle,
-                        primaryColor: pdfPrimaryColor,
-                        bankDetails: pdfBankDetails,
-                        logoLayout: pdfLogoLayout,
-                        logoPosition: pdfLogoPosition,
-                        logoSize: pdfLogoSize,
-                        coordinates: pdfCoordinates
-                    },
-                    isDefault: true
-                }),
-                updatePDFSettings({
-                    id: pdfSettings?.usageDefaults?.['op_slip'] || 'default_op',
-                    name: pdfSettings?.templates?.find((t: any) => t.id === pdfSettings?.usageDefaults?.['op_slip'])?.name || 'Standard OP',
-                    usage: 'op_slip',
-                    config: {
-                        coordinates: opSlipCoordinates,
-                        logoSize: pdfLogoSize // Share logo size for consistency
-                    },
-                    isDefault: true
-                }),
                 updateAISettings({
                     enabled: aiEnabled,
                     apiKey: aiApiKey || undefined
@@ -339,7 +380,6 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             if (!res.success) throw new Error(res.error || "Failed to save HMS settings");
             if (!gatewayRes.success) throw new Error(gatewayRes.error || "Failed to save Gateway settings");
             if (!whatsappRes.success) throw new Error(whatsappRes.error || "Failed to save WhatsApp settings");
-            if (!pdfRes.success) throw new Error(pdfRes.error || "Failed to save PDF settings");
             if (!aiRes.success) throw new Error(aiRes.error || "Failed to save AI configuration");
 
             if (loadingToast) loadingToast.dismiss();
@@ -359,7 +399,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
         } finally {
             setLoading(false);
         }
-    }
+    };
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-24">
@@ -367,7 +407,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
             <div className="flex justify-end -mb-4">
                 <div className="px-3 py-1 bg-slate-900/80 backdrop-blur-md text-white rounded-full text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-2 border border-slate-700 shadow-lg">
                     <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                    ZIONA v3.5 - Enterprise Gold
+                    HMS Dashboard Core
                 </div>
             </div>
             {/* Status Message */}
@@ -409,9 +449,64 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     >
                         <option value="">-- AUTO-PILOT (System searches for Registration Product) --</option>
                         {products.map(p => (
-                            <option key={p.id} value={p.id}>{p.name} [{p.sku}] - ₹{parseFloat(p.price || '0').toFixed(2)}</option>
+                            <option key={p.id} value={p.id}>{p.name} [{p.sku}] - {'\u20B9'}{parseFloat(p.price || '0').toFixed(2)}</option>
                         ))}
                     </select>
+                </div>
+
+                {/* Patient Identity & Numbering */}
+                <div className="md:col-span-2 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 border-2 border-indigo-500/10 rounded-2xl p-6 shadow-sm group">
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="h-10 w-10 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <Shield className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em] bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 rounded-md">Identity Mastery</span>
+                            </div>
+                            <h3 className="font-black text-xl text-slate-800 dark:text-slate-100 italic">Patient ID & Numbering</h3>
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Generation Mode</Label>
+                            <select
+                                value={patientIdMode}
+                                onChange={(e) => setPatientIdMode(e.target.value)}
+                                className="w-full px-4 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl font-bold text-slate-900 dark:text-white outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer"
+                            >
+                                <option value="timestamp">Random (Timestamp Based)</option>
+                                <option value="sequential">Sequential (Serial Number)</option>
+                            </select>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">ID Prefix</Label>
+                            <input
+                                type="text"
+                                value={patientIdPrefix}
+                                onChange={(e) => setPatientIdPrefix(e.target.value.toUpperCase())}
+                                className="w-full px-4 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl font-black text-indigo-600 dark:text-indigo-400 outline-none focus:border-indigo-500 transition-all"
+                                placeholder="PAT"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Starting Number</Label>
+                            <input
+                                type="number"
+                                value={patientIdStartNumber}
+                                onChange={(e) => setPatientIdStartNumber(e.target.value)}
+                                disabled={patientIdMode !== 'sequential'}
+                                className={`w-full px-4 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl font-black text-slate-900 dark:text-white outline-none focus:border-indigo-500 transition-all ${patientIdMode !== 'sequential' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                placeholder="1000"
+                            />
+                        </div>
+                    </div>
+                    <p className="mt-4 text-[10px] text-slate-400 font-bold italic">
+                        Current Preview: <span className="text-indigo-500">{patientIdPrefix}-{patientIdMode === 'sequential' ? patientIdStartNumber : 'RANDOM'}</span>
+                    </p>
                 </div>
 
                 {/* Default Doctor */}
@@ -448,7 +543,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                         <h3 className="font-bold text-slate-800 dark:text-slate-100">Fee Amount</h3>
                     </div>
                     <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">₹</span>
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">{'\u20B9'}</span>
                         <input
                             type="number"
                             value={registrationFee}
@@ -541,32 +636,32 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
 
                             <div className="flex flex-col gap-1.5">
                                 <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">Instance / Bridge Name</Label>
-                                <input 
-                                    type="text" 
-                                    value={whatsappInstanceId} 
-                                    onChange={(e) => setWhatsappInstanceId(e.target.value)} 
-                                    placeholder={whatsappProvider === 'evolution' ? "Bridge Name (Default: ZIONA)" : "Instance ID (digits only)"} 
-                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold" 
+                                <input
+                                    type="text"
+                                    value={whatsappInstanceId}
+                                    onChange={(e) => setWhatsappInstanceId(e.target.value)}
+                                    placeholder={whatsappProvider === 'evolution' ? "Bridge Name (Default: HMS)" : "Instance ID (digits only)"}
+                                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold"
                                 />
                             </div>
 
                             <div className="flex flex-col gap-1.5">
                                 <Label className="text-[10px] font-black uppercase text-slate-400 ml-1">API Authentication Token</Label>
                                 <div className="relative">
-                                    <input 
-                                        type={showWhatsappToken ? 'text' : 'password'} 
-                                        value={whatsappToken} 
-                                        onChange={(e) => setWhatsappToken(e.target.value)} 
+                                    <input
+                                        type={showWhatsappToken ? 'text' : 'password'}
+                                        value={whatsappToken}
+                                        onChange={(e) => setWhatsappToken(e.target.value)}
                                         placeholder={
-                                            whatsappToken 
-                                                ? 'Entering new key...' 
-                                                : hasExistingWhatsappToken 
+                                            whatsappToken
+                                                ? 'Entering new key...'
+                                                : hasExistingWhatsappToken
                                                     ? (showWhatsappToken ? '[SECURE KEY SAVED]' : '✓ KEY SAVED')
-                                                    : whatsappProvider === 'evolution' 
+                                                    : whatsappProvider === 'evolution'
                                                         ? 'Evolution Apikey (Optional)'
                                                         : 'UltraMsg API Token'
-                                        } 
-                                        className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono ${hasExistingWhatsappToken && !whatsappToken ? 'border-emerald-500/30' : ''}`} 
+                                        }
+                                        className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono ${hasExistingWhatsappToken && !whatsappToken ? 'border-emerald-500/30' : ''}`}
                                     />
                                     <button type="button" onClick={() => setShowWhatsappToken(!showWhatsappToken)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-500 transition-colors">
                                         {showWhatsappToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -596,7 +691,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                                 <h4 className="text-lg font-black text-emerald-600 uppercase tracking-tight">System Connected</h4>
                                                 <p className="text-xs text-slate-500 font-bold">Your phone is linked to the hospital bridge.</p>
                                             </div>
-                                            <button 
+                                            <button
                                                 type="button"
                                                 onClick={handleWhatsappLogout}
                                                 className="mt-4 px-6 py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-red-700 transition-all active:scale-95 flex items-center gap-2 mx-auto"
@@ -607,9 +702,9 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                     ) : bridgeStatus?.hasQr ? (
                                         <div className="text-center space-y-4">
                                             <div className="bg-white p-3 rounded-2xl shadow-2xl ring-1 ring-slate-100 inline-block">
-                                                <img 
-                                                    src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8081/qr?t=${qrTime}`} 
-                                                    alt="WhatsApp QR Code" 
+                                                 <img
+                                                    src={mounted ? `http://${window.location.hostname}:8081/qr?t=${qrTime}` : ''}
+                                                    alt="WhatsApp QR Code"
                                                     className="w-48 h-48"
                                                 />
                                             </div>
@@ -617,7 +712,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                                 <h4 className="text-[11px] font-black text-indigo-600 uppercase tracking-widest">Scan with WhatsApp</h4>
                                                 <p className="text-[9px] text-slate-400 font-bold">Linked Devices &gt; Link a Device</p>
                                             </div>
-                                            <button 
+                                            <button
                                                 type="button"
                                                 onClick={handleWhatsappLogout}
                                                 className="text-[9px] font-black text-red-500 uppercase tracking-widest hover:underline"
@@ -682,11 +777,11 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                     <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-indigo-400 hover:text-indigo-300 underline font-bold tracking-tight">Generate Key →</a>
                                 </Label>
                                 <div className="relative">
-                                    <input 
-                                        type={showAiApiKey ? 'text' : 'password'} 
-                                        value={aiApiKey} 
-                                        onChange={(e) => setAiApiKey(e.target.value)} 
-                                        placeholder={aiApiKey ? 'Entering new key...' : hasExistingAiKey ? '[SECURE AI KEY ACTIVE]' : 'Paste Gemini-1.5 API Key'} 
+                                    <input
+                                        type={showAiApiKey ? 'text' : 'password'}
+                                        value={aiApiKey}
+                                        onChange={(e) => setAiApiKey(e.target.value)}
+                                        placeholder={aiApiKey ? 'Entering new key...' : hasExistingAiKey ? '[SECURE AI KEY ACTIVE]' : 'Paste Gemini 2.5 API Key'}
                                         className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-white outline-none focus:border-indigo-500 font-mono"
                                     />
                                     <button type="button" onClick={() => setShowAiApiKey(!showAiApiKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30">
@@ -702,9 +797,9 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                                     <button
                                         type="button"
                                         onClick={async () => {
-                                            if(confirm("Restore to original .env key?")) {
+                                            if (confirm("Restore to original .env key?")) {
                                                 const res = await updateAISettings({ enabled: aiEnabled, apiKey: "", reset: true });
-                                                if(res.success) { setHasExistingAiKey(false); setAiApiKey(""); toast({ title: "AI Reset", description: "Using default .env key." }); }
+                                                if (res.success) { setHasExistingAiKey(false); setAiApiKey(""); toast({ title: "AI Reset", description: "Using default .env key." }); }
                                             }
                                         }}
                                         className="px-4 bg-slate-800 text-slate-400 border border-white/5 rounded-xl hover:text-red-400"
@@ -716,7 +811,7 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                             <div className="flex flex-col gap-1 opacity-60">
                                 <Label className="text-[10px] font-black uppercase text-indigo-300">AI Model Engine</Label>
                                 <select value={aiModel || "gemini-2.0-flash"} onChange={(e) => setAiModel(e.target.value)} className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white outline-none" disabled>
-                                    <option value="gemini-1.5-flash">google/gemini-1.5-flash (Stable)</option>
+                                    <option value="gemini-2.5-flash">google/gemini-2.5-flash (Stable)</option>
                                 </select>
                             </div>
                         </div>
@@ -765,183 +860,205 @@ export function HMSSettingsForm({ settings, products, doctors = [], gatewaySetti
                     </div>
                 </div>
 
-                {/* Universal Branding Hub - ONE PLACE FOR ALL hospital stationery */}
-                <div className="md:col-span-2 bg-white dark:bg-slate-900 border-4 border-indigo-500/20 dark:border-indigo-500/10 rounded-[2.5rem] p-8 shadow-2xl shadow-indigo-500/5 relative overflow-hidden group">
-                    <div className="absolute -top-12 -right-12 h-64 w-64 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700" />
-                    
+
+                {/* DYNAMIC WORLD CLASS PRINT ARCHITECTURE */}
+                <div className="md:col-span-2 bg-white dark:bg-slate-900 border-4 border-indigo-500/20 dark:border-indigo-500/10 rounded-[2.5rem] p-8 shadow-2xl shadow-indigo-500/5 relative overflow-hidden group mb-8">
                     <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
                         <div className="flex items-center gap-6">
                             <div className="h-20 w-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center shadow-xl shadow-indigo-500/40 transform group-hover:rotate-6 transition-transform">
                                 <Layout className="h-10 w-10 text-white" />
                             </div>
                             <div>
-                                <h3 className="font-black text-3xl text-slate-900 dark:text-white italic tracking-tighter uppercase">Universal Branding Studio</h3>
-                                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em] mt-1 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-full w-fit">Multi-Format Stationery Engine</p>
+                                <h3 className="font-black text-3xl text-slate-900 dark:text-white italic tracking-tighter uppercase">Dynamic Print Engine</h3>
+                                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em] mt-1 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-full w-fit">World Class Grid Configurator</p>
                             </div>
                         </div>
 
-                        <div className="flex flex-col items-center gap-4">
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${useCustomLayout ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-                                    {useCustomLayout ? 'Studio Active' : 'Default Engine'}
-                                </div>
-                            </div>
-
-                            <Dialog open={showVisualDesigner} onOpenChange={setShowVisualDesigner}>
-                                <DialogTrigger asChild>
-                                    <button 
-                                        type="button"
-                                        className="px-12 py-5 bg-indigo-600 text-white rounded-[2rem] text-sm font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/40 hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all border-b-4 border-indigo-800"
-                                    >
-                                        OPEN BRANDING STUDIO
-                                    </button>
-                                </DialogTrigger>
-                                <DialogContent className="max-w-[98vw] w-fit h-[95vh] bg-slate-100 dark:bg-slate-950 p-0 border-0 flex flex-col shadow-2xl overflow-hidden rounded-[3rem]">
-                                    <DialogHeader className="p-4 bg-white border-b border-slate-100 shrink-0">
-                                        <div className="flex justify-between items-center pr-10">
-                                            <div className="flex items-center gap-8">
-                                                <div>
-                                                    <DialogTitle className="text-2xl font-black italic text-slate-900 tracking-tighter uppercase">Universal branding hub</DialogTitle>
-                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">Hospital Stationery Engine v6.0</p>
-                                                </div>
-                                                
-                                                <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200">
-                                                    <button 
-                                                        onClick={() => setDesignerTab('invoice')}
-                                                        className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${designerTab === 'invoice' ? 'bg-white text-indigo-600 shadow-xl' : 'text-slate-500'}`}
-                                                    >
-                                                        <FileText className="h-4 w-4" />
-                                                        Financial Invoice
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => setDesignerTab('op_slip')}
-                                                        className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${designerTab === 'op_slip' ? 'bg-white text-emerald-600 shadow-xl' : 'text-slate-500'}`}
-                                                    >
-                                                        <Stethoscope className="h-4 w-4" />
-                                                        Clinical OP Slip
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            
-                                            <div className="flex items-center gap-4">
-                                                <div className="hidden md:flex flex-col items-end mr-4">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Save Protection</span>
-                                                    <span className="text-[11px] font-black text-emerald-500">SYSTEM READY</span>
-                                                </div>
-                                                <button 
-                                                    onClick={() => setShowVisualDesigner(false)} 
-                                                    className="px-8 py-3 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all hover:bg-black shadow-xl active:scale-95"
-                                                >
-                                                    Finalize Layout
+                        <div className="flex flex-col items-center gap-4" suppressHydrationWarning>
+                            {mounted ? (
+                                <Dialog>
+                                    <DialogTrigger asChild>
+                                        <button
+                                            type="button"
+                                            className="px-12 py-5 bg-indigo-600 text-white rounded-[2rem] text-sm font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/40 hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all border-b-4 border-indigo-800"
+                                        >
+                                            OPEN DYNAMIC EDITOR
+                                        </button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-[100vw] w-screen h-screen m-0 p-0 bg-[#0a0a0a] border-0 flex flex-col overflow-hidden rounded-none shadow-2xl">
+                                        <DialogHeader className="p-4 bg-[#0a0a0a] border-b border-white/10 shrink-0 flex flex-row items-center justify-between">
+                                            <DialogTitle className="text-2xl font-black italic text-white tracking-tighter uppercase ml-4">Enterprise Template Configurator</DialogTitle>
+                                            <DialogClose asChild>
+                                                <button className="h-10 w-10 bg-white/5 hover:bg-white/20 text-white rounded-full flex items-center justify-center transition-colors">
+                                                    <X className="h-5 w-5" />
                                                 </button>
-                                            </div>
-                                        </div>
-                                    </DialogHeader>
-
-                                    <div className="flex-1 overflow-auto p-4 md:p-12 flex justify-center bg-slate-100 dark:bg-slate-950">
-                                        {designerTab === 'invoice' ? (
-                                            <VisualInvoiceDesigner 
-                                                company={company}
-                                                bankDetails={pdfBankDetails}
-                                                usageDefaults={pdfSettings?.usageDefaults}
-                                                templates={pdfSettings?.templates}
-                                                settings={{ 
-                                                    logoSize: pdfLogoSize, 
-                                                    hospitalNameSize: pdfHospitalNameSize, 
-                                                    addressSize: pdfAddressSize, 
-                                                    showLogo: pdfShowLogo, 
-                                                    showContactInfo: pdfShowContactInfo,
-                                                    coordinates: pdfCoordinates 
-                                                }}
-                                                onSave={(coords, usage) => {
-                                                    if (usage === 'sale_bill') {
-                                                        setPdfCoordinates(coords);
-                                                        if (!useCustomLayout) setUseCustomLayout(true);
-                                                    }
-                                                }}
-                                                onSaveTemplate={async (name, config, usage, id) => {
+                                            </DialogClose>
+                                        </DialogHeader>
+                                        <div className="flex-1 overflow-hidden p-6 bg-slate-950">
+                                            <DynamicPrintDesigner 
+                                                pdfSettings={pdfSettings}
+                                                initialUsage={searchUsage} company={company}
+                                                onSave={async (config, usage) => {
                                                     const res = await updatePDFSettings({
-                                                        id: id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tmp-${Date.now()}`),
-                                                        name,
+                                                        id: pdfSettings?.templates?.find((t: any) => t.usage === usage && t.is_default)?.id, name: "Standard Template",
+                                                        config,
                                                         usage,
-                                                        config: { coordinates: config },
-                                                        isDefault: (id === pdfSettings?.usageDefaults?.[usage] || !id || id === pdfSettings?.activeTemplateId)
-                                                    });
-                                                    if (res.success) {
-                                                        toast({ title: "Template Saved", description: `'${name}' updated.` });
-                                                        router.refresh();
-                                                    }
-                                                }}
-                                                onSetDefault={async (id, usage) => {
-                                                    const res = await setAsDefaultTemplate(id, usage);
-                                                    if (res.success) {
-                                                        const t = pdfSettings?.templates?.find((tmp: any) => tmp.id === id);
-                                                        if (t) setPdfCoordinates(t.config?.coordinates || t.config);
-                                                        toast({ title: "Primary Layout Set" });
-                                                        router.refresh();
-                                                    }
-                                                }}
-                                            />
-                                        ) : (
-                                            <VisualOpSlipDesigner 
-                                                company={company}
-                                                templates={pdfSettings?.templates}
-                                                usageDefaults={pdfSettings?.usageDefaults}
-                                                settings={{ coordinates: opSlipCoordinates, logoSize: pdfLogoSize }}
-                                                onSave={(v) => {
-                                                    setOpSlipCoordinates(v);
-                                                    if (!useCustomOpSlipLayout) setUseCustomOpSlipLayout(true);
-                                                }}
-                                                onSaveTemplate={async (name, config, usage, id) => {
-                                                    const res = await updatePDFSettings({
-                                                        id: id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tmp-${Date.now()}`),
-                                                        name,
-                                                        usage: 'op_slip',
-                                                        config: { coordinates: config },
+                                                        companyId: settings.company_id,
                                                         isDefault: true
                                                     });
                                                     if (res.success) {
-                                                        toast({ title: "Clinical Template Active", description: "This layout is now your hospital's standard OP Slip." });
-                                                        router.refresh();
-                                                    }
-                                                }}
-                                                onSetDefault={async (id) => {
-                                                    const res = await setAsDefaultTemplate(id, 'op_slip');
-                                                    if (res.success) {
-                                                        const t = pdfSettings?.templates?.find((tmp: any) => tmp.id === id);
-                                                        if (t) setOpSlipCoordinates(t.config?.coordinates || t.config);
-                                                        toast({ title: "Clinical Layout Active" });
-                                                        router.refresh();
-                                                    }
-                                                }}
-                                                onDeleteTemplate={async (id) => {
-                                                    const res = await deletePDFTemplate(id);
-                                                    if (res.success) {
-                                                        toast({ title: "Template Purged" });
+                                                        toast({ title: "Template Saved", description: "Your custom print layout coordinates have been securely locked." });
                                                         router.refresh();
                                                     }
                                                 }}
                                             />
-                                        )}
-                                    </div>
-                                </DialogContent>
-                            </Dialog>
+                                        </div>
+                                    </DialogContent>
+                                </Dialog>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Stationery & Clinical Printing - RESTORED MISSING SETTINGS */}
+                <div className="md:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2.5rem] p-8 shadow-sm group">
+                    <div className="flex items-center gap-4 mb-8">
+                        <div className="h-12 w-12 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl flex items-center justify-center">
+                            <Printer className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+                        </div>
+                        <div>
+                            <h3 className="font-black text-2xl text-slate-900 dark:text-white italic tracking-tighter uppercase">Stationery & Print Config</h3>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Configure physical paper & document layouts</p>
                         </div>
                     </div>
 
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10 font-black uppercase text-[9px] tracking-widest text-slate-400">
-                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
-                            <CheckCircle className="h-4 w-4 text-emerald-500" />
-                            <span>Draggable Clinical Blocks</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 font-black uppercase tracking-widest text-[10px]">
+
+                        {/* OP SLIP STATIONERY */}
+                        <div className="space-y-6 p-6 bg-slate-50 dark:bg-slate-950 rounded-3xl border border-slate-100 dark:border-slate-800">
+                            <div className="flex items-center justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-slate-900 dark:text-white">OP Slip Preprinted Letterhead</span>
+                                    <span className="text-[8px] text-slate-400 lowercase">Use pre-printed stationery for OP Slips</span>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" checked={opSlipPreprintedLetterhead} onChange={(e) => setOpSlipPreprintedLetterhead(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+
+                            {opSlipPreprintedLetterhead && (
+                                <div className="space-y-2 animate-in fade-in duration-300">
+                                    <Label className="text-[8px] text-slate-500">Header Margin (cm)</Label>
+                                    <input
+                                        type="number" step="0.1"
+                                        value={opSlipHeaderHeight}
+                                        onChange={(e) => setOpSlipHeaderHeight(e.target.value)}
+                                        className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs"
+                                        placeholder="4.5"
+                                    />
+                                </div>
+                            )}
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-4">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-slate-900 dark:text-white">Show Vitals on OP Slip</span>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" checked={opSlipShowVitals} onChange={(e) => setOpSlipShowVitals(e.target.checked)} className="sr-only peer" />
+                                        <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-indigo-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                    </label>
+                                </div>
+
+                                {opSlipShowVitals && (
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpSlipVitalsPosition('left')}
+                                            className={`py-2 rounded-lg border-2 text-[8px] ${opSlipVitalsPosition === 'left' ? 'border-indigo-500 bg-white dark:bg-slate-900 text-indigo-600' : 'border-transparent bg-slate-100 dark:bg-slate-900 text-slate-400'}`}
+                                        >
+                                            Vitals Left
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpSlipVitalsPosition('right')}
+                                            className={`py-2 rounded-lg border-2 text-[8px] ${opSlipVitalsPosition === 'right' ? 'border-indigo-500 bg-white dark:bg-slate-900 text-indigo-600' : 'border-transparent bg-slate-100 dark:bg-slate-900 text-slate-400'}`}
+                                        >
+                                            Vitals Right
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
-                            <CheckCircle className="h-4 w-4 text-emerald-500" />
-                            <span>Coordinate High-Fidelity</span>
+
+                        {/* BILLING STATIONERY */}
+                        <div className="space-y-6 p-6 bg-slate-50 dark:bg-slate-950 rounded-3xl border border-slate-100 dark:border-slate-800">
+                            <div className="flex items-center justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-slate-900 dark:text-white">Bill Preprinted Letterhead</span>
+                                    <span className="text-[8px] text-slate-400 lowercase">Use pre-printed stationery for Invoices</span>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" checked={billPreprintedLetterhead} onChange={(e) => setBillPreprintedLetterhead(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+
+                            {billPreprintedLetterhead && (
+                                <div className="space-y-2 animate-in fade-in duration-300">
+                                    <Label className="text-[8px] text-slate-500">Header Margin (cm)</Label>
+                                    <input
+                                        type="number" step="0.1"
+                                        value={billHeaderHeight}
+                                        onChange={(e) => setBillHeaderHeight(e.target.value)}
+                                        className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs"
+                                        placeholder="4.5"
+                                    />
+                                </div>
+                            )}
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
+                                <Label className="text-[8px] text-slate-500">Voucher / Rx Style</Label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { id: 'centered_small', label: 'Centered Rx' },
+                                        { id: 'large_left', label: 'Large Corner' },
+                                        { id: 'none', label: 'No Rx Mark' }
+                                    ].map(style => (
+                                        <button
+                                            key={style.id}
+                                            type="button"
+                                            onClick={() => setOpSlipRxStyle(style.id as any)}
+                                            className={`py-2 rounded-lg border-2 text-[8px] ${opSlipRxStyle === style.id ? 'border-indigo-500 bg-white dark:bg-slate-900 text-indigo-600' : 'border-transparent bg-slate-100 dark:bg-slate-900 text-slate-400'}`}
+                                        >
+                                            {style.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-slate-900 dark:text-white">Fast Print (Skip Preview)</span>
+                                    <span className="text-[8px] text-indigo-500 font-bold lowercase">Bypass terminal and print immediately</span>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" checked={enableDirectPrinting} onChange={(e) => setEnableDirectPrinting(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-slate-900 dark:text-white">Show Tax Breakdown on Invoices</span>
+                                    <span className="text-[8px] text-slate-400 lowercase">Display itemized tax summary at bottom of sale bill</span>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" checked={pdfShowTaxInvoiceTitle} onChange={(e) => setPdfShowTaxInvoiceTitle(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 p-4 rounded-2xl border border-white dark:border-slate-800">
-                            <CheckCircle className="h-4 w-4 text-indigo-500" />
-                            <span>Precision Audit Trail</span>
-                        </div>
+
                     </div>
                 </div>
 

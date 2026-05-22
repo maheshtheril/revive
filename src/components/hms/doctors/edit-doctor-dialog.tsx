@@ -43,6 +43,8 @@ interface Doctor {
     profile_image_url?: string | null
     signature_url?: string | null
     document_urls?: any | null
+    notes?: string | null
+    salutation?: string | null
 }
 
 interface EditDoctorDialogProps {
@@ -54,7 +56,8 @@ interface EditDoctorDialogProps {
     specializations: Specialization[]
 }
 
-function renderDepartmentOptions(departments: Department[], parentId: string | null = null, depth = 0): any {
+function renderDepartmentOptions(departments: Department[] = [], parentId: string | null = null, depth = 0): any {
+    if (!Array.isArray(departments)) return [];
     return departments
         .filter(dept => {
             const normalizedParentId = dept.parent_id || null;
@@ -89,6 +92,7 @@ export function EditDoctorDialog({ isOpen, onClose, doctor, departments: initial
     const [profileImageUrl, setProfileImageUrl] = useState(doctor.profile_image_url || '')
     const [signatureUrl, setSignatureUrl] = useState(doctor.signature_url || '')
     const [documentUrls, setDocumentUrls] = useState<any>(doctor.document_urls || [])
+    const [notes, setNotes] = useState(doctor.notes || '')
 
     const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -211,12 +215,23 @@ export function EditDoctorDialog({ isOpen, onClose, doctor, departments: initial
                                             <GraduationCap className="h-4 w-4 text-indigo-500" />
                                             Professional Profile
                                         </h3>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <div className="col-span-1">
+                                                <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider text-indigo-500">Salutation</label>
+                                                <select name="salutation" defaultValue={doctor.salutation || 'Dr.'} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-black text-sm text-indigo-600 appearance-none">
+                                                    <option value="Dr.">Dr.</option>
+                                                    <option value="Mr.">Mr.</option>
+                                                    <option value="Ms.">Ms.</option>
+                                                    <option value="Mrs.">Mrs.</option>
+                                                    <option value="Prof.">Prof.</option>
+                                                    <option value="Nurse">Nurse</option>
+                                                </select>
+                                            </div>
+                                            <div className="col-span-1">
                                                 <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">First Name</label>
                                                 <input type="text" name="first_name" defaultValue={doctor.first_name} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm" />
                                             </div>
-                                            <div>
+                                            <div className="col-span-1">
                                                 <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Last Name</label>
                                                 <input type="text" name="last_name" defaultValue={doctor.last_name} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-sm" />
                                             </div>
@@ -263,10 +278,10 @@ export function EditDoctorDialog({ isOpen, onClose, doctor, departments: initial
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Institutional Role</label>
-                                                <select name="role_id" defaultValue={doctor.role_id || ''} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
+                                                <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Institutional Role <span className="text-red-500">*</span></label>
+                                                <select name="role_id" defaultValue={doctor.role_id || ''} required className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                     <option value="">Select Role</option>
-                                                    {roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+                                                    {(roles || []).map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
                                                 </select>
                                             </div>
                                         </div>
@@ -274,14 +289,14 @@ export function EditDoctorDialog({ isOpen, onClose, doctor, departments: initial
                                             <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Specialization</label>
                                             <select name="specialization_id" defaultValue={doctor.specialization_id || ''} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                 <option value="">None / General</option>
-                                                {specializations.map(spec => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
+                                                {(specializations || []).map(spec => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
                                             </select>
                                         </div>
                                         <div>
                                             <label className="block text-[11px] font-black text-slate-500 mb-1.5 uppercase tracking-wider">Functional Unit</label>
                                             <select name="department_id" defaultValue={doctor.department_id || ''} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 font-bold text-sm">
                                                 <option value="">Select Department</option>
-                                                {renderDepartmentOptions(departments)}
+                                                {renderDepartmentOptions(departments || [])}
                                             </select>
                                         </div>
                                     </div>
@@ -323,6 +338,25 @@ export function EditDoctorDialog({ isOpen, onClose, doctor, departments: initial
                                                 ))}
                                             </div>
                                             {selectedDays.map(day => <input key={day} type="hidden" name="working_days" value={day} />)}
+                                        </div>
+
+                                        {/* NEW: DYNAMIC PRINT FOOTER */}
+                                        <div className="p-6 bg-slate-900 rounded-[2rem] border border-slate-700 shadow-xl overflow-hidden relative group">
+                                            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+                                            <label className="block text-[11px] font-black text-emerald-400 mb-3 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                <Sparkles className="h-4 w-4" />
+                                                Digital Print Footer
+                                            </label>
+                                            <textarea 
+                                                name="notes" 
+                                                value={notes}
+                                                onChange={(e) => setNotes(e.target.value)}
+                                                placeholder="Enter schedule, disclaimers, or specialty notes for OP Slips..."
+                                                className="w-full h-32 bg-slate-800/50 border-2 border-slate-700 rounded-2xl p-4 text-white font-bold text-sm focus:border-emerald-500/50 focus:ring-4 focus:ring-emerald-500/10 outline-none scrollbar-hide resize-none transition-all"
+                                            />
+                                            <p className="mt-3 text-[10px] text-slate-400 font-bold uppercase leading-relaxed tracking-wider">
+                                                Tip: Use Enter key for multiple lines. These will appear at the bottom of all OP Slips for this doctor.
+                                            </p>
                                         </div>
                                     </div>
 

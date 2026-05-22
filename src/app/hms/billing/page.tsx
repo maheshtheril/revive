@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma"
 import Link from "next/link"
 import { Plus, TrendingUp, AlertCircle, CheckCircle2, Search, FileText, Clock, Receipt } from "lucide-react"
 import { auth } from "@/auth"
-// hms_invoice_status refactored to string
+// hms_invoice_status refactored to string 
 
 import SearchInput from "@/components/search-input"
 import { BillingActions } from "@/components/billing/billing-actions"
@@ -26,9 +26,14 @@ export default async function BillingPage({
     const { q, status, from, to, method } = await searchParams;
     const query = q || ''
     const currentStatus = status || 'all'
-    const fromQuery = from || null;
-    const toQuery = to || null;
     const methodQuery = method || null;
+
+    // World-Standard Date Range Filter Logic: Default to Today unless 'all' is explicitly requested
+    const todayStr = new Date().toISOString().split('T')[0];
+    const rawFrom = from ?? todayStr;
+    const rawTo = to ?? todayStr;
+    const fromQuery = rawFrom === 'all' ? null : rawFrom;
+    const toQuery = rawTo === 'all' ? null : rawTo;
 
     // Status filter logic
     const statusFilter: any = currentStatus !== 'all' ? { status: currentStatus } : {}
@@ -50,6 +55,8 @@ export default async function BillingPage({
         }
     } : {};
 
+    const isAdmin = session?.user?.isAdmin || (session?.user as any)?.isTenantAdmin;
+
     // Parallel fetch for stats and list
     const [invoices, stats, draftCount, methodSpecificRevenue] = await Promise.all([
         prisma.hms_invoice.findMany({
@@ -57,6 +64,7 @@ export default async function BillingPage({
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 ...statusFilter,
                 ...dateFilter,
                 ...methodFilter,
@@ -81,6 +89,8 @@ export default async function BillingPage({
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
+                ...(!isAdmin && { created_by: session.user.id }),
+                status: { not: 'cancelled' },
                 ...statusFilter,
                 ...dateFilter,
                 ...methodFilter
@@ -99,6 +109,7 @@ export default async function BillingPage({
             where: {
                 tenant_id: session.user.tenantId,
                 company_id: session.user.companyId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 status: 'draft' as any,
                 ...dateFilter,
                 ...methodFilter
@@ -111,8 +122,10 @@ export default async function BillingPage({
                 company_id: session.user.companyId,
                 method: methodQuery as any,
                 hms_invoice: {
+                    ...(!isAdmin && { created_by: session.user.id }),
                     ...dateFilter,
-                    company_id: session.user.companyId
+                    company_id: session.user.companyId,
+                    status: { not: 'cancelled' }
                 }
             },
             _sum: { amount: true }
@@ -243,14 +256,15 @@ export default async function BillingPage({
                             <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider">Patient</th>
                             <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider">Date</th>
                             <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider">Status</th>
-                            <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider text-right">Amount</th>
-                            <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider text-right w-[50px]">Actions</th>
+                            <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider text-right">Bill Amt</th>
+                            <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider text-right">Collected</th>
+                            <th className="p-5 font-bold text-xs text-slate-500 uppercase tracking-wider text-right w-[100px]">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {invoices.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="p-20 text-center">
+                                <td colSpan={7} className="p-20 text-center">
                                     <div className="flex flex-col items-center justify-center">
                                         <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
                                             <Receipt className="h-8 w-8 text-slate-300" />
@@ -277,10 +291,12 @@ export default async function BillingPage({
                                     <td className="p-5">
                                         {inv.hms_patient ? (
                                             <div className="flex items-center gap-3">
-                                                <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm ${inv.hms_patient.gender === 'male' ? 'bg-blue-100 text-blue-700' :
-                                                    inv.hms_patient.gender === 'female' ? 'bg-pink-100 text-pink-700' : 'bg-slate-100 text-slate-700'
-                                                    }`}>
-                                                    {inv.hms_patient.first_name?.[0]}
+                                                <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm ${
+                                                    inv.hms_patient.gender === 'male' ? 'bg-blue-100 text-blue-700' :
+                                                    inv.hms_patient.gender === 'female' ? 'bg-pink-100 text-pink-700' : 
+                                                    'bg-slate-100 text-slate-700'
+                                                }`}>
+                                                    {inv.hms_patient.first_name?.[0] || 'P'}
                                                 </div>
                                                 <div>
                                                     <p className="font-bold text-slate-900 text-sm">{inv.hms_patient.first_name} {inv.hms_patient.last_name}</p>
@@ -288,11 +304,19 @@ export default async function BillingPage({
                                                 </div>
                                             </div>
                                         ) : (
-                                            <span className="text-slate-400 italic text-sm">Guest</span>
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm bg-slate-100 text-slate-700 uppercase">
+                                                    G
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-slate-900 text-sm">Guest / Walk-in</p>
+                                                    <p className="text-[10px] text-pink-500 font-black uppercase tracking-widest">Unregistered</p>
+                                                </div>
+                                            </div>
                                         )}
                                     </td>
                                     <td className="p-5 text-slate-500 text-sm font-medium">
-                                        {inv.created_at ? new Date(inv.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
+                                        {(inv.invoice_date || inv.created_at) ? new Date(inv.invoice_date || inv.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
                                     </td>
                                     <td className="p-5">
                                         <span className={`px-2.5 py-1 rounded-md text-xs font-bold capitalize border inline-flex items-center gap-1.5
@@ -305,8 +329,15 @@ export default async function BillingPage({
                                             {inv.status || 'draft'}
                                         </span>
                                     </td>
-                                    <td className="p-5 text-right font-mono text-sm font-black text-slate-900">
+                                    <td className="p-5 text-right font-mono text-sm font-bold text-slate-400">
                                         ₹{Number(inv.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="p-5 text-right font-mono text-sm font-black text-emerald-600">
+                                        {inv.status === 'cancelled' ? (
+                                            <span className="text-slate-400 line-through decoration-red-400">₹{Number(inv.total_paid || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                        ) : (
+                                            `₹${Number(inv.total_paid || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        )}
                                     </td>
                                     <td className="p-5 text-right">
                                         <BillingActions invoiceId={inv.id} invoiceNumber={inv.invoice_number} />
@@ -321,8 +352,11 @@ export default async function BillingPage({
                                 <td colSpan={4} className="p-5 text-right text-xs font-black text-slate-400 uppercase tracking-widest">
                                     Total for visible records
                                 </td>
-                                <td className="p-5 text-right font-black text-slate-900 text-lg tracking-tight">
-                                    ₹{invoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                <td className="p-5 text-right font-black text-slate-400 text-sm tracking-tight">
+                                    ₹{invoices.reduce((sum, inv) => sum + (inv.status === 'cancelled' ? 0 : Number(inv.total || 0)), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="p-5 text-right font-black text-emerald-600 text-lg tracking-tight">
+                                    ₹{invoices.reduce((sum, inv) => sum + (inv.status === 'cancelled' ? 0 : Number(inv.total_paid || 0)), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                                 </td>
                                 <td></td>
                             </tr>

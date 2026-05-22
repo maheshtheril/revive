@@ -4,6 +4,19 @@ import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
 
+function cleanShift(shift: any, userObj?: any) {
+    if (!shift) return null;
+    return {
+        ...shift,
+        user_name: userObj?.full_name || userObj?.name || 'Institutional Personnel',
+        user_email: userObj?.email || 'user@hms.local',
+        opening_balance: Number(shift.opening_balance || 0),
+        closing_balance: Number(shift.closing_balance || 0),
+        system_balance: Number(shift.system_balance || 0),
+        difference: Number(shift.difference || 0)
+    };
+}
+
 export async function getCurrentShift() {
     const session = await auth();
     if (!session?.user?.id) return null;
@@ -15,14 +28,19 @@ export async function getCurrentShift() {
                 status: 'open'
             }
         });
-        return shift;
+        if (!shift) return null;
+        const user = await prisma.app_user.findUnique({
+            where: { id: shift.user_id },
+            select: { name: true, full_name: true, email: true }
+        }).catch(() => null);
+        return cleanShift(shift, user);
     } catch (e) {
         console.error("Failed to fetch shift:", e);
         return null;
     }
 }
 
-export async function startShift(openingBalance: number) {
+export async function startShift(openingBalance: number, denominations?: any) {
     const session = await auth();
     if (!session?.user?.id) return { error: "Unauthorized" };
 
@@ -46,6 +64,7 @@ export async function startShift(openingBalance: number) {
                 user_id: session.user.id,
                 start_time: new Date(),
                 opening_balance: openingBalance,
+                denominations: denominations ? { opening: denominations } : undefined,
                 status: 'open'
             }
         });
@@ -66,11 +85,19 @@ export async function getShiftSummary(shiftId: string) {
     // 1. Fetch Collections (Inbound)
     const collections = await prisma.hms_invoice_payments.findMany({
         where: {
-            created_by: session.user.id,
-            created_at: { gte: shift.start_time },
+            OR: [
+                { created_by: shift.user_id },
+                { created_by: null }
+            ],
+            tenant_id: shift.tenant_id,
+            created_at: { 
+                gte: shift.start_time,
+                ...(shift.end_time && { lte: shift.end_time })
+            },
+            hms_invoice: { status: { not: 'cancelled' } }
         },
         include: {
-            hms_invoice: { select: { invoice_number: true, hms_patient: { select: { first_name: true, last_name: true } } } }
+            hms_invoice: { select: { status: true, invoice_number: true, hms_patient: { select: { first_name: true, last_name: true } } } }
         },
         orderBy: { created_at: 'desc' }
     });
@@ -78,9 +105,16 @@ export async function getShiftSummary(shiftId: string) {
     // 2. Fetch Expenses (Outbound)
     const expenses = await prisma.payments.findMany({
         where: {
-            created_by: session.user.id,
+            OR: [
+                { created_by: shift.user_id },
+                { created_by: null }
+            ],
+            tenant_id: shift.tenant_id,
             metadata: { path: ['type'], equals: 'outbound' },
-            created_at: { gte: shift.start_time }
+            created_at: { 
+                gte: shift.start_time,
+                ...(shift.end_time && { lte: shift.end_time })
+            }
         },
         orderBy: { created_at: 'desc' }
     });
@@ -143,7 +177,12 @@ export async function getShiftSummary(shiftId: string) {
     ].sort((a, b) => new Date(b.time || 0).getTime() - new Date(a.time || 0).getTime());
 
 
-    return { success: true, summary, shift, ledger };
+    const user = await prisma.app_user.findUnique({
+        where: { id: shift.user_id },
+        select: { name: true, full_name: true, email: true }
+    }).catch(() => null);
+
+    return { success: true, summary, shift: cleanShift(shift, user), ledger };
 }
 
 export async function closeShift(shiftId: string, closingCash: number, denominations: any) {
@@ -165,14 +204,54 @@ export async function closeShift(shiftId: string, closingCash: number, denominat
             end_time: new Date(),
             closing_balance: closingCash,
             system_balance: systemCash,
-            difference: diff,
-            denominations: denominations,
+            denominations: { opening: (shift.denominations as any)?.opening, closing: denominations },
             status: 'closed'
         }
     });
 
     revalidatePath('/hms/reception/dashboard');
     return { success: true };
+}
+
+export async function getShiftsForAudit(startDate?: Date, endDate?: Date) {
+    const session = await auth();
+    if (!session?.user?.id) return { error: "Unauthorized" };
+
+    try {
+        const shifts = await prisma.hms_cash_shift.findMany({
+            where: {
+                tenant_id: session.user.tenantId,
+                status: 'closed',
+                end_time: {
+                    gte: startDate || new Date(new Date().setDate(new Date().getDate() - 30)),
+                    lte: endDate || new Date()
+                }
+            },
+            include: {
+                // We'll join with user to see who handled the shift
+            },
+            orderBy: {
+                end_time: 'desc'
+            }
+        });
+
+        // Get all users to map names
+        const users = await prisma.app_user.findMany({
+            where: { tenant_id: session.user.tenantId },
+            select: { id: true, name: true, full_name: true }
+        });
+
+        const userMap = new Map(users.map(u => [u.id, u.full_name || u.name]));
+
+        const shiftsWithNames = shifts.map(s => ({
+            ...cleanShift(s),
+            userName: userMap.get(s.user_id) || 'Unknown User'
+        }));
+
+        return { success: true, shifts: shiftsWithNames };
+    } catch (e) {
+        return { error: (e as Error).message };
+    }
 }
 
 export async function getShiftHistory() {
@@ -191,8 +270,62 @@ export async function getShiftHistory() {
             take: 10
         });
 
-        return { success: true, shifts };
+        return { success: true, shifts: shifts.map(cleanShift) };
     } catch (e) {
         return { error: (e as Error).message };
+    }
+}
+
+export async function verifyShift(shiftId: string, notes: string) {
+    const session = await auth();
+    if (!session?.user?.id) return { error: "Unauthorized" };
+
+    try {
+        await prisma.hms_cash_shift.update({
+            where: { id: shiftId },
+            data: {
+                notes: `AUDITED: ${notes}`,
+                updated_at: new Date()
+            }
+        });
+        revalidatePath('/hms/accounting/shifts');
+        return { success: true };
+    } catch (e) {
+        return { error: (e as Error).message };
+    }
+}
+
+export async function recordShiftExpense(amount: number, description: string) {
+    const session = await auth();
+    if (!session?.user?.id) return { error: "Unauthorized" };
+
+    try {
+        const shift = await prisma.hms_cash_shift.findFirst({
+            where: { user_id: session.user.id, status: 'open' }
+        });
+
+        if (!shift) return { error: "No active shift to log expense." };
+
+        await prisma.payments.create({
+            data: {
+                id: crypto.randomUUID(),
+                tenant_id: session.user.tenantId!,
+                company_id: session.user.companyId!,
+                amount: amount,
+                payment_date: new Date(),
+                payment_method: 'cash',
+                created_by: session.user.id,
+                metadata: {
+                    type: 'outbound',
+                    category: 'Petty Cash',
+                    description: description,
+                    source: 'shift_manager',
+                    shift_id: shift.id
+                }
+            }
+        });
+        return { success: true };
+    } catch (e: any) {
+        return { error: e.message || "Failed to log expense" };
     }
 }

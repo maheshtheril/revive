@@ -16,7 +16,7 @@ export async function GET(
         console.log(`[GET /api/prescriptions/${id}] Fetching for tenant: ${session.user.tenantId}`)
 
         // Use Raw SQL for consistency
-        const prescriptions: any[] = await prisma.$queryRaw`
+        const rawPrescriptions: any[] = await prisma.$queryRaw`
             SELECT p.*, 
                 JSON_AGG(JSON_BUILD_OBJECT(
                     'id', pi.id,
@@ -26,6 +26,8 @@ export async function GET(
                     'evening', pi.evening,
                     'night', pi.night,
                     'days', pi.days,
+                    'batch_id', pi.batch_id,
+                    'batch_no', pi.batch_no,
                     'hms_product', JSON_BUILD_OBJECT(
                         'id', prod.id,
                         'name', prod.name,
@@ -42,19 +44,29 @@ export async function GET(
             LIMIT 1
         `;
 
-        const prescription = prescriptions[0];
+        // Parse JSON_AGG if it's returned as a string
+        const prescriptions = rawPrescriptions.map(p => ({
+            ...p,
+            prescription_items: typeof p.prescription_items === 'string' 
+                ? JSON.parse(p.prescription_items) 
+                : p.prescription_items
+        }));
 
-        if (!prescription) {
+        const activePrescription = prescriptions[0];
+
+        if (!activePrescription) {
             return NextResponse.json({ success: true, prescription: null, vitals: null })
         }
 
-        // Fetch vitals if linked to an appointment
+        let consumption: any[] = [];
         let vitals = null;
         let labTests = [];
-        if (prescription.appointment_id) {
+
+        // Fetch vitals and consumption if linked to an appointment
+        if (activePrescription.appointment_id) {
             const vitalsArr: any[] = await prisma.$queryRaw`
                 SELECT v.* FROM hms_vitals v
-                WHERE v.encounter_id::text = CAST(${prescription.appointment_id} AS text)
+                WHERE v.encounter_id::text = CAST(${activePrescription.appointment_id} AS text)
                 LIMIT 1
             `;
             vitals = vitalsArr[0];
@@ -68,12 +80,12 @@ export async function GET(
                             'name', lt.name,
                             'price', lol.price
                         )) FILTER (WHERE lt.id IS NOT NULL),
-                        '[]'
+                        '[]'::json
                     ) as tests
                 FROM hms_lab_order lo
                 LEFT JOIN hms_lab_order_line lol ON lo.id = lol.order_id
                 LEFT JOIN hms_lab_test lt ON lol.test_id = lt.id
-                WHERE lo.encounter_id::text = CAST(${prescription.appointment_id} AS text)
+                WHERE lo.encounter_id::text = CAST(${activePrescription.appointment_id} AS text)
                 AND lo.tenant_id::text = CAST(${session.user.tenantId} AS text)
                 AND lo.status = 'requested'
                 GROUP BY lo.id
@@ -81,19 +93,48 @@ export async function GET(
                 LIMIT 1
             `;
             labTests = labOrders[0]?.tests || [];
+            if (typeof labTests === 'string') labTests = JSON.parse(labTests);
+
+            // Fetch nursing consumption items independently
+            const consumptionItems: any[] = await prisma.$queryRaw`
+                SELECT 
+                    sm.id, sm.qty, sm.uom, sm.created_at,
+                    p.name as product_name,
+                    u.full_name as nurse_name
+                FROM hms_stock_move sm
+                LEFT JOIN hms_product p ON sm.product_id = p.id
+                LEFT JOIN app_user u ON sm.created_by = u.id
+                WHERE sm.source_reference::text = CAST(${activePrescription.appointment_id} AS text)
+                AND sm.source = 'Nursing Consumption'
+                AND sm.tenant_id::text = CAST(${session.user.tenantId} AS text)
+                ORDER BY sm.created_at DESC
+            `;
+
+            // Aggregate consumption items
+            consumption = consumptionItems.reduce((acc: any[], curr: any) => {
+                const existing = acc.find(a => a.product_name === curr.product_name && a.uom === curr.uom);
+                if (existing) {
+                    existing.qty = Number(existing.qty) + Number(curr.qty);
+                } else {
+                    acc.push({ ...curr });
+                }
+                return acc;
+            }, []);
         }
 
         // Format for frontend
         let medicines = [];
-        if (prescription.prescription_items && Array.isArray(prescription.prescription_items)) {
-            medicines = prescription.prescription_items
-                .filter((item: any) => item && item.medicine_id && item.hms_product && item.hms_product.id)
+        if (activePrescription.prescription_items && Array.isArray(activePrescription.prescription_items)) {
+            medicines = activePrescription.prescription_items
+                .filter((item: any) => item && item.medicine_id && item.hms_product && (item.hms_product.id || item.hms_product.name))
                 .map((item: any) => ({
                     id: item.hms_product.id,
                     name: item.hms_product.name,
                     dosage: `${item.morning || 0}-${item.afternoon || 0}-${item.evening || 0}-${item.night || 0}`,
                     days: (item.days || 3).toString(),
                     timing: 'After Food',
+                    batchId: item.batch_id,
+                    batchNo: item.batch_no,
                     quantity: ((item.morning || 0) + (item.afternoon || 0) + (item.evening || 0) + (item.night || 0)) * (item.days || 0)
                 }));
         }
@@ -101,11 +142,12 @@ export async function GET(
         return NextResponse.json({
             success: true,
             prescription: {
-                ...prescription,
+                ...activePrescription,
                 medicines,
                 labTests
             },
-            vitals: vitals || null
+            vitals: vitals || null,
+            consumption
         })
     } catch (error) {
         console.error('Error fetching prescription:', error)

@@ -313,7 +313,7 @@ export function ChartOfAccountsManager({ initialAccounts }: { initialAccounts: A
             <div className="h-8 bg-[#004d4d] flex items-center justify-between px-4 border-b border-[#006666] text-[10px] font-bold">
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">CHART OF ACCOUNTS</span>
-                    <span className="text-[#ffffcc]">Ziona HMS v4.5</span>
+                    <span className="text-[#ffffcc]">System Integrated Report</span>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">Financial Year: 2025-26</span>
@@ -443,7 +443,7 @@ export function ChartOfAccountsManager({ initialAccounts }: { initialAccounts: A
                         <span className="text-[11px] font-black flex items-center gap-2">
                              {editingAccount ? "ALT" : "NEW"} : {formData.is_group ? "GROUP" : "LEDGER"} CREATION
                         </span>
-                        <span className="text-[9px] opacity-70">ZIONA HMS ACCESS</span>
+                        <span className="text-[9px] opacity-70">SECURE SYSTEM ACCESS</span>
                     </div>
 
                     <div className="p-8 space-y-5 bg-[#002b2b]">

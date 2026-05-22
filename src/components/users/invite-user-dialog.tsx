@@ -151,9 +151,9 @@ export function InviteUserDialog({ roles = [] }: InviteUserDialogProps) {
         }
     }
 
-    const copyLink = () => {
+    const copyLink = async () => {
         if (inviteResult?.link) {
-            const success = copyToClipboard(inviteResult.link)
+            const success = await copyToClipboard(inviteResult.link)
             if (success) {
                 toast({ title: 'Link Copied', description: 'Invitation link copied to clipboard' })
             } else {
@@ -282,12 +282,15 @@ export function InviteUserDialog({ roles = [] }: InviteUserDialogProps) {
                                         </div>
 
                                         <div className="space-y-1.5">
-                                            <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">System Username *</Label>
+                                            <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Username *</Label>
                                             <Input
                                                 placeholder="username"
+                                                autoCapitalize="none"
+                                                autoCorrect="off"
+                                                spellCheck="false"
                                                 className={cn("h-12 bg-white border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10", errors.userName && "border-red-500")}
                                                 value={formData.userName}
-                                                onChange={(e) => setFormData({ ...formData, userName: e.target.value })}
+                                                onChange={(e) => setFormData({ ...formData, userName: e.target.value.toLowerCase() })}
                                             />
                                         </div>
 
@@ -309,9 +312,12 @@ export function InviteUserDialog({ roles = [] }: InviteUserDialogProps) {
                                             <Input
                                                 type="email"
                                                 placeholder="user@example.com"
+                                                autoCapitalize="none"
+                                                autoCorrect="off"
+                                                spellCheck="false"
                                                 className={cn("h-12 bg-white border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-500/10", errors.email && "border-red-500")}
                                                 value={formData.email}
-                                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                                onChange={(e) => setFormData({ ...formData, email: e.target.value.toLowerCase() })}
                                             />
                                         </div>
                                     </div>

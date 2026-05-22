@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_REGISTRATION_FEE } from '@/lib/hms-constants';
 
 export async function GET() {
     try {
@@ -31,7 +32,7 @@ export async function GET() {
                     is_service: true,      // KEY: It's a service
                     is_stockable: false,   // KEY: No stock tracking
                     uom: "unit",
-                    price: 100            // Default Price (can be overridden)
+                    price: DEFAULT_REGISTRATION_FEE            // Default Price (can be overridden)
                 }
             });
         }

@@ -41,7 +41,7 @@ export function formatCurrency(
     let symbol = '$';
     const code = currencyOrCountry?.toUpperCase();
 
-    if (code === 'INR' || code === 'IN') symbol = '₹';
+    if (code === 'INR' || code === 'IN') symbol = '\u20B9';
     else if (code === 'USD' || code === 'US') symbol = '$';
     else if (code === 'GBP' || code === 'GB') symbol = '£';
     else if (code === 'EUR' || code === 'EU') symbol = '€';
@@ -58,5 +58,5 @@ export function formatCurrency(
  * Format amount for Indian market specifically
  */
 export function formatINR(amount: number, precision: number = DEFAULT_PRECISION): string {
-    return formatCurrencyWithSymbol(amount, '₹', precision);
+    return formatCurrencyWithSymbol(amount, '\u20B9', precision);
 }

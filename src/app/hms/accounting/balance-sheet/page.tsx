@@ -33,7 +33,7 @@ export default function BalanceSheetPage() {
             <div className="h-8 bg-[#004d4d] flex items-center justify-between px-4 border-b border-[#006666] text-[10px] font-bold no-print">
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">BALANCE SHEET</span>
-                    <span className="text-[#ffffcc]">Ziona HMS v4.5</span>
+                    <span className="text-[#ffffcc]">System Integrated Report</span>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">As On Date Overview</span>

@@ -38,6 +38,13 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [timezone, setTimezone] = useState(company.company_settings?.timezone || 'Asia/Kolkata')
     const [locale, setLocale] = useState(company.company_settings?.locale || 'en-US')
 
+    // Contact Info & Metadata (stored in metadata)
+    const meta = (company.metadata as any) || {}
+    const [patientIdPrefix, setPatientIdPrefix] = useState(meta.patient_id_prefix || 'PAT')
+    const [patientIdMode, setPatientIdMode] = useState(meta.patient_id_mode || 'timestamp')
+    const [patientIdStartNumber, setPatientIdStartNumber] = useState(meta.patient_id_start_number || '1000')
+    const [invoiceStartNumber, setInvoiceStartNumber] = useState(meta.invoice_start_number || '1')
+
     // Tenant Branding
     const [appName, setAppName] = useState(tenant?.app_name || tenant?.name || '')
     const [tenantLogoUrl, setTenantLogoUrl] = useState(tenant?.logo_url || '')
@@ -49,8 +56,6 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [localOrigin, setLocalOrigin] = useState('')
     const [isMounted, setIsMounted] = useState(false)
 
-    // Contact Info (stored in metadata)
-    const meta = (company.metadata as any) || {}
     const [address, setAddress] = useState(meta.address || '')
     const [phone, setPhone] = useState(meta.phone || '')
     const [email, setEmail] = useState(meta.email || '')
@@ -69,8 +74,14 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
     const [pdfShowLogo, setPdfShowLogo] = useState(pdfSettings?.showLogo ?? true)
     const [pdfHospitalNameSize, setPdfHospitalNameSize] = useState(pdfSettings?.hospitalNameSize || 16)
     const [pdfAddressSize, setPdfAddressSize] = useState(pdfSettings?.addressSize || 10)
+    const [pdfLogoSize, setPdfLogoSize] = useState(pdfSettings?.logoSize || 80)
+    const [pdfHospitalNameColor, setPdfHospitalNameColor] = useState(pdfSettings?.hospitalNameColor || '#000000')
+    const [pdfHospitalNameFont, setPdfHospitalNameFont] = useState<'times' | 'helvetica'>(pdfSettings?.hospitalNameFont || 'times')
+    const [pdfHospitalPrimaryColor, setPdfHospitalPrimaryColor] = useState(pdfSettings?.hospitalPrimaryColor || '#4f46e5')
+    const [pdfHospitalNameLetterSpacing, setPdfHospitalNameLetterSpacing] = useState(pdfSettings?.hospitalNameLetterSpacing || 0)
     const [pdfShowContactInfo, setPdfShowContactInfo] = useState(pdfSettings?.showContactInfo ?? true)
     const [pdfAutoPrint, setPdfAutoPrint] = useState(pdfSettings?.autoPrint ?? false)
+    const [pdfShowTaxOnBill, setPdfShowTaxOnBill] = useState(pdfSettings?.showTaxOnBill ?? true)
     
     // AI Settings
     const [aiEnabled, setAiEnabled] = useState(aiSettings?.enabled ?? true)
@@ -96,6 +107,10 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
         setPhone(m.phone || '')
         setEmail(m.email || '')
         setGstin(m.gstin || '')
+        setPatientIdPrefix(m.patient_id_prefix || 'PAT')
+        setPatientIdMode(m.patient_id_mode || 'timestamp')
+        setPatientIdStartNumber(m.patient_id_start_number || '1000')
+        setInvoiceStartNumber(m.invoice_start_number || '1')
         setAppUrl(tenant?.app_url || '')
         setTimezone(company.company_settings?.timezone || 'Asia/Kolkata')
         setLocale(company.company_settings?.locale || 'en-US')
@@ -118,8 +133,14 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
             setPdfShowLogo(pdfSettings.showLogo ?? true);
             setPdfHospitalNameSize(pdfSettings.hospitalNameSize || 16);
             setPdfAddressSize(pdfSettings.addressSize || 10);
+            setPdfLogoSize(pdfSettings.logoSize || 80);
+            setPdfHospitalNameColor(pdfSettings.hospitalNameColor || '#000000');
+            setPdfHospitalNameFont(pdfSettings.hospitalNameFont || 'times');
+            setPdfHospitalPrimaryColor(pdfSettings.hospitalPrimaryColor || '#4f46e5');
+            setPdfHospitalNameLetterSpacing(pdfSettings.hospitalNameLetterSpacing || 0);
             setPdfShowContactInfo(pdfSettings.showContactInfo ?? true);
             setPdfAutoPrint(pdfSettings.autoPrint ?? false);
+            setPdfShowTaxOnBill(pdfSettings.showTaxOnBill ?? true);
         }
     }, [pdfSettings]);
 
@@ -157,7 +178,11 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     invoicePrefix,
                     roundingPrecision: Number(roundingPrecision),
                     timezone,
-                    locale
+                    locale,
+                    patientIdPrefix,
+                    patientIdMode,
+                    patientIdStartNumber: Number(patientIdStartNumber),
+                    invoiceStartNumber: Number(invoiceStartNumber)
                 }),
                 updateWhatsAppSettings({
                     enabled: whatsappEnabled,
@@ -172,9 +197,15 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                     showLogo: pdfShowLogo,
                     hospitalNameSize: Number(pdfHospitalNameSize),
                     addressSize: Number(pdfAddressSize),
+                    logoSize: Number(pdfLogoSize),
+                    hospitalNameColor: pdfHospitalNameColor,
+                    hospitalNameFont: pdfHospitalNameFont,
+                    hospitalPrimaryColor: pdfHospitalPrimaryColor,
+                    hospitalNameLetterSpacing: Number(pdfHospitalNameLetterSpacing),
                     showContactInfo: pdfShowContactInfo,
                     autoPrint: pdfAutoPrint,
-                    showTaxInvoiceTitle: true
+                    showTaxOnBill: pdfShowTaxOnBill,
+                    showTaxInvoiceTitle: pdfShowTaxOnBill
                 }),
                 updateAISettings({
                     enabled: aiEnabled,
@@ -318,7 +349,14 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                         </div>
                         <div className="space-y-2">
                             <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Official Email</Label>
-                            <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="billing@company.com" className="font-bold border-2 rounded-xl" />
+                            <Input 
+                                type="email"
+                                value={email} 
+                                onChange={e => setEmail(e.target.value.toLowerCase())} 
+                                placeholder="billing@company.com" 
+                                autoCapitalize="none"
+                                className="font-bold border-2 rounded-xl lowercase" 
+                            />
                         </div>
                     </div>
                 </CardContent>
@@ -375,6 +413,13 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                                 </div>
                                 <Switch checked={pdfAutoPrint} onCheckedChange={setPdfAutoPrint} />
                             </label>
+                            <label className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer hover:bg-white transition-colors">
+                                <div className="flex flex-col">
+                                    <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Show Tax Breakdown on Invoices</span>
+                                    <span className="text-[9px] text-slate-500 font-medium uppercase tracking-tight italic">Display tax invoice title & itemized GST</span>
+                                </div>
+                                <Switch checked={pdfShowTaxOnBill} onCheckedChange={setPdfShowTaxOnBill} />
+                            </label>
                         </div>
                         <div className="space-y-4">
                             <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
@@ -390,6 +435,75 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                                     <span className="text-[10px] font-black text-indigo-600">{pdfAddressSize}px</span>
                                 </div>
                                 <input type="range" min="8" max="16" value={pdfAddressSize} onChange={(e) => setPdfAddressSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                            </div>
+                            <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                                <div className="flex justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Logo Width</span>
+                                    <span className="text-[10px] font-black text-indigo-600">{pdfLogoSize}px</span>
+                                </div>
+                                <input type="range" min="40" max="200" value={pdfLogoSize} onChange={(e) => setPdfLogoSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                            </div>
+
+                            <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                                <div className="flex justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Hospital Name Font</span>
+                                    <span className="text-[10px] font-black text-indigo-600">{pdfHospitalNameFont === 'times' ? 'Serif' : 'Modern'}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button 
+                                        type="button" 
+                                        variant={pdfHospitalNameFont === 'times' ? 'default' : 'outline'} 
+                                        onClick={() => setPdfHospitalNameFont('times')}
+                                        className="flex-1 h-8 text-[10px] font-bold uppercase tracking-tighter"
+                                    >
+                                        Classic Serif
+                                    </Button>
+                                    <Button 
+                                        type="button" 
+                                        variant={pdfHospitalNameFont === 'helvetica' ? 'default' : 'outline'} 
+                                        onClick={() => setPdfHospitalNameFont('helvetica')}
+                                        className="flex-1 h-8 text-[10px] font-bold uppercase tracking-tighter"
+                                    >
+                                        Modern Sans
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                                <div className="flex justify-between mb-3">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Brand Colors</span>
+                                    <div className="flex gap-2">
+                                        <div className="w-4 h-4 rounded-full border" style={{ backgroundColor: pdfHospitalNameColor }} />
+                                        <div className="w-4 h-4 rounded-full border" style={{ backgroundColor: pdfHospitalPrimaryColor }} />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <Label className="text-[8px] text-slate-400">Name Color</Label>
+                                        <div className="flex gap-2">
+                                            <input type="color" value={pdfHospitalNameColor} onChange={e => setPdfHospitalNameColor(e.target.value)} className="w-8 h-8 rounded-lg overflow-hidden border-0 p-0" />
+                                            <input type="text" value={pdfHospitalNameColor} onChange={e => setPdfHospitalNameColor(e.target.value)} className="flex-1 h-8 text-[10px] font-mono px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg" />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[8px] text-slate-400">Accent Color</Label>
+                                        <div className="flex gap-2">
+                                            <input type="color" value={pdfHospitalPrimaryColor} onChange={e => setPdfHospitalPrimaryColor(e.target.value)} className="w-8 h-8 rounded-lg overflow-hidden border-0 p-0" />
+                                            <input type="text" value={pdfHospitalPrimaryColor} onChange={e => setPdfHospitalPrimaryColor(e.target.value)} className="flex-1 h-8 text-[10px] font-mono px-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                                <div className="flex justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase">Letter Spacing</span>
+                                    <span className="text-[10px] font-black text-indigo-600">{pdfHospitalNameLetterSpacing}px</span>
+                                </div>
+                                <input type="range" min="-2" max="10" step="0.5" value={pdfHospitalNameLetterSpacing} onChange={(e) => setPdfHospitalNameLetterSpacing(parseFloat(e.target.value))} className="w-full accent-indigo-600" />
+                                <p className="text-[8px] text-slate-400 mt-1 italic text-center">Wider spacing creates a more premium, modern feel</p>
                             </div>
                         </div>
                     </div>
@@ -606,6 +720,63 @@ export function GlobalSettingsForm({ company, tenant, currencies, isTenantAdmin,
                                 ) : (
                                     <div className="h-10 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
                                 )}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Global Bill/Invoice Prefix</Label>
+                                <Input 
+                                    value={invoicePrefix} 
+                                    onChange={e => setInvoicePrefix(e.target.value)} 
+                                    className="font-black rounded-xl uppercase" 
+                                    placeholder="INV"
+                                />
+                                <p className="text-[9px] text-slate-400 italic">Example: INV-001</p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Invoice Start Number</Label>
+                                <Input 
+                                    type="number"
+                                    value={invoiceStartNumber} 
+                                    onChange={e => setInvoiceStartNumber(e.target.value)} 
+                                    className="font-black rounded-xl" 
+                                    placeholder="1"
+                                />
+                                <p className="text-[9px] text-slate-400 italic">Sequential Start Index</p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Patient ID Mode</Label>
+                                {isMounted ? (
+                                    <Select value={patientIdMode} onValueChange={setPatientIdMode}>
+                                        <SelectTrigger className="font-bold rounded-xl"><SelectValue placeholder="Mode" /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="timestamp">Timestamp (Random)</SelectItem>
+                                            <SelectItem value="sequential">Sequential Logic</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                ) : (
+                                    <div className="h-10 w-full rounded-xl border-2 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 animate-pulse" />
+                                )}
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Patient ID Prefix</Label>
+                                <div className="flex gap-2">
+                                    <Input 
+                                        value={patientIdPrefix} 
+                                        onChange={e => setPatientIdPrefix(e.target.value)} 
+                                        className="font-black rounded-xl w-24 uppercase text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 focus:border-indigo-500" 
+                                        placeholder="PAT"
+                                    />
+                                    <Input 
+                                        type="number"
+                                        value={patientIdStartNumber} 
+                                        onChange={e => setPatientIdStartNumber(e.target.value)} 
+                                        className="font-black rounded-xl flex-1 text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 focus:border-indigo-500" 
+                                        placeholder="1000"
+                                        disabled={patientIdMode !== 'sequential'}
+                                    />
+                                </div>
+                                <p className="text-[9px] text-slate-400 italic">Ex: PAT-1000 (Mode: {patientIdMode})</p>
                             </div>
                         </div>
                         <div className="space-y-2">

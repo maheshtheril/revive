@@ -9,8 +9,19 @@ import { SeedRolesButton } from "@/components/settings/seed-roles-button";
 import { CreateRoleDialog } from "@/components/settings/create-role-dialog";
 import { RoleActions } from "@/components/settings/role-actions";
 import { RolesList } from "@/components/settings/roles-list";
+import { auth } from "@/auth"
+import { redirect } from "next/navigation"
+import { checkPermission } from "@/app/actions/rbac"
 
 export default async function RolesPage() {
+    const session = await auth();
+    if (!session?.user) redirect('/auth/login');
+    
+    const hasAccess = await checkPermission('roles:view');
+    if (!hasAccess && !session.user.isAdmin && !(session.user as any).isTenantAdmin) {
+        redirect('/hms/reception/dashboard');
+    }
+
     // SELF-HEALING: Run audit on page load to ensure data integrity
     await auditAndFixMenuPermissions();
 

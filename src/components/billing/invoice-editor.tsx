@@ -75,7 +75,7 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
 
     const displayedBillableOptions = useMemo(() => billableOptions.slice(0, 50).map(item => ({
         id: item.id,
-        label: `${item.label} - ₹${item.price}`,
+        label: `${item.label} - \u20B9${item.price}`,
         subLabel: `${item.sku ? `[${item.sku}] ` : ''}${item.description || ''}`.trim()
     })), [billableOptions]);
 
@@ -599,7 +599,7 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
                                                         .slice(0, 50)
                                                         .map(item => ({
                                                             id: item.id,
-                                                            label: `${item.label} - ₹${item.price}`,
+                                                            label: `${item.label} - \u20B9${item.price}`,
                                                             subLabel: `${item.sku ? `[${item.sku}] ` : ''}${item.description || ''}`.trim()
                                                         }));
                                                 }}
@@ -656,7 +656,7 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
                                         {/* Price */}
                                         <td className="px-6 py-4">
                                             <div className="flex items-center justify-end gap-1">
-                                                <span className="text-gray-500 dark:text-slate-500 text-sm">₹</span>
+                                                <span className="text-gray-500 dark:text-slate-500 text-sm">\u20B9</span>
                                                 <input
                                                     type="number"
                                                     min="0"
@@ -671,7 +671,7 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
                                         {/* Discount */}
                                         <td className="px-6 py-4">
                                             <div className="flex items-center justify-end gap-1">
-                                                <span className="text-red-500 text-sm">-₹</span>
+                                                <span className="text-red-500 text-sm">-\u20B9</span>
                                                 <input
                                                     type="number"
                                                     min="0"
@@ -699,17 +699,9 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
                                                 ))}
                                             </select>
                                             <div className="text-right text-xs text-gray-500 dark:text-slate-500 mt-1 font-mono">
-                                                ₹{(line.tax_amount || 0).toFixed(2)}
+                                                \u20B9{((line.quantity * line.unit_price) - (line.discount_amount || 0) + (line.tax_amount || 0)).toFixed(2)}
                                             </div>
-                                        </td>
 
-                                        {/* Line Total */}
-                                        <td className="px-6 py-4">
-                                            <div className="text-right">
-                                                <span className="font-bold text-gray-900 dark:text-white text-lg font-mono">
-                                                    ₹{((line.quantity * line.unit_price) - (line.discount_amount || 0) + (line.tax_amount || 0)).toFixed(2)}
-                                                </span>
-                                            </div>
                                         </td>
 
                                         {/* Delete Button */}
@@ -776,18 +768,18 @@ export function InvoiceEditor({ patients, billableItems, taxConfig, initialPatie
                         <div className="space-y-4">
                             <div className="flex justify-between items-center pb-3 border-b border-gray-700">
                                 <span className="text-gray-300">Subtotal</span>
-                                <span className="font-mono text-xl font-bold">₹{subtotal.toFixed(2)}</span>
+                                <span className="font-mono text-xl font-bold">\u20B9{subtotal.toFixed(2)}</span>
                             </div>
 
                             <div className="flex justify-between items-center pb-3 border-b border-gray-700">
                                 <span className="text-gray-300">Tax</span>
-                                <span className="font-mono text-xl font-bold text-blue-400">₹{totalTax.toFixed(2)}</span>
+                                <span className="font-mono text-xl font-bold text-blue-400">\u20B9{totalTax.toFixed(2)}</span>
                             </div>
 
                             <div className="flex justify-between items-center pb-3 border-b border-gray-700">
                                 <span className="text-gray-300">Discount</span>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-red-400">-₹</span>
+                                    <span className="text-red-400">-\u20B9</span>
                                     <input
                                         type="number"
                                         className="w-28 text-right bg-white/10 border-2 border-white/20 rounded-lg px-3 py-2 text-white font-mono font-bold focus:ring-2 focus:ring-red-400 outline-none"

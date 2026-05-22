@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar, Package, ArrowRight, Table as TableIcon } from "lucide-react";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 interface Batch {
   id: string;
@@ -33,6 +34,59 @@ export function BatchSelectorDialog({
   onSelect,
   currency = '₹'
 }: BatchSelectorDialogProps) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Reset index when dialog opens or batches change
+  useEffect(() => {
+    if (isOpen) {
+      setActiveIndex(0);
+    }
+  }, [isOpen, batches]);
+
+  // High-Speed Keyboard Orchestration
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setActiveIndex(prev => (prev < batches.length - 1 ? prev + 1 : 0)); // Wrap to top
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setActiveIndex(prev => (prev > 0 ? prev - 1 : batches.length - 1)); // Wrap to bottom
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (batches[activeIndex]) {
+            onSelect(batches[activeIndex]);
+            onClose();
+          }
+          break;
+        case 'Escape':
+          onClose();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, activeIndex, batches, onSelect, onClose]);
+
+  // Auto-scroll active item into view
+  useEffect(() => {
+    if (isOpen && scrollRef.current) {
+        const list = scrollRef.current.querySelector('.space-y-3');
+        if (list) {
+            const activeItem = list.children[activeIndex] as HTMLElement;
+            if (activeItem) {
+                activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+    }
+  }, [activeIndex, isOpen]);
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-xl p-0 overflow-hidden bg-white dark:bg-[#0a0f1e] border-none shadow-[0_40px_100px_rgba(0,0,0,0.3)] rounded-[2.5rem] ring-1 ring-slate-200 dark:ring-white/10">
@@ -63,11 +117,12 @@ export function BatchSelectorDialog({
             </Badge>
           </div>
 
-          <ScrollArea className="h-[300px] pr-4">
+          <ScrollArea className="h-[300px] pr-4" ref={scrollRef}>
             <div className="space-y-3">
-              {batches.map((batch) => {
+              {batches.map((batch, index) => {
                 const isExpired = batch.expiry_date && new Date(batch.expiry_date) < new Date();
                 const stockQty = Number(batch.qty_on_hand);
+                const isActive = index === activeIndex;
                 
                 return (
                   <button
@@ -76,7 +131,13 @@ export function BatchSelectorDialog({
                         onSelect(batch);
                         onClose();
                     }}
-                    className="w-full group relative p-5 bg-white dark:bg-slate-900/50 border border-slate-100 dark:border-white/5 rounded-[1.5rem] text-left transition-all hover:border-indigo-600 hover:shadow-xl hover:shadow-indigo-500/10 active:scale-[0.98] overflow-hidden"
+                    onMouseEnter={() => setActiveIndex(index)}
+                    className={cn(
+                        "w-full group relative p-5 bg-white dark:bg-slate-900/50 border rounded-[1.5rem] text-left transition-all overflow-hidden",
+                        isActive 
+                            ? "border-indigo-600 shadow-xl shadow-indigo-500/10 ring-2 ring-indigo-600/20 translate-x-1" 
+                            : "border-slate-100 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/10"
+                    )}
                   >
                     <div className="absolute top-0 right-0 p-3 flex flex-col items-end gap-1">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Available</span>

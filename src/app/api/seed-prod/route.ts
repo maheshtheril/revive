@@ -146,7 +146,7 @@ export async function GET() {
 
         // 5. Seed Professional Standard Products (Fees, Meds, Diagnostics)
         const standardProducts = [
-            { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 100, is_service: true, stockable: false },
+            { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 150, is_service: true, stockable: false },
             { sku: 'CONS-GEN', name: 'General Consultation', uom: 'VISIT', price: 250, is_service: true, stockable: false },
             { sku: 'CONS-SPEC', name: 'Specialist Consultation', uom: 'VISIT', price: 500, is_service: true, stockable: false },
             { sku: 'PARA-500', name: 'Paracetamol 500mg', uom: 'TAB', price: 5, is_service: false, stockable: true },

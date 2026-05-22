@@ -21,7 +21,7 @@ export default function NewReceiptPage() {
     const router = useRouter();
     const { toast } = useToast();
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [classicMode, setClassicMode] = useState(true);
+    const [classicMode, setClassicMode] = useState(false);
 
     // Form State
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);

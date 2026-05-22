@@ -67,19 +67,21 @@ export async function getCompanyDefaultCurrency(companyId?: string): Promise<Cur
                 enabled: true,
                 ...(companyId ? { id: companyId } : {}),
             },
-            include: {
-                countries: {
-                    select: {
-                        iso2: true,
-                    }
-                }
-            },
             orderBy: {
                 created_at: 'asc'
             }
         })
 
-        const countryCode = company?.countries?.iso2?.toUpperCase()
+        let countryCode = undefined;
+        if (company?.country_id) {
+            const country = await prisma.countries.findUnique({
+                where: { id: company.country_id },
+                select: { iso2: true }
+            });
+            if (country?.iso2) {
+                countryCode = country.iso2.toUpperCase();
+            }
+        }
         const currencyCode = (countryCode && CURRENCY_CODES[countryCode]) || 'USD'
 
         // Get currency details

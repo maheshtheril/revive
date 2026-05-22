@@ -1,16 +1,10 @@
-<svg width="512" height="512" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="40" height="40" rx="10" fill="url(#paint0_linear)"/>
+  <path d="M12 12H28L12 28H28" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
   <defs>
-    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#10b981" stop-opacity="0.8" />
-      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.4" />
-    </linearGradient>
-    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.9" />
-      <stop offset="100%" stop-color="#059669" stop-opacity="0.5" />
+    <linearGradient id="paint0_linear" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#10B981"/>
     </linearGradient>
   </defs>
-  <path d="M20 25H80L70 35H30L20 25Z" fill="url(#g1)" />
-  <path d="M80 25L35 75L25 65L70 15L80 25Z" fill="url(#g2)" />
-  <path d="M75 35L30 85L20 75L65 25L75 35Z" fill="#0ea5e9" opacity="0.6" />
-  <path d="M20 75H80L70 85H30L20 75Z" fill="url(#g1)" />
 </svg>

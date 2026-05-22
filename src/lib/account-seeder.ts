@@ -3,12 +3,16 @@ import { prisma } from "@/lib/prisma"
 export async function ensureDefaultAccounts(companyId: string, tenantId: string) {
     // 1. Determine Tax Terminology based on Country
     const company = await prisma.company.findUnique({
-        where: { id: companyId },
-        include: { countries: true }
+        where: { id: companyId }
     });
 
+    let country = null;
+    if (company?.country_id) {
+        country = await prisma.countries.findUnique({ where: { id: company.country_id } });
+    }
+
     let taxLabel = "Tax";
-    const countryName = company?.countries?.name?.toLowerCase() || '';
+    const countryName = country?.name?.toLowerCase() || '';
 
     if (countryName.includes('india') || countryName.includes('canada') || countryName.includes('australia')) {
         taxLabel = "GST";

@@ -360,6 +360,8 @@ export async function createPurchaseReceipt(data: PurchaseReceiptData) {
                         default_cost: avgCostPerBaseUnit,
                         taxId: resolvedTaxId,
                         taxRate: item.taxRate,
+                        marginPct: item.marginPct,
+                        markupPct: item.markupPct,
                         uomData: {
                             base_uom: 'PCS',
                             base_price: salePricePerPCS,
@@ -465,6 +467,8 @@ export async function createPurchaseReceipt(data: PurchaseReceiptData) {
                             last_purchase_date: new Date().toISOString(),
                             last_mrp: update.mrp,
                             last_sale_price: update.price,
+                            last_margin_pct: update.marginPct,
+                            last_markup_pct: update.markupPct,
                             pricing_strategy: update.pricingStrategy,
                             uom_data: update.uomData
                         }
@@ -785,11 +789,14 @@ export async function updatePurchaseReceipt(id: string, data: PurchaseReceiptDat
  */
 export async function deletePurchaseReceipt(receiptId: string) {
     const session = await auth();
-    if (!session?.user?.role || session.user.role !== 'admin') {
-        throw new Error("UNAUTHORIZED: Only administrators can delete purchase records.");
+    const u = session?.user as any;
+    const isAuthorizedAdmin = u && (u.role === 'admin' || u.role === 'tenant_admin' || u.isAdmin || u.isTenantAdmin);
+
+    if (!isAuthorizedAdmin) {
+        throw new Error("UNAUTHORIZED: Only administrators or tenant admins can delete purchase records.");
     }
 
-    const companyId = session.user.companyId;
+    const companyId = session?.user?.companyId;
     if (!isUUID(receiptId)) throw new Error("Invalid Receipt ID");
 
     return await prisma.$transaction(async (tx) => {
@@ -806,6 +813,18 @@ export async function deletePurchaseReceipt(receiptId: string) {
             if (qtyToReverse === 0) continue;
 
             if (line.batch_id) {
+                // --- STOCK CONSUMPTION GUARD: BLOCK DELETION IF ITEMS FROM THIS BATCH HAVE BEEN SOLD OR DISPENSED ---
+                const outwardMoves = await tx.hms_stock_ledger.count({
+                    where: {
+                        batch_id: line.batch_id,
+                        movement_type: 'out'
+                    }
+                });
+
+                if (outwardMoves > 0) {
+                    throw new Error(`INVENTORY AUDIT BLOCK: Cannot delete purchase receipt. Stock from batch ${line.batch_no || line.batch_id} has already been sold or dispensed. You must reverse/void the related sales first.`);
+                }
+
                 await tx.hms_product_batch.update({
                     where: { id: line.batch_id },
                     data: { qty_on_hand: { decrement: qtyToReverse } }
@@ -845,6 +864,12 @@ export async function deletePurchaseReceipt(receiptId: string) {
             }
         }
 
+        await tx.hms_stock_ledger.deleteMany({
+            where: { related_type: 'hms_purchase_receipt', related_id: receiptId }
+        });
+        await tx.hms_stock_move.deleteMany({
+            where: { source: 'Purchase Receipt', source_reference: receiptId }
+        });
         await tx.hms_purchase_receipt_line.deleteMany({ where: { receipt_id: receiptId } });
         await tx.hms_purchase_receipt.delete({ where: { id: receiptId } });
 

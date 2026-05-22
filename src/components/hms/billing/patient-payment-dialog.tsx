@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Loader2, DollarSign } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { DEFAULT_REGISTRATION_FEE, REG_FEE_DESCRIPTION, REG_FEE_SKU } from "@/lib/hms-constants";
 
 
 
@@ -58,14 +59,15 @@ export function PatientPaymentDialog({
     useEffect(() => {
         if (isOpen) {
             setIsLoading(true);
-            import('@/app/actions/billing').then(mod => {
+            Promise.all([
+                import('@/app/actions/billing'),
+                import('@/app/actions/clinical')
+            ]).then(([billMod, clinMod]) => {
                 Promise.all([
-                    mod.getBillableItems(),
-                    mod.getTaxConfiguration(),
-                    mod.getUoms(),
-                    // [WORLD CLASS] Check for existing UNPAID registration invoice specifically
-                    // If appointmentId is present, we prioritize that context
-                    mod.getInitialInvoiceData(appointmentId || '').then((res: any) => (res.success && res.data) ? res : mod.getOpenRegistrationInvoice(patientId))
+                    billMod.getBillableItems(),
+                    billMod.getTaxConfiguration(),
+                    billMod.getUoms(),
+                    clinMod.getInitialInvoiceData(appointmentId || '').then((res: any) => (res.success && res.data) ? res : clinMod.getOpenRegistrationInvoice(patientId))
                 ]).then(([itemsRes, taxRes, uomsRes, invRes]) => {
                     if (itemsRes.success) setBillableItems(itemsRes.data || []);
                     if (taxRes.success) setTaxConfig(taxRes.data || { defaultTax: null, taxRates: [] });
@@ -92,13 +94,20 @@ export function PatientPaymentDialog({
     }, [isOpen, patientId, patientName, appointmentId]);
 
     // Construct initial medicines/items based on fixedAmount (Registration Context)
-    const initialMedicines = fixedAmount ? [{
-        id: 'REG-FEE', // Pseudo-ID, will be matched by name
-        name: 'Patient Registration Fee',
-        price: fixedAmount,
+    // [RCM-FIX] Prevent Duplicate Registration Items if initialInvoice already contains one
+    const hasRegInDraft = initialInvoice?.hms_invoice_lines?.some((l: any) => 
+        l.product_id === REG_FEE_SKU || 
+        l.description?.toLowerCase().includes('registration') || 
+        l.description?.toLowerCase().includes('identity')
+    );
+
+    const initialMedicines = (fixedAmount && !hasRegInDraft) ? [{
+        id: REG_FEE_SKU, // [STANDARDIZED] Match constant SKU for deduplication
+        name: REG_FEE_DESCRIPTION,
+        price: fixedAmount || DEFAULT_REGISTRATION_FEE,
         quantity: 1,
         type: 'service',
-        description: 'Patient Registration Fee'
+        description: REG_FEE_DESCRIPTION
     }] : [];
 
     return (

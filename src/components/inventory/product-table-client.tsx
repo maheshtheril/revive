@@ -2,9 +2,11 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Package, TrendingUp, TrendingDown, Layers, Check, X, ShieldCheck, ChevronRight, Settings2, Trash2, MousePointerClick } from "lucide-react"
+import { Package, TrendingUp, TrendingDown, Layers, Check, X, ShieldCheck, ChevronRight, Pencil, Trash2, MousePointerClick, Settings2, Trash } from "lucide-react"
 import { EditProductModal } from "./edit-product-modal"
 import { BulkEditModal } from "./bulk-edit-modal"
+import { deleteProduct } from "@/app/actions/inventory"
+import { toast } from "sonner"
 import { motion, AnimatePresence } from "framer-motion"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
@@ -55,7 +57,22 @@ export function ProductTableClient({
         );
     };
 
-    const currencySymbol = meta?.currencySymbol || session?.user?.currencySymbol || '₹';
+    const user = session?.user as any;
+    const isAdmin = user?.isAdmin || user?.isTenantAdmin || user?.isPlatformAdmin || user?.role?.toLowerCase() === 'admin';
+
+    const handleDelete = async (product: any) => {
+        if (!confirm(`Are you sure you want to PERMANENTLY delete "${product.name}"? This action cannot be undone and will only succeed if there are zero transactions.`)) return;
+
+        const res = await deleteProduct(product.id);
+        if (res.success) {
+            toast.success("Product Deleted Successfully");
+        } else {
+            toast.error("Deletion Blocked", { description: res.error });
+        }
+    };
+
+    const rawCurrency = meta?.currencySymbol || session?.user?.currencySymbol || '₹';
+    const currencySymbol = (rawCurrency && (rawCurrency.includes('Γé╣') || rawCurrency.length > 3)) ? '₹' : (rawCurrency || '₹');
 
     return (
         <>
@@ -117,14 +134,14 @@ export function ProductTableClient({
                                         <td className="p-4">
                                             <div className="flex gap-3 items-center">
                                                 <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 font-black text-[10px] border border-transparent group-hover:border-indigo-200 transition-all">
-                                                    {product.name.substring(0, 2).toUpperCase()}
+                                                    {(product.name || '??').substring(0, 2).toUpperCase()}
                                                 </div>
                                                 <div>
                                                     <button
                                                         onClick={() => setEditingProduct(product)}
                                                         className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors text-left text-sm tracking-tight"
                                                     >
-                                                        {product.name}
+                                                        {product.name || 'Unnamed Product'}
                                                     </button>
                                                     <div className="flex items-center gap-2 mt-0.5">
                                                         {product.is_service && <span className="text-[8px] bg-amber-50 text-amber-600 px-1 rounded font-black uppercase tracking-widest border border-amber-100">Service</span>}
@@ -164,14 +181,23 @@ export function ProductTableClient({
                                             <span className="font-black text-slate-900 font-mono">{currencySymbol}{Number(product.price).toFixed(2)}</span>
                                         </td>
                                         <td className="p-4 text-right">
-                                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex justify-end gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
                                                 <button
                                                     onClick={() => setEditingProduct(product)}
                                                     className="h-8 px-4 bg-white border-2 border-slate-100 rounded-xl text-[10px] font-black text-slate-600 uppercase tracking-widest hover:border-indigo-600 hover:text-indigo-600 shadow-sm transition-all flex items-center gap-2"
                                                 >
-                                                    <Settings2 className="h-3 w-3" />
-                                                    Engine
+                                                    <Pencil className="h-3 w-3" />
+                                                    Edit
                                                 </button>
+                                                {isAdmin && (
+                                                    <button
+                                                        onClick={() => handleDelete(product)}
+                                                        className="h-8 px-3 bg-white border-2 border-slate-100 rounded-xl text-slate-400 hover:border-rose-600 hover:text-rose-600 shadow-sm transition-all flex items-center justify-center"
+                                                        title="Delete Product (Admin Only)"
+                                                    >
+                                                        <Trash className="h-3 w-3" />
+                                                    </button>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>

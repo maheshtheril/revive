@@ -96,9 +96,9 @@ export function AdmissionDialog({ patientId, patientName, trigger }: AdmissionDi
                                     <UserPlus className="h-6 w-6 text-indigo-600" />
                                 </div>
                                 <div>
-                                    <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight uppercase italic underline decoration-indigo-500/30">
+                                    <DialogTitle className="text-2xl font-black text-slate-900 dark:text-white tracking-tight uppercase italic underline decoration-indigo-500/30">
                                         In-Patient <span className="text-indigo-600">Admission</span>
-                                    </h2>
+                                    </DialogTitle>
                                     <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Global Protocol V4.0</p>
                                 </div>
                             </div>

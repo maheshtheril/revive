@@ -68,8 +68,8 @@ export async function createDoctor(formData: FormData) {
                 qualification: qualification || null,
                 license_no: licenseNo || null,
                 experience_years: experienceYears,
-                role_id: roleId,
-                specialization_id: specializationId || null,
+                hms_roles: roleId ? { connect: { id: roleId } } : undefined,
+                hms_specializations: specializationId ? { connect: { id: specializationId } } : undefined,
                 department_id: departmentId || null,
                 consultation_start_time: consultationStartTime,
                 consultation_end_time: consultationEndTime,
@@ -82,6 +82,7 @@ export async function createDoctor(formData: FormData) {
                 profile_image_url: profileImageUrl || null,
                 signature_url: signatureUrl || null,
                 document_urls: Array.isArray(documentUrls) ? documentUrls : [],
+                notes: formData.get("notes") as string || null,
                 is_active: true,
             }
         })
@@ -137,8 +138,8 @@ export async function updateDoctor(formData: FormData) {
                 designation: designation || null,
                 qualification: formData.get("qualification") as string || null,
                 license_no: licenseNo,
-                role_id: roleId,
-                specialization_id: specializationId || null,
+                hms_roles: roleId ? { connect: { id: roleId } } : undefined,
+                hms_specializations: specializationId ? { connect: { id: specializationId } } : undefined,
                 department_id: departmentId || null,
                 experience_years: experienceYears,
                 consultation_start_time: consultationStartTime,
@@ -150,6 +151,7 @@ export async function updateDoctor(formData: FormData) {
                 profile_image_url: profileImageUrl || null,
                 signature_url: signatureUrl || null,
                 document_urls: Array.isArray(documentUrls) ? documentUrls : [],
+                notes: formData.get("notes") as string || null,
                 updated_at: new Date()
             }
         })
@@ -167,16 +169,8 @@ export async function initializeDoctorProfile(_formData: FormData) {
         return { error: "Unauthorized" }
     }
 
-    // 🚨 EMERGENCY DATABASE REPAIR (On-the-fly)
-    try {
-        await prisma.$executeRawUnsafe(`
-            ALTER TABLE hms_clinicians ALTER COLUMN working_days DROP DEFAULT;
-            ALTER TABLE hms_clinicians ALTER COLUMN working_days SET DEFAULT ARRAY['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']::text[];
-            ALTER TABLE hms_clinicians ALTER COLUMN working_days DROP NOT NULL;
-        `);
-    } catch (e) {
-        console.log('Database repair shim skipped or already patched');
-    }
+    // [SECURE] Removed direct SQL Schema Patching to ensure tenant stability.
+    // Use proper Prisma Migrations for schema changes.
 
     const { email, name, tenantId, companyId, id: userId } = session.user
 

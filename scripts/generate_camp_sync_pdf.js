@@ -121,6 +121,8 @@ async function run() {
     addSubBullet('Intranet Insertion: The patient record is inserted directly into the local PostgreSQL DB with the status marked as "active".');
     addBullet('Local Sync Push (Mirroring): Immediately after pulling, the server runs smart_sync.js. This takes a backup of the updated local database state and pushes it to the Neon Hosted Cloud DB, overwriting it. Because the pulled records now have "active" status and generated IDs, they overwrite the "pending_sync" states on the cloud. The system is now 100% in sync.');
     
+    addParagraph('Scope of Sync: The synchronization is NOT restricted only to camp registrations. The smart_sync.js script takes a full dump of the offline hospital database (using pg_dump) and restores it on the Cloud DB. This means all local operational data—such as clinical records, doctor rosters, appointments, inventory items, billing invoices, and user credentials—are mirrored and synchronized up to the hosted cloud database, keeping the cloud environment a 100% complete replica.');
+    
     addWarningBlock('Do not delete the .env file or modify files in scripts/ on the local server, as these run the backend sync procedures. Any breaking changes will cause data differences between the online camp registrations and the local hospital records.');
     
     addHeading('2. Local Server Environment Setup');

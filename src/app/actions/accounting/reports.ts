@@ -72,3 +72,10 @@ export async function getAgeingReport(type: 'receivables' | 'payables') {
 
     return await AccountingService.getAgeingReport(session.user.companyId, type)
 }
+
+export async function getAccountLedger(accountId: string, startDate?: Date, endDate?: Date) {
+    const session = await auth()
+    if (!session?.user?.companyId) return { success: false, error: "Unauthorized" }
+
+    return await AccountingService.getLedger(session.user.companyId, accountId, startDate, endDate)
+}

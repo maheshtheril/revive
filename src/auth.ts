@@ -20,6 +20,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
 
                     console.log("[AUTH] Authorizing user:", email);
+                    
+                    if (!prisma) {
+                        console.error("[AUTH] CRITICAL: Prisma client is NULL");
+                        return null;
+                    }
 
                     // 2. Database Lookup
                     const user = await prisma.app_user.findFirst({
@@ -38,6 +43,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
                     // 3. Password Verification
                     console.log("[AUTH] Comparing passwords...");
+                    if (!user.password) {
+                        console.error("[AUTH] REJECTED: User has NO password hash in DB.");
+                        return null;
+                    }
                     let passwordsMatch = await bcrypt.compare(credentials.password as string, user.password);
 
 
@@ -69,6 +78,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                             ? prisma.tenant_module.findMany({ where: { tenant_id: user.tenant_id, enabled: true }, select: { module_key: true } })
                             : Promise.resolve([])
                     ]);
+
+                    console.log("[AUTH] Enrichment complete. Mapping fields...");
 
                     const moduleKeys = (tenantModules as any[]).map((m: any) => m.module_key);
                     const branchName = branchResult?.name || 'Main Branch';
@@ -107,7 +118,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                         image: safeImage,
                         dbUrl: (tenantInfo as any)?.db_url,
                         currencyCode: (company as any)?.company_settings?.currencies?.code || 'INR',
-                        currencySymbol: (company as any)?.company_settings?.currencies?.symbol || '₹',
+                        currencySymbol: (company as any)?.company_settings?.currencies?.symbol || 'Rs.',
                         dateFormat: (tenantInfo?.metadata as any)?.date_format || 'dd/MM/yyyy',
                         precision: (company as any)?.company_settings?.rounding_precision ?? 2,
                         industry: (company as any)?.industry || 'General',
@@ -127,7 +138,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                             companyId: user.company_id,
                             modules: [],
                             currencyCode: 'INR',
-                            currencySymbol: '₹'
+                            currencySymbol: 'Rs.'
                         } as any;
                     }
                 } catch (error) {

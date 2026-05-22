@@ -12,22 +12,7 @@ import { revalidatePath } from 'next/cache'
 import { sendInvitationEmail } from '@/lib/email'
 import crypto from 'crypto'
 import { headers } from 'next/headers'
-import os from 'os'
 
-function getLocalIp() {
-    const interfaces = os.networkInterfaces();
-    for (const devName in interfaces) {
-        const iface = interfaces[devName];
-        if (!iface) continue;
-        for (let i = 0; i < iface.length; i++) {
-            const alias = iface[i];
-            if (alias.family === 'IPv4' && alias.address !== '127.0.0.1' && !alias.internal) {
-                return alias.address;
-            }
-        }
-    }
-    return '127.0.0.1';
-}
 
 
 export interface InviteUserData {
@@ -195,6 +180,7 @@ export async function inviteUser(data: InviteUserData) {
                 // subdivision_id: data.subdivisionId,
                 is_tenant_admin: data.systemRole === 'admin',
                 is_admin: data.systemRole === 'admin',
+                is_active: false, // CRITICAL FIX: Ensure user is created in pending state so resend invite button shows up
                 // Persist extended fields in metadata to avoid schema dependency
                 metadata: {
                     source: 'staff-onboarding',
@@ -243,17 +229,22 @@ export async function inviteUser(data: InviteUserData) {
 
             // Determine APP URL dynamically for Production Ready setup
             // This is critical for LAN/Hospital deployments where process.env.NEXT_PUBLIC_APP_URL might be wrong or local
-            let host = (await headers()).get('host')
-            if (host?.includes('localhost') || host?.includes('127.0.0.1')) {
-                const localIp = getLocalIp();
-                if (localIp !== '127.0.0.1') {
-                    host = host.replace('localhost', localIp).replace('127.0.0.1', localIp);
+            let host = (await headers()).get('host');
+            let origin = (await headers()).get('origin');
+            
+            // Prefer explicitly defined APP URL in production, or fallback to the current request's origin/host
+            let appUrl = process.env.NEXT_PUBLIC_APP_URL;
+            if (!appUrl) {
+                if (origin) {
+                    appUrl = origin;
+                } else if (host) {
+                    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+                    appUrl = `${protocol}://${host}`;
+                } else {
+                    appUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com';
                 }
             }
             
-            const isLocal = host?.includes('localhost') || host?.includes('127.0.0.1') || /^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))/.test(host || '');
-            const protocol = isLocal ? 'http' : 'https'
-            const appUrl = host ? `${protocol}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com'));
             inviteLink = `${appUrl}/auth/accept-invite?token=${token}`;
 
         } catch (e) {
@@ -384,17 +375,21 @@ export async function resendInvitation(userId: string) {
             emailError = typeof emailResult.error === 'string' ? emailResult.error : 'Mail delivery failed (Check API Key/Sandbox)';
         }
 
-        let host = (await headers()).get('host')
-        if (host?.includes('localhost') || host?.includes('127.0.0.1')) {
-            const localIp = getLocalIp();
-            if (localIp !== '127.0.0.1') {
-                host = host.replace('localhost', localIp).replace('127.0.0.1', localIp);
+        let host = (await headers()).get('host');
+        let origin = (await headers()).get('origin');
+        
+        let appUrl = process.env.NEXT_PUBLIC_APP_URL;
+        if (!appUrl) {
+            if (origin) {
+                appUrl = origin;
+            } else if (host) {
+                const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+                appUrl = `${protocol}://${host}`;
+            } else {
+                appUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com';
             }
         }
         
-        const isLocal = host?.includes('localhost') || host?.includes('127.0.0.1') || /^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))/.test(host || '');
-        const protocol = isLocal ? 'http' : 'https'
-        const appUrl = host ? `${protocol}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://cloud-hms.onrender.com'));
         inviteLink = `${appUrl}/auth/accept-invite?token=${token}`;
 
     } catch (e) {

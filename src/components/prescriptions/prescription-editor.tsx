@@ -47,6 +47,12 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
     const [modalUom, setModalUom] = useState('Unit')
     const [availableUOMs, setAvailableUOMs] = useState<any[]>([])
 
+    // Batch State
+    const [modalBatchId, setModalBatchId] = useState<string | null>(null)
+    const [modalBatchNo, setModalBatchNo] = useState<string | null>(null)
+    const [availableBatches, setAvailableBatches] = useState<any[]>([])
+    const [isBatchLoading, setIsBatchLoading] = useState(false)
+
     // SCRIBBLE / HANDWRITING MODAL STATE
     const [scribbleModalOpen, setScribbleModalOpen] = useState(false)
     const [scribbleTarget, setScribbleTarget] = useState<keyof typeof convertedText | null>(null)
@@ -521,12 +527,33 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
             setModalUom('Unit')
         }
 
+        if (med.id) {
+            setIsBatchLoading(true)
+            const { getProductBatches } = await import("@/app/actions/inventory")
+            const batches = await getProductBatches(med.id)
+            const validBatches = (batches as any[]).filter(b => Number(b.qty_on_hand) > 0)
+            setAvailableBatches(validBatches)
+            
+            // Auto-select first batch if not editing
+            if (editIdx === null && validBatches.length > 0) {
+                setModalBatchId(validBatches[0].id)
+                setModalBatchNo(validBatches[0].batch_no)
+            }
+            setIsBatchLoading(false)
+        } else {
+            setAvailableBatches([])
+            setModalBatchId(null)
+            setModalBatchNo(null)
+        }
+
         if (editIdx !== null) {
             const existing = selectedMedicines[editIdx]
             setModalDosage(existing.dosage)
             setModalDays(existing.days)
             setModalTiming(existing.timing || 'After Food')
             if (existing.uom) setModalUom(existing.uom)
+            setModalBatchId(existing.batchId || null)
+            setModalBatchNo(existing.batchNo || null)
         } else {
             setModalDosage('1-0-1')
             setModalDays('5')
@@ -544,7 +571,9 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
             dosage: modalDosage,
             days: modalDays,
             timing: modalTiming,
-            uom: modalUom
+            uom: modalUom,
+            batchId: modalBatchId,
+            batchNo: modalBatchNo
         }
 
         if (editingIndex !== null) {
@@ -653,24 +682,31 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                             tenant_id: companyData?.company?.tenant_id
                         };
 
-                        const pdfBase64 = await generatePrescriptionPDFBase64(fullData, companyData?.company);
+                        // TRUE is critical here! It embeds the Adobe autoPrint Javascript securely within the PDF document
+                        const pdfBase64 = await generatePrescriptionPDFBase64(fullData, companyData?.company, true);
 
                         // Professional IFrame Printing (Cleaner than window.open)
                         const blob = await (await fetch(`data:application/pdf;base64,${pdfBase64}`)).blob();
                         const url = URL.createObjectURL(blob);
                         
                         const printFrame = document.createElement('iframe');
-                        printFrame.style.display = 'none';
+                        // IFRAME CANNOT BE DISPLAY NONE OR 0x0 FOR CHROME! The PDF engine won't load the autoPrint script!
+                        printFrame.style.position = 'fixed';
+                        printFrame.style.right = '0';
+                        printFrame.style.bottom = '0';
+                        printFrame.style.width = '100px';
+                        printFrame.style.height = '100px';
+                        printFrame.style.opacity = '0';
+                        printFrame.style.pointerEvents = 'none';
                         document.body.appendChild(printFrame);
+                        
                         printFrame.src = url;
-                        printFrame.onload = () => {
-                            printFrame.contentWindow?.print();
-                            // Cleanup after print dialog
-                            setTimeout(() => {
-                                document.body.removeChild(printFrame);
-                                URL.revokeObjectURL(url);
-                            }, 5000);
-                        };
+
+                        // NO contentWindow.print() CALL! The document itself executes autoPrint avoiding Turbopack SecurityError
+                        setTimeout(() => {
+                            if (document.body.contains(printFrame)) document.body.removeChild(printFrame);
+                            URL.revokeObjectURL(url);
+                        }, 15000);
                     } catch (pdfErr) {
                         console.error("PDF Generation failed, falling back to window.print", pdfErr);
                         window.print();
@@ -1439,6 +1475,84 @@ export function PrescriptionEditor({ isModal = false, onClose }: PrescriptionEdi
                                                 )}
                                             </div>
                                             <p className="text-[10px] text-slate-400 font-bold mt-4 uppercase tracking-tighter">Smallest dispensable unit is usually "Tablet" or "ML".</p>
+                                        </div>
+
+                                        {/* Batch Selection UI */}
+                                        <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800 shadow-2xl overflow-hidden relative group">
+                                            {/* Background Glow */}
+                                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all duration-500" />
+                                            
+                                            <div className="flex items-center justify-between mb-4 relative z-10">
+                                                <label className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                    <Package className="h-4 w-4 text-blue-400" /> Inventory Source (Batch)
+                                                </label>
+                                                {isBatchLoading && <Loader2 className="h-3 w-3 animate-spin text-blue-400" />}
+                                            </div>
+
+                                            {isBatchLoading ? (
+                                                <div className="space-y-2">
+                                                    <div className="h-14 bg-slate-800/50 rounded-xl animate-pulse" />
+                                                </div>
+                                            ) : availableBatches.length === 0 ? (
+                                                <div className="p-4 bg-red-950/20 rounded-xl border border-red-900/50 flex items-center gap-3">
+                                                    <div className="h-8 w-8 bg-red-900/30 rounded-lg flex items-center justify-center text-red-500">
+                                                        <AlertCircle className="h-4 w-4" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[10px] font-black text-red-400 uppercase">Out of Stock</div>
+                                                        <div className="text-[8px] font-bold text-red-600/70 uppercase tracking-tight">No active batches found in warehouse</div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="grid grid-cols-1 gap-2">
+                                                    {availableBatches.map((b) => (
+                                                        <button
+                                                            key={b.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setModalBatchId(b.id)
+                                                                setModalBatchNo(b.batch_no)
+                                                            }}
+                                                            className={`w-full p-4 rounded-xl border-2 transition-all flex items-center justify-between group/btn ${
+                                                                modalBatchId === b.id
+                                                                    ? 'bg-blue-600 border-blue-500 shadow-lg shadow-blue-900/20'
+                                                                    : 'bg-slate-800/50 border-slate-700 hover:border-slate-600'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-4">
+                                                                <div className={`h-10 w-10 rounded-lg flex flex-col items-center justify-center ${
+                                                                    modalBatchId === b.id ? 'bg-blue-500' : 'bg-slate-700'
+                                                                }`}>
+                                                                    <span className="text-[8px] font-black uppercase text-white/50">Qty</span>
+                                                                    <span className="text-sm font-black text-white">{Number(b.qty_on_hand)}</span>
+                                                                </div>
+                                                                <div className="text-left">
+                                                                    <div className={`text-sm font-black tracking-tight ${
+                                                                        modalBatchId === b.id ? 'text-white' : 'text-slate-200'
+                                                                    }`}>
+                                                                        {b.batch_no}
+                                                                    </div>
+                                                                    <div className={`text-[10px] font-bold uppercase ${
+                                                                        modalBatchId === b.id ? 'text-blue-100' : 'text-slate-500'
+                                                                    }`}>
+                                                                        Exp: {b.expiry_date ? new Date(b.expiry_date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }) : 'No Expiry'}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className={`text-xs font-black ${
+                                                                    modalBatchId === b.id ? 'text-white' : 'text-slate-300'
+                                                                }`}>
+                                                                    ₹{Number(b.sale_price || 0)}
+                                                                </div>
+                                                                {modalBatchId === b.id && (
+                                                                    <div className="h-1.5 w-1.5 rounded-full bg-white ml-auto mt-1 animate-pulse" />
+                                                                )}
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
 
                                     </div>

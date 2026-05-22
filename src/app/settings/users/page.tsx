@@ -4,6 +4,9 @@ import { UserTable } from "@/components/users/user-table"
 import { InviteUserDialog } from "@/components/users/invite-user-dialog"
 import { Toaster } from "@/components/ui/toaster"
 import { cn } from "@/lib/utils"
+import { auth } from "@/auth"
+import { redirect } from "next/navigation"
+import { checkPermission } from "@/app/actions/rbac"
 
 interface PageProps {
     searchParams: {
@@ -15,6 +18,14 @@ interface PageProps {
 }
 
 export default async function UsersPage({ searchParams }: PageProps) {
+    const session = await auth();
+    if (!session?.user) redirect('/auth/login');
+    
+    const hasAccess = await checkPermission('users:view');
+    if (!hasAccess && !session.user.isAdmin && !(session.user as any).isTenantAdmin) {
+        redirect('/hms/reception/dashboard');
+    }
+
     const params = await searchParams;
     const page = parseInt(params.page || '1')
     const result = await getUsers({

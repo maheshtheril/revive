@@ -17,11 +17,11 @@ export default async function LabDashboardPage({
     const dateStr = params.date as string
     const targetDate = dateStr ? new Date(dateStr) : new Date()
 
-    await ensureHmsMenus()
+    // [OPTIMIZATION] Removed blocking ensureHmsMenus()
     const session = await auth()
 
     if (!session?.user?.email) {
-        redirect("/auth/signin")
+        redirect("/login")
     }
 
     const tenantId = session.user.tenantId

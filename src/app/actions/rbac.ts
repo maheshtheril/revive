@@ -234,15 +234,15 @@ export async function seedRolesAndPermissions() {
                 ]
             },
             // 4. NURSE (Clinical - Care & Vitals)
-            // STRICT: No Patient Registry, No Appointment Scheduling. Focused on Nursing Station.
             {
                 key: 'nurse',
                 name: 'Nurse',
                 permissions: [
                     'hms:view',
                     'hms:dashboard:nurse',   // MAIN WORKSPACE
+                    'patients:view',         // View admitted patient profiles
                     'vitals:view', 'vitals:create', 'vitals:edit', // Vitals Management
-                    'prescriptions:view',    // View Rx to Administer (Read Only)
+                    'prescriptions:view',    // View Rx to Administer
                     'attendance:view'        // View/Mark Attendance
                 ]
             },
@@ -252,10 +252,10 @@ export async function seedRolesAndPermissions() {
                 name: 'Receptionist',
                 permissions: [
                     'hms:view',
-                    'hms:dashboard:reception', // MAIN WORKSPACE
-                    'patients:view', 'patients:create', 'patients:edit', // Registry Access
-                    'appointments:view', 'appointments:create', 'appointments:edit', // Scheduling
-                    'billing:view', 'billing:create' // Basic Cashiering
+                    'hms:dashboard:reception', // MAIN WORKSPACE ONLY
+                    'patients:view', 'patients:create', 'patients:edit',
+                    'appointments:view', 'appointments:create', 'appointments:edit',
+                    'billing:view', 'billing:create'
                 ]
             },
             // 6. PHARMACIST (Inventory & Dispensing)
@@ -264,8 +264,10 @@ export async function seedRolesAndPermissions() {
                 name: 'Pharmacist',
                 permissions: [
                     'hms:view',
-                    'pharmacy:view', 'pharmacy:create', 'pharmacy:edit', // Dispensing
-                    'inventory:view', 'inventory:adjustments:create',    // Stock Mgmt
+                    'pharmacy:view', 'pharmacy:create', 'pharmacy:edit', // Dispensing Counter
+                    'inventory:view', 'inventory:create', 'inventory:edit', 'inventory:adjustments:create', // Stock Mgmt
+                    'purchasing:view', 'purchasing:create', 'purchasing:returns:view', 'purchasing:returns:create', 'suppliers:view', // Procurement
+                    'billing:view', 'billing:create', // Billing Counter
                     'prescriptions:view' // View Rx to Dispense
                 ]
             },

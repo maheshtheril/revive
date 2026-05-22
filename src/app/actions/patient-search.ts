@@ -18,15 +18,35 @@ export async function searchPatients(query: string) {
 
         // Special handling for short queries: search names and IDs only
         const isShort = query.length < 2;
+        const isAdmin = session.user.isAdmin || (session.user as any).isTenantAdmin;
 
         const patients = await prisma.hms_patient.findMany({
             where: {
                 tenant_id: tenantId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 OR: [
                     { first_name: { contains: query, mode: 'insensitive' } },
                     { last_name: { contains: query, mode: 'insensitive' } },
                     { full_name: { contains: query, mode: 'insensitive' } },
-                    { patient_number: { contains: query, mode: 'insensitive' } }
+                    { patient_number: { contains: query, mode: 'insensitive' } },
+                    {
+                        contact: {
+                            path: ['phone'],
+                            string_contains: query
+                        }
+                    },
+                    {
+                        contact: {
+                            path: ['mobile'],
+                            string_contains: query
+                        }
+                    },
+                    {
+                        contact: {
+                            path: ['email'],
+                            string_contains: query
+                        }
+                    }
                 ]
             },
             take: 25,
@@ -60,6 +80,7 @@ export async function searchPatients(query: string) {
         const fallback = await prisma.hms_patient.findMany({
             where: {
                 tenant_id: session.user.tenantId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 OR: [
                     { first_name: { contains: query, mode: 'insensitive' } },
                     { last_name: { contains: query, mode: 'insensitive' } }

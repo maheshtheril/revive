@@ -4,7 +4,7 @@ import React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { SearchableSelect, Option } from '@/components/ui/searchable-select';
 import { Search, X } from 'lucide-react';
-import { getProductsPremium } from '@/app/actions/inventory';
+import { getProductsPremium } from '@/app/actions/inventory-search';
 
 interface ProductSearchClientProps {
     initialQuery?: string;
@@ -20,12 +20,11 @@ export function ProductSearchClient({ initialQuery }: ProductSearchClientProps) 
         setCurrentQuery(initialQuery || "");
     }, [initialQuery]);
 
-    // Debounced search for products
+    // Debounced search for products (Safe for empty queries)
     const handleSearch = async (query: string): Promise<Option[]> => {
-        if (!query || query.length < 2) return [];
-        
         try {
-            const result = await getProductsPremium(query);
+            const result = await getProductsPremium(query || "");
+
             if (result.success && result.data) {
                 return result.data.map(p => ({
                     id: p.id || p.name, // Use actual UUID if available
@@ -61,7 +60,7 @@ export function ProductSearchClient({ initialQuery }: ProductSearchClientProps) 
                     valueLabel={currentQuery}
                     placeholder="Search item, SKU or reference..."
                     onSearch={handleSearch}
-                    onChange={(val) => handleSelect(val)}
+                    onChange={(val, opt) => handleSelect(opt?.label || val)}
                     isDark={false}
                     className="w-full"
                     variant="default"

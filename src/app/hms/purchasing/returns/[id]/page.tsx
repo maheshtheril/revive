@@ -106,8 +106,8 @@ export default function PurchaseReturnDetailsPage() {
                                 Draft
                             </div>
                         )}
-                        <Button variant="outline" size="sm" onClick={() => window.print()}>
-                            <Printer className="h-4 w-4 mr-2" /> Print
+                        <Button variant="outline" size="sm" onClick={() => window.open(`/api/return-printer/${returnIdx.id}`, '_blank')}>
+                            <Printer className="h-4 w-4 mr-2" /> View PDF
                         </Button>
                         {isDraft && (
                             <AlertDialog>

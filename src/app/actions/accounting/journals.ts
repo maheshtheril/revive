@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { serialize } from "@/lib/utils"
 
 export async function getJournalEntries() {
     const session = await auth();
@@ -26,7 +27,7 @@ export async function getJournalEntries() {
             take: 100
         });
 
-        return { success: true, data: entries };
+        return { success: true, data: serialize(entries) };
     } catch (error: any) {
         console.error("Error fetching journal entries:", error);
         return { error: error.message };

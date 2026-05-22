@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { RotateCcw } from 'lucide-react';
 import { SalesReturnDialog } from '@/components/hms/billing/sales-return-dialog';
@@ -11,11 +11,21 @@ interface InvoiceReturnClientProps {
     patientId: string;
     patientName: string;
     items: any[];
+    autoOpen?: boolean;
 }
 
-export function InvoiceReturnClient({ invoiceId, patientId, patientName, items }: InvoiceReturnClientProps) {
+export function InvoiceReturnClient({ invoiceId, patientId, patientName, items, autoOpen }: InvoiceReturnClientProps) {
     const [isOpen, setIsOpen] = useState(false);
     const router = useRouter();
+
+    useEffect(() => {
+        if (autoOpen) {
+            setIsOpen(true);
+            // Clear the param from URL to prevent re-opening on refresh
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+        }
+    }, [autoOpen]);
 
     return (
         <>

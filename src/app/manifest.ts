@@ -38,11 +38,12 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
             ],
         }
     } catch (error) {
-        // Fallback if DB connection fails to ensure app is still installable
+        // Fallback
+        const appName = "Enterprise Management";
         return {
-            name: "Ziona ERP",
-            short_name: "Ziona",
-            description: 'Ziona Antigravity OS - The Unified Enterprise Management System',
+            name: appName,
+            short_name: appName,
+            description: `${appName} - Unified Management System`,
             start_url: '/',
             display: 'standalone',
             background_color: '#000000',

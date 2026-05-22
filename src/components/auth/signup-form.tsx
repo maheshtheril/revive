@@ -66,8 +66,6 @@ export function SignupForm({
         modules: [] as string[]
     })
 
-    // Form State
-
     const nextStep = () => {
         const form = document.getElementById('signup-form') as HTMLFormElement;
         if (form && !form.checkValidity()) {
@@ -212,6 +210,8 @@ export function SignupForm({
                                         <input value={formData.companyName} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} onChange={e => setFormData({ ...formData, companyName: e.target.value })} required className="w-full border border-gray-200 dark:border-slate-800 rounded-lg pl-10 pr-4 py-3 focus:ring-2 focus:ring-blue-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white" placeholder="My Organization Ltd." />
                                     </div>
                                 </div>
+
+
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase mb-1">Country</label>
@@ -244,32 +244,39 @@ export function SignupForm({
                                         </select>
                                     </div>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase mb-1">Industry</label>
-                                    <select value={formData.industry} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} onChange={(e) => {
-                                        const val = e.target.value;
-                                        // RESET modules to ensure clean slate for the new industry
-                                        let newModules: string[] = [];
+                                <div className="grid grid-cols-1 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase mb-1">Industry</label>
+                                        <select 
+                                            value={formData.industry} 
+                                            required
+                                            onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} 
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                let newModules: string[] = [];
 
-                                        // SMART DEFAULTS (World Class)
-                                        if (val === 'Healthcare') {
-                                            newModules = ['hms', 'inventory', 'finance'];
-                                        } else if (val === 'Retail' || val === 'Manufacturing') {
-                                            newModules = ['inventory', 'finance', 'crm'];
-                                        } else if (val === 'Services') {
-                                            newModules = ['crm', 'finance'];
-                                        }
+                                                // SMART DEFAULTS (World Class)
+                                                if (val === 'Healthcare') {
+                                                    newModules = ['hms', 'inventory', 'finance'];
+                                                } else if (val === 'Retail' || val === 'Manufacturing') {
+                                                    newModules = ['inventory', 'finance', 'crm'];
+                                                } else if (val === 'Services') {
+                                                    newModules = ['crm', 'finance'];
+                                                }
 
-                                        setFormData({ ...formData, industry: val, modules: newModules });
-                                    }} className="w-full border border-gray-200 dark:border-slate-800 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white">
-                                        <option value="">Select Industry...</option>
-                                        <option value="Healthcare">Healthcare / Hospital</option>
-                                        <option value="Manufacturing">Manufacturing</option>
-                                        <option value="Retail">Retail / Pharmacy</option>
-                                        <option value="Services">Professional Services</option>
-                                        <option value="Technology">Technology</option>
-                                        <option value="Other">Other</option>
-                                    </select>
+                                                setFormData({ ...formData, industry: val, modules: newModules });
+                                            }} 
+                                            className="w-full border border-gray-200 dark:border-slate-800 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-white"
+                                        >
+                                            <option value="">Select Industry...</option>
+                                            <option value="Healthcare">Healthcare / Hospital</option>
+                                            <option value="Manufacturing">Manufacturing</option>
+                                            <option value="Retail">Retail / Pharmacy</option>
+                                            <option value="Services">Professional Services</option>
+                                            <option value="Technology">Technology</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
                         )}

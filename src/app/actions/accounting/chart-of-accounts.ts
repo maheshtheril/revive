@@ -10,13 +10,13 @@ export type AccountType = 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expens
 
 export async function getAccounts(search?: string, typeFilter?: string[]) {
     const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    if (!companyId) return { error: "Unauthorized" };
 
     try {
         const where: any = {
-            company_id: session.user.companyId,
-            is_active: true,
-            is_group: false
+            company_id: companyId,
+            is_active: true
         };
 
         if (search) {
@@ -130,6 +130,7 @@ export async function upsertAccount(data: {
                     }
                 });
             } else {
+                const company = await prisma.companies.findUnique({ where: { id: session.user.companyId } });
                 await prisma.accounts.create({
                     data: {
                         tenant_id: session.user.tenantId,

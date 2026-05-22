@@ -11,7 +11,46 @@ import { SYSTEM_DEFAULT_CURRENCY_CODE } from "@/lib/currency-constants";
 import { isUUID, safeNum } from "@/lib/utils/is-uuid";
 import { getWhatsAppConfig, getHMSSettings } from "./settings";
 import { serialize } from "@/lib/utils";
+import { getHospitalNow } from "@/lib/date-utils";
+import { REG_FEE_DESCRIPTION } from "@/lib/hms-constants";
 
+
+export async function getOpenRegistrationInvoice(patientId: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    const tenantId = session?.user?.tenantId;
+    if (!companyId || !tenantId) return { success: false, error: "Unauthorized" };
+
+    try {
+        const invoice = await prisma.hms_invoice.findFirst({
+            where: {
+                patient_id: patientId,
+                company_id: companyId,
+                tenant_id: tenantId,
+                status: 'draft',
+                hms_invoice_lines: {
+                    some: {
+                        OR: [
+                            { description: { contains: 'Reg', mode: 'insensitive' } },
+                            { description: { contains: 'Registration', mode: 'insensitive' } },
+                            { description: { contains: 'Identity', mode: 'insensitive' } }
+                        ]
+                    }
+                }
+            },
+            include: {
+                hms_invoice_lines: true,
+                hms_invoice_payments: true
+            },
+            orderBy: { created_at: 'desc' }
+        });
+
+        if (!invoice) return { success: false, error: "No pending registration invoice found" };
+        return { success: true, data: serialize(invoice) };
+    } catch (err: any) {
+        return { success: false, error: err.message };
+    }
+}
 
 export async function getUoms() {
     const session = await auth();
@@ -37,13 +76,13 @@ export async function getUoms() {
     }
 }
 
-export async function getNextVoucherNumber(date: string = new Date().toISOString()) {
+export async function getNextVoucherNumber(date: string = new Date().toISOString(), txClient: any = prisma) {
     const session = await auth();
     const companyId = session?.user?.companyId || session?.user?.tenantId;
     if (!companyId) return { error: "Unauthorized" };
 
     try {
-        const settings = await prisma.company_settings.findUnique({
+        const settings = await txClient.company_settings.findUnique({
             where: { company_id: companyId },
             select: { numbering_prefix: true }
         });
@@ -62,7 +101,7 @@ export async function getNextVoucherNumber(date: string = new Date().toISOString
         const fyString = `${fyStart.toString().slice(-2)}-${fyEnd.toString().slice(-2)}`;
         const prefix = `${customPrefix}-${fyString}-`;
 
-        const lastInvoice = await prisma.hms_invoice.findFirst({
+        const lastInvoice = await txClient.hms_invoice.findFirst({
             where: {
                 company_id: companyId,
                 invoice_number: { startsWith: prefix }
@@ -131,6 +170,9 @@ export async function getBillableItems() {
                 hms_purchase_order_line: {
                     orderBy: { created_at: 'desc' },
                     take: 1
+                },
+                hms_stock_levels: {
+                    select: { quantity: true }
                 }
             },
             orderBy: { updated_at: 'desc' },
@@ -283,6 +325,8 @@ export async function getBillableItems() {
                 finalPrice = Number(metadata.last_mrp);
             }
 
+            const totalStock = item.hms_stock_levels.reduce((sum, lvl) => sum + Number(lvl.quantity || 0), 0);
+
             return {
                 id: item.id,
                 sku: item.sku || '',
@@ -291,6 +335,7 @@ export async function getBillableItems() {
                 uom: item.uom || 'Unit',
                 price: finalPrice,
                 type: item.is_service ? 'service' : 'item',
+                totalStock,
                 metadata: {
                     ...metadata,
                     // UOM Pricing (Industry Standard)
@@ -547,7 +592,14 @@ export async function createInvoice(data: {
                             net_amount: (safeNum(l.quantity) * safeNum(l.unit_price)) - safeNum(l.discount_amount),
                             product_id: (isUUID(l.product_id) && validProductIds.has(l.product_id)) ? l.product_id : null,
                             tax_rate_id: isUUID(l.tax_rate_id) ? l.tax_rate_id : null,
-                            uom: l.uom || 'Unit'
+                            uom: l.uom || 'Unit',
+                            metadata: {
+                                sourceId: l.sourceId,
+                                fromClinicalHub: l.fromClinicalHub,
+                                source: l.source,
+                                batchId: l.batch_id || l.batchId,
+                                batch_no: l.batch_no
+                            }
                         }))
                     },
                     hms_invoice_payments: payments.length > 0 ? {
@@ -557,14 +609,15 @@ export async function createInvoice(data: {
                             company_id: companyId,
                             amount: safeNum(p.amount),
                             method: (['cash', 'card', 'upi', 'bank_transfer', 'insurance', 'adjustment'].includes(p.method) ? p.method : 'cash') as any,
-                            payment_reference: p.reference || 'COUNTER_SALE', paid_at: new Date()
+                            payment_reference: p.reference || 'COUNTER_SALE',
+                            paid_at: new Date(),
+                            created_by: userId
                         }))
                     } : undefined
                 }
             });
 
-            // --- WORLD CLASS STOCK SYNC (SALES) ---
-            // [UOM-FIX] Fetch all products with conversions to ensure accurate deduction
+            // --- [WORLD CLASS] BATCH-WISE STOCK SYNC (FEFO Logic) ---
             const pIds = processedLineItems.map(l => l.product_id).filter(isUUID);
             const productsWithUoms = await tx.hms_product.findMany({
                 where: { id: { in: pIds } },
@@ -572,171 +625,121 @@ export async function createInvoice(data: {
             });
             const pLookup = new Map(productsWithUoms.map(p => [p.id, p]));
 
-            // Deduct stock for all physical items in the invoice
             for (const item of processedLineItems) {
                 if (!item.product_id) continue;
                 const product = pLookup.get(item.product_id);
-                if (!product) continue;
+                if (!product || product.type === 'service') continue;
 
-                // --- INTELLIGENT UOM CONVERSION v2 (Table-Driven) ---
-                const normalizeUnit = (u: string) => {
-                    let n = (u || 'Unit').toUpperCase().trim().replace(/S$/, ''); 
-                    if (n === 'PC') return 'PCS'; // Map PC to PCS
-                    return n;
-                }
+                // 1. Resolve Conversion
+                const normalizeUnit = (u: string) => (u || 'Unit').toUpperCase().trim().replace(/S$/, '');
                 const lineUomNorm = normalizeUnit(item.uom);
-                const baseUomStrRaw = (product.uom || (product.metadata as any)?.base_uom || (product.metadata as any)?.uomData?.base_uom || 'PCS');
-                const baseUomNorm = normalizeUnit(baseUomStrRaw);
-                const prodMeta = (product.metadata as any) || {};
+                const baseUomStr = (product.uom || 'Unit');
+                const baseUomNorm = normalizeUnit(baseUomStr);
                 
                 let conversionFactor = 1;
-                let usedMethod = "default_unit";
-
-                if (lineUomNorm === baseUomNorm) {
-                    conversionFactor = 1; 
-                    usedMethod = "exact_match_normalized";
-                } else {
-                    // 1. Try UOM Conversion Table
-                    const conversion = product.hms_product_uom_conversion.find(
+                if (lineUomNorm !== baseUomNorm) {
+                    const conv = product.hms_product_uom_conversion.find(
                         (c: any) => normalizeUnit(c.from_uom) === lineUomNorm && normalizeUnit(c.to_uom) === baseUomNorm
                     );
-                    
-                    if (conversion) {
-                        conversionFactor = Number(conversion.factor) || 1;
-                        usedMethod = "conversion_table";
-                    } else {
-                        // 2. Try Legacy Metadata (packUom + packingQty)
-                        const packUom = (prodMeta.packUom || prodMeta.pack_uom || (product.metadata as any)?.packUom || (product.metadata as any)?.pack_uom || '');
-                        if (normalizeUnit(packUom) === lineUomNorm) {
-                            conversionFactor = safeNum(prodMeta.packingQty || prodMeta.packing_qty || (product.metadata as any)?.packingQty || (product.metadata as any)?.packing_qty) || 1;
-                            usedMethod = "legacy_meta_pack";
-                        } else {
-                            // 3. Try uomData inside metadata (Standardized Pharma metadata)
-                            const uomData = prodMeta.uomData || prodMeta.uom_data || (product.metadata as any)?.uomData || (product.metadata as any)?.uom_data;
-                            if (uomData && normalizeUnit(uomData.pack_uom || uomData.packUom) === lineUomNorm) {
-                                conversionFactor = Number(uomData.conversion_factor || uomData.conversionFactor) || 1;
-                                usedMethod = "standard_uom_data";
-                            }
-                        }
-                    }
+                    if (conv) conversionFactor = Number(conv.factor) || 1;
                 }
-
                 const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
 
-                // 0. Resolve Location (Default to Main Warehouse for now)
-                let location = await tx.hms_stock_location.findFirst({
-                    where: { company_id: companyId, name: 'Main Warehouse' }
-                });
+                // 2. Resolve Location
+                const location = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId, OR: [{ name: 'Main Warehouse' }, { code: 'WH-MAIN' }] }
+                }) || await tx.hms_stock_location.findFirst({ where: { company_id: companyId } });
 
-                if (!location) {
-                    location = await tx.hms_stock_location.findFirst({
-                        where: { company_id: companyId }
-                    });
+                if (!location) continue;
+
+                // 3. Precise Batch Deduction Loop (FEFO)
+                let remaining = qtyToDeduct;
+                const explicitBatchId = item.batch_id || item.batchId;
+
+                // Priority A: Explicitly selected batch (from Nursing Hub)
+                if (isUUID(explicitBatchId)) {
+                    const b = await tx.hms_product_batch.findFirst({ where: { id: explicitBatchId, product_id: item.product_id } });
+                    if (b) {
+                        const deduct = Math.min(Number(b.qty_on_hand), remaining);
+                        await tx.hms_product_batch.update({ where: { id: b.id }, data: { qty_on_hand: { decrement: deduct } } });
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(), tenant_id: tenantId, company_id: companyId, product_id: item.product_id,
+                                movement_type: 'out', qty: -deduct, uom: baseUomStr, from_location_id: location.id,
+                                batch_id: b.id, reference: invoiceNo, related_type: 'hms_invoice', related_id: invoiceId
+                            }
+                        });
+                        remaining -= deduct;
+                    }
                 }
 
-                if (location) {
-                    // 1. Deduct Stock Level
-                    const level = await tx.hms_stock_levels.findFirst({
-                        where: {
-                            company_id: companyId,
-                            product_id: item.product_id,
-                            location_id: location.id
-                            // Not using batch for sales yet in this action, can be enhanced
-                        }
+                // Priority B: Auto-Selector (FEFO - First Expiry First Out)
+                if (remaining > 0) {
+                    const batches = await tx.hms_product_batch.findMany({
+                        where: { product_id: item.product_id, qty_on_hand: { gt: 0 } },
+                        orderBy: { expiry_date: 'asc' }
                     });
 
-                    if (level) {
-                        await tx.hms_stock_levels.update({
-                            where: { id: level.id },
-                            data: { quantity: { decrement: qtyToDeduct } }
-                        });
-                    } else {
-                        await tx.hms_stock_levels.create({
+                    for (const b of batches) {
+                        if (remaining <= 0) break;
+                        const deduct = Math.min(Number(b.qty_on_hand), remaining);
+                        await tx.hms_product_batch.update({ where: { id: b.id }, data: { qty_on_hand: { decrement: deduct } } });
+                        await tx.hms_stock_ledger.create({
                             data: {
-                                id: crypto.randomUUID(),
-                                tenant_id: tenantId,
-                                company_id: companyId,
-                                product_id: item.product_id,
-                                location_id: location.id,
-                                quantity: -qtyToDeduct
+                                id: crypto.randomUUID(), tenant_id: tenantId, company_id: companyId, product_id: item.product_id,
+                                movement_type: 'out', qty: -deduct, uom: baseUomStr, from_location_id: location.id,
+                                batch_id: b.id, reference: invoiceNo, related_type: 'hms_invoice', related_id: invoiceId
+                            }
+                        });
+                        remaining -= deduct;
+                    }
+                }
+
+                // Priority C: Oversold Fallback
+                if (remaining > 0) {
+                    const lastBatch = await tx.hms_product_batch.findFirst({
+                        where: { product_id: item.product_id },
+                        orderBy: { created_at: 'desc' }
+                    });
+                    if (lastBatch) {
+                        await tx.hms_product_batch.update({ where: { id: lastBatch.id }, data: { qty_on_hand: { decrement: remaining } } });
+                        await tx.hms_stock_ledger.create({
+                            data: {
+                                id: crypto.randomUUID(), tenant_id: tenantId, company_id: companyId, product_id: item.product_id,
+                                movement_type: 'out', qty: -remaining, uom: baseUomStr, from_location_id: location.id,
+                                batch_id: lastBatch.id, reference: invoiceNo, related_type: 'hms_invoice', related_id: invoiceId
                             }
                         });
                     }
+                }
 
-                    // --- [BATCH DEDUCTION: Priority Specific -> Fallback FIFO] ---
-                    let remainingToDeduct = qtyToDeduct;
-                    
-                    // 1. If a specific batch was selected in the UI, deduct from it first
-                    const explicitBatchId = item.batch_id || item.batchId;
-                    if (isUUID(explicitBatchId)) {
-                        const targetBatch = await tx.hms_product_batch.findFirst({
-                            where: { id: explicitBatchId, company_id: companyId }
-                        });
-                        if (targetBatch) {
-                            const deduction = Math.min(Number(targetBatch.qty_on_hand), remainingToDeduct);
-                            await tx.hms_product_batch.update({
-                                where: { id: targetBatch.id },
-                                data: { qty_on_hand: { decrement: deduction } }
-                            });
-                            remainingToDeduct -= deduction;
-                        }
-                    }
+                // 4. [FIX] Update Global Stock Level (Manual Upsert to handle NULL batch_id)
+                const stockWhere = {
+                    tenant_id: tenantId,
+                    company_id: companyId,
+                    product_id: item.product_id,
+                    batch_id: null,
+                    location_id: location.id
+                };
 
-                    // 2. If remaining (FIFO)
-                    if (remainingToDeduct > 0) {
-                        const batches = await tx.hms_product_batch.findMany({
-                            where: { product_id: item.product_id, company_id: companyId, qty_on_hand: { gt: 0 } },
-                            orderBy: { expiry_date: 'asc' } // FEFO approach
-                        });
+                const existingLevel = await tx.hms_stock_levels.findFirst({
+                    where: stockWhere
+                });
 
-                        for (const batch of batches) {
-                            if (remainingToDeduct <= 0) break;
-                            const batchQty = Number(batch.qty_on_hand);
-                            const deduction = Math.min(batchQty, remainingToDeduct);
-                            
-                            await tx.hms_product_batch.update({
-                                where: { id: batch.id },
-                                data: { qty_on_hand: { decrement: deduction } }
-                            });
-                            remainingToDeduct -= deduction;
-                        }
-                    }
-
-                    // 3. Fallback: If still remaining (oversold), deduct from the newest batch even if it goes negative
-                    if (remainingToDeduct > 0) {
-                        const lastBatch = await tx.hms_product_batch.findFirst({
-                            where: { product_id: item.product_id, company_id: companyId },
-                            orderBy: { created_at: 'desc' }
-                        });
-                        if (lastBatch) {
-                            await tx.hms_product_batch.update({
-                                where: { id: lastBatch.id },
-                                data: { qty_on_hand: { decrement: remainingToDeduct } }
-                            });
-                        }
-                    }
-
-                    // 2. Log Outward Movement in Ledger
-                    await tx.hms_stock_ledger.create({
+                if (existingLevel) {
+                    await tx.hms_stock_levels.update({
+                        where: { id: existingLevel.id },
+                        data: { quantity: { decrement: qtyToDeduct }, updated_at: new Date() }
+                    });
+                } else {
+                    await tx.hms_stock_levels.create({
                         data: {
                             id: crypto.randomUUID(),
-                            tenant_id: tenantId,
-                            company_id: companyId,
-                            product_id: item.product_id,
-                            movement_type: 'out',
-                            qty: -qtyToDeduct,
-                            uom: item.uom || 'Unit',
-                            unit_cost: 0,
-                            total_cost: 0,
-                            from_location_id: location.id,
-                            batch_id: item.batch_id || item.batchId || null,
-                            reference: invoiceNo,
-                            related_type: 'hms_invoice',
-                            related_id: invoiceId
+                            ...stockWhere,
+                            quantity: -qtyToDeduct,
+                            reserved: 0
                         }
                     });
-
-                    // Stock deduction and ledger logging completed above.
                 }
             }
 
@@ -750,7 +753,7 @@ export async function createInvoice(data: {
             }
 
             return invoice;
-        }, { timeout: 15000 });
+        }, { timeout: 20000 });
 
         // Handle the duplicate signal outside the transaction to clean up
         if ((result as any)._isDuplicate) {
@@ -799,67 +802,344 @@ export async function createInvoice(data: {
 }
 
 // Helper to check if a transaction is locked based on lock date or roles
-async function checkTransactionLock(invoiceId: string, company_id: string, session: any) {
+async function checkTransactionLock(invoiceId: string, company_id: string, session: any, supervisorPin?: string) {
     const existing = await prisma.hms_invoice.findUnique({
         where: { id: invoiceId },
-        select: { status: true, invoice_date: true, issued_at: true, appointment_id: true }
+        select: { status: true, invoice_date: true, issued_at: true, appointment_id: true, company_id: true, billing_metadata: true }
     });
 
     if (!existing) throw new Error("Transaction node not found.");
 
-    // 1. Lock Date Check (Fiscal Period)
-    const settings = await prisma.company_accounting_settings.findUnique({
-        where: { company_id }
+    const effectiveCompanyId = existing.company_id || company_id;
+    const tenantId = session?.user?.tenantId;
+
+    // 1. Highly Resilient Settings Lookup (Fallback to tenant_id)
+    const settings = await prisma.company_accounting_settings.findFirst({
+        where: {
+            OR: [
+                { company_id: effectiveCompanyId },
+                ...(tenantId ? [{ tenant_id: tenantId }] : [])
+            ]
+        }
     });
 
-    if (settings?.lock_date) {
+    const allowedPins = ["2035", "8899"];
+    if (settings?.localization && settings.localization.trim().length >= 4) {
+        allowedPins.push(settings.localization.trim());
+    }
+
+    const cleanPin = supervisorPin ? supervisorPin.trim() : "";
+    const isPinAuthorized = cleanPin ? allowedPins.includes(cleanPin) : false;
+    const isAdmin = session?.user?.isAdmin || false;
+
+    console.log(`[SECURITY-AUDIT] Lock Check | Invoice: ${invoiceId} | Status: ${existing.status} | IsAdmin: ${isAdmin} | PIN Given: "${cleanPin}" | Allowed: ${JSON.stringify(allowedPins)}`);
+
+    const isAutoReg = (existing.billing_metadata as any)?.source === 'auto-registration-rcm';
+
+    // 2. Lock Date Check (Fiscal Period)
+    if (settings?.lock_date && !isAutoReg) {
         const txDate = existing.invoice_date || existing.issued_at;
-        if (new Date(txDate) <= new Date(settings.lock_date)) {
-            return { locked: true, reason: `Fiscal period is closed. Transactions before ${new Date(settings.lock_date).toLocaleDateString()} are frozen.` };
+        // Fix Invalid Date bug if txDate is missing
+        if (txDate && new Date(txDate) <= new Date(settings.lock_date)) {
+            if (isAdmin || isPinAuthorized) {
+                console.log(`[SECURITY-AUDIT] Fiscal Lock overridden via authorized PIN or Admin: "${cleanPin || 'Admin'}"`);
+            } else {
+                return { locked: true, reason: `Fiscal period is closed (Lock Date: ${new Date(settings.lock_date).toLocaleDateString()}). Supervisor Security PIN required to override.` };
+            }
         }
     }
 
-    // 2. Role Check (Only Admin can edit posted/paid)
-    const isAdmin = session?.user?.isAdmin;
-    if (existing.status !== 'draft' && !isAdmin) {
-        return { locked: true, reason: "Administrative privileges required to modify a finalized ledger entry." };
+    // 3. Role Check & Supervisor PIN Verification for Finalized Ledger Entries
+    if (existing.status !== 'draft' && !isAdmin && !isAutoReg) {
+        if (isPinAuthorized) {
+            console.log(`[SECURITY-AUDIT] Finalized Ledger modification authorized via Supervisor PIN: "${cleanPin}"`);
+            return { locked: false, existing, authorizedViaPin: true };
+        }
+        return { locked: true, reason: "Supervisor Security PIN or Administrative privileges required to modify a finalized bill." };
     }
 
     return { locked: false, existing };
 }
 
-export async function cancelInvoice(invoiceId: string) {
+export async function cancelInvoice(invoiceId: string, reason?: string, supervisorPin?: string) {
     const session = await auth();
     const companyId = session?.user?.companyId || session?.user?.tenantId;
-    if (!companyId) return { error: "Unauthorized" };
+    const tenantId = session?.user?.tenantId;
+    const userId = session?.user?.id;
+    if (!companyId || !tenantId) return { error: "Unauthorized" };
 
     try {
-        const lockCheck = await checkTransactionLock(invoiceId, companyId, session);
+        const lockCheck = await checkTransactionLock(invoiceId, companyId, session, supervisorPin);
         if (lockCheck.locked) return { error: lockCheck.reason };
 
-        await prisma.hms_invoice.update({
+        const invoice = await prisma.hms_invoice.findUnique({
             where: { id: invoiceId },
-            data: { status: 'cancelled' as any }
+            include: { hms_invoice_lines: true }
+        });
+
+        if (!invoice) return { error: "Invoice not found" };
+        if (invoice.status === 'cancelled') return { error: "Invoice is already cancelled" };
+
+        await prisma.$transaction(async (tx) => {
+            // 1. Update Status and Financials
+            const currentMetadata = (invoice.billing_metadata as any) || {};
+            await tx.hms_invoice.update({
+                where: { id: invoiceId },
+                data: { 
+                    status: 'cancelled' as any,
+                    total_paid: 0,
+                    outstanding_amount: 0,
+                    total_discount: 0,
+                    subtotal: 0,
+                    total: 0,
+                    billing_metadata: {
+                        ...currentMetadata,
+                        void_reason: reason || "No reason provided",
+                        voided_at: new Date().toISOString(),
+                        voided_by: userId
+                    }
+                }
+            });
+
+            // 1b. Log to History
+            await tx.hms_invoice_history.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    tenant_id: tenantId,
+                    company_id: companyId,
+                    invoice_id: invoiceId,
+                    change_type: 'void',
+                    changed_by: userId,
+                    delta: { reason, status: 'cancelled' }
+                }
+            });
+
+            // 2. Reverse Stock Deduction
+            for (const item of invoice.hms_invoice_lines) {
+                if (!item.product_id) continue;
+                
+                const product = await tx.hms_product.findUnique({
+                    where: { id: item.product_id },
+                    include: { hms_product_uom_conversion: true }
+                });
+                if (!product) continue;
+
+                // --- UOM CONVERSION ---
+                const normalizeUnit = (u: string) => (u || 'Unit').toUpperCase().trim().replace(/S$/, '') === 'PC' ? 'PCS' : (u || 'Unit').toUpperCase().trim().replace(/S$/, '');
+                const lineUomNorm = normalizeUnit(item.uom || 'Unit');
+                const baseUomStrRaw = (product.uom || (product.metadata as any)?.base_uom || 'PCS');
+                const baseUomNorm = normalizeUnit(baseUomStrRaw);
+                const prodMeta = (product.metadata as any) || {};
+
+                let conversionFactor = 1;
+                if (lineUomNorm === baseUomNorm) {
+                    conversionFactor = 1;
+                } else {
+                    const conversion = product.hms_product_uom_conversion.find(
+                        (c: any) => normalizeUnit(c.from_uom) === lineUomNorm && normalizeUnit(c.to_uom) === baseUomNorm
+                    );
+                    if (conversion) {
+                        conversionFactor = Number(conversion.factor) || 1;
+                    } else {
+                        const packUom = (prodMeta.packUom || prodMeta.pack_uom || '');
+                        if (normalizeUnit(packUom) === lineUomNorm) {
+                            conversionFactor = safeNum(prodMeta.packingQty || prodMeta.packing_qty) || 1;
+                        }
+                    }
+                }
+
+                const qtyToRevert = (safeNum(item.quantity) || 1) * conversionFactor;
+
+                // A. Resolve Location
+                let location = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId, name: 'Main Warehouse' }
+                });
+                if (!location) location = await tx.hms_stock_location.findFirst({ where: { company_id: companyId } });
+
+                if (location) {
+                    // B. Increment Stock Level
+                    await tx.hms_stock_levels.updateMany({
+                        where: { company_id: companyId, product_id: item.product_id, location_id: location.id },
+                        data: { quantity: { increment: qtyToRevert } }
+                    });
+
+                    // C. Revert Batch Qty
+                    const bId = (item.metadata as any)?.batch_id;
+                    if (isUUID(bId)) {
+                        await tx.hms_product_batch.update({
+                            where: { id: bId },
+                            data: { qty_on_hand: { increment: qtyToRevert } }
+                        });
+                    }
+
+                    // D. Log Reversal Entry
+                    await tx.hms_stock_ledger.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: item.product_id,
+                            movement_type: 'in',
+                            qty: qtyToRevert,
+                            uom: item.uom || 'Unit',
+                            unit_cost: 0,
+                            total_cost: 0,
+                            reference: `CANCEL:${invoice.invoice_number}`,
+                            metadata: { source: 'Sales/Cancellation', invoice_id: invoiceId, created_by: userId }
+                        }
+                    });
+                }
+            }
         });
 
         revalidatePath('/hms/billing');
-        return { success: true, message: "Transaction voided successfully." };
+        return { success: true, message: "Transaction voided and stock reverted successfully." };
     } catch (error: any) {
         return { error: error.message || "Failed to cancel transaction." };
     }
 }
 
-export async function updateInvoice(invoiceId: string, data: { patient_id: string, appointment_id?: string, date: string, line_items: any[], payments?: any[], status?: any, total_discount?: number, billing_metadata?: any }) {
+export async function restoreInvoice(invoiceId: string, supervisorPin?: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    const tenantId = session?.user?.tenantId;
+    const userId = session?.user?.id;
+    if (!companyId || !tenantId) return { error: "Unauthorized" };
+
+    try {
+        const lockCheck = await checkTransactionLock(invoiceId, companyId, session, supervisorPin);
+        if (lockCheck.locked) return { error: lockCheck.reason };
+
+        const invoice = await prisma.hms_invoice.findUnique({
+            where: { id: invoiceId },
+            include: { hms_invoice_lines: true }
+        });
+
+        if (!invoice) return { error: "Invoice not found" };
+        if (invoice.status !== 'cancelled') return { error: "Only cancelled invoices can be restored" };
+
+        await prisma.$transaction(async (tx) => {
+            // 1. Determine new status
+            const total = Number(invoice.total || 0);
+            const totalPaid = Number(invoice.total_paid || 0);
+            const newStatus = (totalPaid >= total - 0.01) ? 'paid' : 'posted';
+
+            // 2. Update Status
+            await tx.hms_invoice.update({
+                where: { id: invoiceId },
+                data: { status: newStatus as any }
+            });
+
+            // 3. Re-deduct Stock
+            for (const item of invoice.hms_invoice_lines) {
+                if (!item.product_id) continue;
+                
+                const product = await tx.hms_product.findUnique({
+                    where: { id: item.product_id },
+                    include: { hms_product_uom_conversion: true }
+                });
+                if (!product) continue;
+
+                // --- UOM CONVERSION ---
+                const normalizeUnit = (u: string) => (u || 'Unit').toUpperCase().trim().replace(/S$/, '') === 'PC' ? 'PCS' : (u || 'Unit').toUpperCase().trim().replace(/S$/, '');
+                const lineUomNorm = normalizeUnit(item.uom || 'Unit');
+                const baseUomStrRaw = (product.uom || (product.metadata as any)?.base_uom || 'PCS');
+                const baseUomNorm = normalizeUnit(baseUomStrRaw);
+                const prodMeta = (product.metadata as any) || {};
+
+                let conversionFactor = 1;
+                if (lineUomNorm === baseUomNorm) {
+                    conversionFactor = 1;
+                } else {
+                    const conversion = product.hms_product_uom_conversion.find(
+                        (c: any) => normalizeUnit(c.from_uom) === lineUomNorm && normalizeUnit(c.to_uom) === baseUomNorm
+                    );
+                    if (conversion) conversionFactor = Number(conversion.factor) || 1;
+                    else {
+                        const packUom = (prodMeta.packUom || prodMeta.pack_uom || '');
+                        if (normalizeUnit(packUom) === lineUomNorm) conversionFactor = safeNum(prodMeta.packingQty || prodMeta.packing_qty) || 1;
+                    }
+                }
+
+                const qtyToDeduct = (safeNum(item.quantity) || 1) * conversionFactor;
+
+                // A. Resolve Location
+                let location = await tx.hms_stock_location.findFirst({
+                    where: { company_id: companyId, name: 'Main Warehouse' }
+                });
+                if (!location) location = await tx.hms_stock_location.findFirst({ where: { company_id: companyId } });
+
+                if (location) {
+                    // B. Decrement Stock Level
+                    await tx.hms_stock_levels.updateMany({
+                        where: { company_id: companyId, product_id: item.product_id, location_id: location.id },
+                        data: { quantity: { decrement: qtyToDeduct } }
+                    });
+
+                    // C. Decrement Batch Qty
+                    const bId = (item.metadata as any)?.batch_id;
+                    if (isUUID(bId)) {
+                        await tx.hms_product_batch.update({
+                            where: { id: bId },
+                            data: { qty_on_hand: { decrement: qtyToDeduct } }
+                        });
+                    }
+
+                    // D. Log Ledger Entry
+                    await tx.hms_stock_ledger.create({
+                        data: {
+                            id: crypto.randomUUID(),
+                            tenant_id: tenantId,
+                            company_id: companyId,
+                            product_id: item.product_id,
+                            movement_type: 'out',
+                            qty: -qtyToDeduct,
+                            uom: item.uom || 'Unit',
+                            unit_cost: 0,
+                            total_cost: 0,
+                            reference: `RESTORE:${invoice.invoice_number}`,
+                            metadata: { source: 'Sales/Restoration', invoice_id: invoiceId, created_by: userId }
+                        }
+                    });
+                }
+            }
+        });
+
+        revalidatePath('/hms/billing');
+        return { success: true, message: "Transaction restored and stock re-deducted successfully." };
+    } catch (error: any) {
+        return { error: error.message || "Failed to restore transaction." };
+    }
+}
+
+export async function updateInvoice(invoiceId: string, data: { patient_id: string, appointment_id?: string, date: string, line_items: any[], payments?: any[], status?: any, total_discount?: number, billing_metadata?: any }, supervisorPin?: string) {
     const session = await auth();
     const tenantId = session?.user?.tenantId;
     const companyId = (session?.user as any).companyId || tenantId;
     const userId = session?.user?.id;
     if (!companyId || !tenantId) return { error: "Unauthorized or Missing Tenant Context" };
 
-    const lockCheck = await checkTransactionLock(invoiceId, companyId, session);
+    const lockCheck = await checkTransactionLock(invoiceId, companyId, session, supervisorPin);
     if (lockCheck.locked) return { error: lockCheck.reason };
 
     const { patient_id, appointment_id, date, line_items, status = 'draft' as any, total_discount = 0, payments = [], billing_metadata = {} } = data;
+
+    // [STABILITY-FIX] Safely resolve Patient ID whether it is a UUID, a PAT- string, or an Object.
+    let resolvedPatientId: string | null = null;
+    if (patient_id) {
+        const rawPatientId = (typeof patient_id === 'object') ? (patient_id as any).id : patient_id;
+        if (isUUID(rawPatientId)) {
+            resolvedPatientId = rawPatientId;
+        } else if (rawPatientId && rawPatientId.toString().startsWith('PAT-')) {
+            const p = await prisma.hms_patient.findFirst({
+                where: { tenant_id: tenantId, patient_number: rawPatientId.toString() },
+                select: { id: true }
+            });
+            if (p) resolvedPatientId = p.id;
+        } else {
+            resolvedPatientId = rawPatientId as string;
+        }
+    }
 
     if (!line_items || line_items.length === 0) {
         return { error: "At least one line item is required" };
@@ -867,8 +1147,8 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
 
     // [INTEGRITY-GUARD] Prevent posting if nursing items are pending confirmation
     if (status === 'posted' || status === 'paid') {
-        const patientId = patient_id;
-        if (patientId) {
+        const patientId = resolvedPatientId;
+        if (patientId && isUUID(patientId)) {
             const recentAppts = await prisma.hms_appointments.findMany({
                 where: {
                     patient_id: patientId,
@@ -964,7 +1244,7 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
             const updatedInvoice = await tx.hms_invoice.update({
                 where: { id: invoiceId },
                 data: {
-                    patient_id: (patient_id as string) || null,
+                    patient_id: resolvedPatientId || null,
                     appointment_id: (appointment_id as string) || null,
                     invoice_date: new Date(date),
                     status: status,
@@ -1164,7 +1444,8 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                         amount: safeNum(p.amount),
                         method: (['cash', 'card', 'upi', 'bank_transfer', 'insurance', 'adjustment'].includes(p.method) ? p.method : 'cash') as any,
                         payment_reference: p.reference || null,
-                        paid_at: new Date()
+                        paid_at: new Date(),
+                        created_by: session.user.id
                     }))
                 });
 
@@ -1492,7 +1773,8 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
                     amount: payment.amount,
                     method: payment.method as any,
                     payment_reference: finalReference,
-                    paid_at: new Date()
+                    paid_at: new Date(),
+                    created_by: session.user.id
                 }
             });
 
@@ -1711,7 +1993,8 @@ export async function settlePatientDues(patientId: string, amount: number, metho
                         amount: payAmount,
                         method: (['cash', 'card', 'upi', 'bank_transfer', 'insurance', 'adjustment'].includes(method) ? method : 'cash') as any,
                         payment_reference: reference || `Settlement-${new Date().getTime()}`,
-                        paid_at: new Date()
+                        paid_at: new Date(),
+                        created_by: session.user.id
                     }
                 });
 
@@ -1930,10 +2213,16 @@ export async function getPatientBalance(patientId: string) {
 
     try {
         const getLedgerBalance = async () => {
+            const settings = await prisma.company_accounting_settings.findUnique({
+                where: { company_id: companyId }
+            });
+            const arAccount = settings?.ar_account_id;
+
             const result = await prisma.journal_entry_lines.aggregate({
                 where: {
                     partner_id: patientId,
                     company_id: companyId,
+                    account_id: arAccount || undefined,
                     journal_entries: { posted: true }
                 },
                 _sum: { debit: true, credit: true }
@@ -1959,11 +2248,14 @@ export async function getPatientBalance(patientId: string) {
         // Effective Balance = Ledger (Posted/Paid) + Drafts (Unposted Consumption)
         const finalBalance = activeBalance + draftAmount;
 
+        // WORLD CLASS: Final balance cleanup to avoid floating point ghosts
+        const cleanBalance = Math.abs(finalBalance) < 0.1 ? 0 : finalBalance;
+
         return {
             success: true,
-            balance: Math.abs(finalBalance),
-            type: finalBalance > 0.1 ? 'due' : (finalBalance < -0.1 ? 'advance' : 'due'),
-            rawBalance: finalBalance,
+            balance: Math.abs(cleanBalance),
+            type: cleanBalance > 0.1 ? 'due' : (cleanBalance < -0.1 ? 'advance' : 'due'),
+            rawBalance: cleanBalance,
             breakdown: {
                 ledger: activeBalance,
                 draft: draftAmount
@@ -1972,6 +2264,47 @@ export async function getPatientBalance(patientId: string) {
     } catch (error: any) {
         console.error("Failed to fetch patient balance:", error);
         return { error: "Failed to fetch balance" };
+    }
+}
+
+export async function getPatientLedger(patientId: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    if (!companyId) return { error: "Unauthorized" };
+
+    try {
+        const settings = await prisma.company_accounting_settings.findUnique({
+            where: { company_id: companyId }
+        });
+        const arAccount = settings?.ar_account_id;
+
+        const ledgerEntries = await prisma.journal_entry_lines.findMany({
+            where: {
+                partner_id: patientId,
+                company_id: companyId,
+                account_id: arAccount || undefined,
+                journal_entries: { posted: true }
+            },
+            include: {
+                journal_entries: {
+                    include: {
+                        journals: true
+                    }
+                }
+            },
+            orderBy: [
+                { journal_entries: { date: 'asc' } },
+                { created_at: 'asc' }
+            ]
+        });
+
+        return { 
+            success: true, 
+            data: JSON.parse(JSON.stringify(ledgerEntries)) 
+        };
+    } catch (error: any) {
+        console.error("Failed to fetch patient ledger:", error);
+        return { error: "Failed to fetch ledger" };
     }
 }
 
@@ -2000,6 +2333,7 @@ export async function createQuickPatient(name: string, phone: string) {
                 gender: 'unknown',
                 dob: new Date(), // Default to today/unknown
                 contact: { phone: phone, address: 'Walk-in' },
+                created_by: session.user.id,
                 metadata: {
                     source: 'quick_billing',
                     is_walk_in: true
@@ -2153,46 +2487,7 @@ export async function getPatientOutstandingBalance(patientId: string) {
     }
 }
 
-/**
- * World Class Financial Transparency:
- * Fetches the full audit trail of all financial movements for a patient.
- */
-export async function getPatientLedger(patientId: string) {
-    const session = await auth();
-    const companyId = session?.user?.companyId || session?.user?.tenantId;
-    if (!companyId || !patientId) return { error: "Unauthorized or missing ID" };
-
-    try {
-        const lines = await prisma.journal_entry_lines.findMany({
-            where: {
-                tenant_id: session.user.tenantId,
-                company_id: companyId,
-                partner_id: patientId
-            },
-            include: {
-                journal_entries: {
-                    select: {
-                        date: true,
-                        ref: true,
-                        journals: { select: { name: true, code: true } }
-                    }
-                },
-                accounts: { select: { name: true, code: true } }
-            },
-            orderBy: {
-                journal_entries: { date: 'desc' }
-            }
-        });
-
-        return { success: true, data: serialize(lines) };
-    } catch (error: any) {
-        console.error("Patient Ledger Fetch Failed:", error);
-        return { error: "Could not fetch patient ledger" };
-    }
-}
-
-const REG_FEE_DESCRIPTION = "Patient Registration Fee";
-
+// Removed local REG_FEE_DESCRIPTION declaration to fix TDZ error
 export async function generateRegistrationInvoice(patientId: string, appointmentId?: string) {
     const session = await auth();
     const tenantId = session?.user?.tenantId;
@@ -2291,12 +2586,14 @@ export async function generateRegistrationInvoice(patientId: string, appointment
 
             // 3. Generate Official Invoice Number
             // NOTE: getNextVoucherNumber uses Prisma internally, if called here it might dead-lock or fail
-            // if not passed the transaction client. But since it's a separate async call, we'll risk it or 
-            // wrap it if possible. For now, using the standard pattern.
-            const invNoRes = await getNextVoucherNumber();
+            // if not passed the transaction client. We now pass tx to eliminate connection pool deadlocks.
+            const invNoRes = await getNextVoucherNumber(new Date().toISOString(), tx);
             const invoiceNumber = invNoRes.success ? invNoRes.data : `INV-REG-${Date.now().toString().slice(-6)}`;
 
             // 4. Create Invoice Record with Line Item
+            const priceToUse = product.price !== null && product.price !== undefined ? Number(product.price) : regFee;
+            const descriptionToUse = product.description || product.name || REG_FEE_DESCRIPTION;
+
             return await tx.hms_invoice.create({
                 data: {
                     id: crypto.randomUUID(),
@@ -2305,12 +2602,12 @@ export async function generateRegistrationInvoice(patientId: string, appointment
                     patient_id: patientId,
                     appointment_id: appointmentId || null,
                     invoice_number: invoiceNumber,
-                    // [WORLD STANDARD] Use hospital timezone-aware date
-                    issued_at: await getHospitalNow(), 
-                    subtotal: product.price || 0,
+                    // [WORLD STANDARD] Use hospital timezone-aware date, pass tx to prevent pool starvation
+                    issued_at: await getHospitalNow(tx), 
+                    subtotal: priceToUse,
                     total_tax: 0,
-                    total: product.price || 0,
-                    outstanding_amount: product.price || 0,
+                    total: priceToUse,
+                    outstanding_amount: priceToUse,
                     status: 'posted',
                     billing_metadata: {
                         source: 'auto-registration-rcm',
@@ -2325,10 +2622,10 @@ export async function generateRegistrationInvoice(patientId: string, appointment
                             company_id: companyId,
                             line_idx: 1,
                             product_id: product.id,
-                            description: REG_FEE_DESCRIPTION,
+                            description: descriptionToUse,
                             quantity: 1,
-                            unit_price: product.price || 0,
-                            net_amount: product.price || 0
+                            unit_price: priceToUse,
+                            net_amount: priceToUse
                         }
                     }
                 },
@@ -2354,47 +2651,7 @@ export async function generateRegistrationInvoice(patientId: string, appointment
     }
 }
 
-export async function getOpenRegistrationInvoice(patientId: string) {
-    const session = await auth();
-    const tenantId = session?.user?.tenantId;
-    if (!tenantId) return { error: "Unauthorized" };
 
-    try {
-        const invoice = await prisma.hms_invoice.findFirst({
-            where: {
-                patient_id: patientId,
-                tenant_id: tenantId,
-                status: { in: ['draft', 'posted'] },
-                hms_invoice_lines: {
-                    some: {
-                        OR: [
-                            { description: { contains: 'Reg', mode: 'insensitive' } },
-                            { description: { contains: 'Registration', mode: 'insensitive' } },
-                            { description: { contains: 'Identity', mode: 'insensitive' } }
-                        ]
-                    }
-                }
-            },
-            select: {
-                id: true,
-                invoice_number: true,
-                status: true,
-                total: true,
-                hms_invoice_lines: {
-                    select: { id: true, description: true, net_amount: true, unit_price: true }
-                },
-                hms_patient: {
-                    select: { id: true, first_name: true, last_name: true }
-                }
-            },
-            orderBy: { created_at: 'desc' }
-        });
-
-        return { success: true, data: serialize(invoice) };
-    } catch (err: any) {
-        return { error: err.message };
-    }
-}
 
 /**
  * [RCM] Generate Consultation Invoice
@@ -2503,230 +2760,8 @@ export async function linkInvoiceToAppointment(invoiceId: string, appointmentId:
     }
 }
 
-export async function getInitialInvoiceData(rawAppointmentId: string) {
-    const session = await auth();
-    if (!session?.user?.tenantId) return { error: "Unauthorized" };
-    const tenantId = session.user.tenantId;
 
-    if (!rawAppointmentId || typeof rawAppointmentId !== 'string') {
-        console.log("[DEBUG-BILLING] Invalid appointmentId provided:", rawAppointmentId);
-        return { error: "Invalid appointment reference." };
-    }
 
-    const appointmentId = rawAppointmentId.trim();
-    if (!appointmentId) return { error: "Appointment ID cannot be empty." };
-
-    try {
-        const appointment = await prisma.hms_appointments.findUnique({
-            where: { id: appointmentId },
-            include: {
-                hms_clinician: true,
-                hms_patient: true
-            }
-        });
-
-        if (!appointment || String(appointment.tenant_id) !== String(tenantId)) {
-            return { error: "Appointment not found or access denied" };
-        }
-
-        let draftInvoice = await prisma.hms_invoice.findFirst({
-            where: {
-                OR: [
-                    { appointment_id: appointmentId },
-                    { encounter_id: appointmentId }
-                ],
-                status: { in: ['draft', 'posted'] as any[] }
-            },
-            include: {
-                hms_invoice_lines: {
-                    include: { hms_product: true }
-                },
-                hms_patient: true
-            }
-        });
-
-        // 1. Consultation Hub (Respect Master Switch)
-        const configRes = await getHMSSettings();
-        const configData = configRes.success ? configRes.settings : {};
-        const isConsultationDisabled = !!(configData as any).disableConsultationBilling;
-
-        const consultationItems: any[] = [];
-        if (!isConsultationDisabled) {
-             const consultationBillingMode = (configData as any).consultationBillingMode || 'post_visit';
-             const consultationFee = Number(appointment.hms_clinician?.consultation_fee || 0);
-             let shouldAddConsultation = (consultationBillingMode === 'at_booking') || !['scheduled', 'arrived'].includes(appointment.status);
-
-             if (consultationFee > 0 && shouldAddConsultation) {
-                 const hasConsultation = draftInvoice?.hms_invoice_lines.some(l => l.description?.includes('Consultation Fee'));
-                 if (!hasConsultation) {
-                     consultationItems.push({
-                         id: appointment.clinician_id,
-                         name: `Consultation Fee - Dr. ${appointment.hms_clinician?.first_name}`,
-                         price: consultationFee,
-                         quantity: 1,
-                         type: 'service',
-                         source: 'consultation',
-                         sourceId: appointmentId
-                     });
-                 }
-             }
-        }
-
-        // 2. Nursing Hub (Confirmed & Pending Consumables)
-        const nursingMoves = await prisma.hms_stock_move.findMany({
-            where: {
-                source_reference: appointmentId,
-                tenant_id: tenantId as any,
-                source: { in: ['Nursing Consumption', 'Nursing Consumption (Confirmed)', 'Nursing Consumption (Pending)', 'confirmed'] }
-            }
-        });
-
-        const nursingProductIds = [...new Set(nursingMoves.map(m => m.product_id))];
-        const nursingProducts = await prisma.hms_product.findMany({
-            where: { id: { in: nursingProductIds } }
-        });
-        const productMap = new Map(nursingProducts.map(p => [p.id, p]));
-
-        const nursingItems = nursingMoves.map(m => {
-            const product = productMap.get(m.product_id);
-            const finalPrice = Number(m.cost || product?.price || 0);
-            const isPending = m.source === 'Nursing Consumption (Pending)';
-            
-            return {
-                id: m.product_id,
-                name: (product?.name || 'Consumable') + (isPending ? ' (Draft)' : ''),
-                quantity: Math.abs(Number(m.qty || 1)),
-                unit_price: finalPrice,
-                price: finalPrice,
-                type: 'item',
-                source: 'nursing',
-                sourceId: m.id,
-                isPending: isPending
-            };
-        });
-
-        // 3. Doctor Hub (Prescriptions)
-        const prescriptions = await (prisma as any).prescription.findMany({
-            where: {
-                OR: [{ appointment_id: appointmentId }, { patient_id: appointment.patient_id }],
-                tenant_id: tenantId as any
-            },
-            take: 5,
-            orderBy: { created_at: 'desc' }
-        });
-
-        const prescriptionItems: any[] = [];
-        for (const p of prescriptions) {
-            const itemsRaw = await (prisma as any).prescription_items.findMany({
-                where: { prescription_id: p.id }
-            });
-            const pIds = [...new Set(itemsRaw.map((i: any) => i.medicine_id))].filter(Boolean);
-            const prods = pIds.length > 0 ? await (prisma as any).hms_product.findMany({ where: { id: { in: pIds as string[] } } }) : [];
-            const pMap = new Map(prods.map((pr: any) => [pr.id, pr]));
-
-            (itemsRaw as any[]).forEach((item: any) => {
-                const product = (pMap.get(item.medicine_id) as any) || {};
-                const totalQty = (Number(item.morning || 0) + Number(item.afternoon || 0) + Number(item.evening || 0) + Number(item.night || 0)) * Number(item.days || 1);
-                prescriptionItems.push({
-                    id: item.medicine_id || `rx-${item.id}`,
-                    name: (product as any).name || item.medicine_name || `Prescribed Medicine`,
-                    quantity: totalQty || 1,
-                    unit_price: Number((product as any).price || 0),
-                    price: Number((product as any).price || 0),
-                    type: 'item',
-                    source: 'doctor',
-                    sourceId: item.id
-                });
-            });
-        }
-
-        // 4. Lab Hub (Investigations)
-        const labOrders = await (prisma as any).hms_lab_order.findMany({
-            where: {
-                OR: [{ encounter_id: appointmentId }, { patient_id: appointment.patient_id }],
-                tenant_id: tenantId,
-                status: { not: 'cancelled' }
-            },
-            include: {
-                hms_lab_order_line: { include: { hms_lab_test: true } },
-                hms_lab_order_lines: { include: { hms_lab_test: true } }
-            }
-        });
-
-        const labItems = labOrders.flatMap((order: any) => {
-            const singular = order.hms_lab_order_line || [];
-            const plural = order.hms_lab_order_lines || [];
-            const allLines = [...singular, ...plural];
-
-            return allLines.map((line: any) => {
-                const finalPrice = Number(line.price || (line.hms_lab_test as any)?.price || 0);
-                return {
-                    id: line.test_id || line.id,
-                    name: (line.hms_lab_test as any)?.name || 'Lab Test',
-                    quantity: 1,
-                    unit_price: finalPrice,
-                    price: finalPrice,
-                    type: 'service',
-                    source: 'lab',
-                    sourceId: line.id
-                };
-            });
-        });
-
-        // 5. Registration Hub
-        const regItems: any[] = [];
-        const registrationPaid = (appointment.hms_patient?.metadata as any)?.registration_fees_paid;
-        if (!registrationPaid) {
-            const regFeeRecord = await prisma.hms_patient_registration_fees.findFirst({
-                where: { tenant_id: tenantId, is_active: true }
-            });
-            if (regFeeRecord && !draftInvoice?.hms_invoice_lines.some(l => l.description?.toLowerCase().includes('registration'))) {
-                regItems.push({
-                    id: 'reg-fee',
-                    name: 'Patient Registration Fee',
-                    price: Number(regFeeRecord.fee_amount),
-                    quantity: 1,
-                    type: 'service',
-                    source: 'registration',
-                    sourceId: 'fixed'
-                });
-            }
-        }
-
-        // Deduplicate and Prepare Hubs for Sidebar
-        const hubs = [
-            // { id: 'consult', label: 'Consultations', items: consultationItems, icon: 'User' },
-            { id: 'doctor', label: 'Doctor Hub', items: prescriptionItems, icon: 'Package' },
-            { id: 'lab', label: 'Lab Hub', items: labItems, icon: 'Activity' },
-            { id: 'nurse', label: 'Nursing Hub', items: nursingItems, icon: 'Zap' },
-            { id: 'reg', label: 'Registration Hub', items: regItems, icon: 'ShieldCheck' }
-        ].filter(h => h.items.length > 0);
-
-        // Prepare flat list for auto-inject (Legacy support)
-        const allItems = [...consultationItems, ...nursingItems, ...prescriptionItems, ...labItems, ...regItems];
-
-        const pendingCount = await prisma.hms_stock_move.count({
-            where: { source_reference: appointmentId, tenant_id: tenantId as any, source: 'Nursing Consumption (Pending)' }
-        });
-
-        return {
-            success: true,
-            data: serialize({
-                hubs,
-                initialItems: allItems,
-                initialInvoice: draftInvoice,
-                patientId: appointment.patient_id,
-                pendingConsumablesCount: pendingCount
-            })
-        };
-
-    } catch (error: any) {
-        console.error("getInitialInvoiceData error:", error);
-        return { error: error.message };
-    }
-}
-
-// Helper to JIT Create/Resolve Tax Rates
 async function resolveAutoTax(rate: number, tenant_id: string, company_id: string): Promise<string | null> {
     if ((!rate && rate !== 0)) return null;
     try {
@@ -2836,7 +2871,7 @@ async function trackRegistrationPayment(tx: any, patientId: string, tenantId: st
             where: { tenant_id: tenantId, company_id: companyId, is_active: true }
         });
 
-        const validityDays = activeFee?.validity_days || configData.validity || 7;
+        const validityDays = Number(configData.validity || 7);
 
         // 2. Calculate expiry
         const expiryDate = new Date();
@@ -2897,63 +2932,65 @@ export async function getAppointmentBillingStatus(appointmentId: string) {
     }
 }
 
-export async function getPatientActiveAppointmentForBilling(patientId: string) {
+
+export async function getInvoiceByNumber(invoiceNumber: string) {
     const session = await auth();
-    if (!session?.user?.id) return { error: "Unauthorized" };
-    const tenantId = session.user.tenantId;
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    if (!companyId) return { success: false, error: "Unauthorized" };
 
     try {
-        if (!patientId || patientId === 'undefined') return { success: true, appointmentId: null, pendingCount: 0 };
-
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-
-        const recentAppointments = await (prisma as any).hms_appointments.findMany({
+        const invoice = await prisma.hms_invoice.findFirst({
             where: {
-                patient_id: patientId,
-                tenant_id: tenantId,
-                starts_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                company_id: companyId,
+                invoice_number: invoiceNumber
             },
             select: { id: true }
         });
 
-        const apptIds = recentAppointments.map((a: any) => a.id);
-        if (apptIds.length === 0) return { success: true, appointmentId: null, pendingCount: 0 };
-
-        const pendingMoves = await (prisma as any).hms_stock_move.findMany({
-            where: {
-                source_reference: { in: apptIds },
-                source: 'Nursing Consumption (Pending)'
-            },
-            select: { id: true, qty: true, uom: true, product_id: true, created_at: true }
-        });
-
-        // Resolve product names
-        const productIds = pendingMoves.map((m: any) => m.product_id);
-        const products = await (prisma as any).hms_product.findMany({
-            where: { id: { in: productIds } },
-            select: { id: true, name: true }
-        });
-        const productMap = new Map(products.map((p: any) => [p.id, p.name]));
-
-        const itemsWithNames = pendingMoves.map((m: any) => ({
-            id: m.id,
-            name: productMap.get(m.product_id) || `Item ID: ${m.product_id.slice(0, 8)}`,
-            qty: Number(m.qty),
-            uom: m.uom,
-            timestamp: m.created_at
-        }));
-
-        return {
-            success: true,
-            appointmentId: apptIds[0],
-            pendingCount: pendingMoves.length,
-            pendingItems: itemsWithNames
-        };
+        if (!invoice) return { success: false, error: "Invoice not found" };
+        return { success: true, data: invoice.id };
     } catch (err: any) {
-        console.error("[BILLING-ACTION] Failed to fetch active context:", err);
-        return { error: err.message };
+        return { success: false, error: err.message };
+    }
+}
+
+export async function getInvoicesByPatient(patientId: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    if (!companyId) return { success: false, error: "Unauthorized" };
+
+    try {
+        const invoices = await prisma.hms_invoice.findMany({
+            where: {
+                company_id: companyId,
+                patient_id: patientId
+            },
+            orderBy: { created_at: 'desc' },
+            take: 20
+        });
+        return { success: true, data: invoices };
+    } catch (err: any) {
+        return { success: false, error: err.message };
+    }
+}
+
+export async function getInvoice(id: string) {
+    const session = await auth();
+    const companyId = session?.user?.companyId || session?.user?.tenantId;
+    if (!companyId) return null;
+
+    try {
+        const invoice = await prisma.hms_invoice.findUnique({
+            where: { id, company_id: companyId },
+            include: {
+                hms_invoice_lines: {
+                    include: { hms_product: true }
+                }
+            }
+        });
+        return invoice;
+    } catch (err) {
+        console.error(err);
+        return null;
     }
 }

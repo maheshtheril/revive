@@ -207,15 +207,20 @@ export class AccountingService {
 
                     if (!debitAccount) {
                         // Fallback to defaults using the Tally-Standardized COA codes (including legacy fallbacks)
-                        // Cash: 1001 (New), 1110 (Group), 1000 (Legacy)
-                        // Bank: 1050 (New), 1120 (Group), 1100 (Legacy)
                         const cashAccount = await prisma.accounts.findFirst({ 
                             where: { company_id: invoice.company_id, code: { in: ['1610', '1600'] } } 
                         });
                         const bankAccount = await prisma.accounts.findFirst({ 
                             where: { company_id: invoice.company_id, code: { in: ['1710', '1700'] } } 
                         });
-                        debitAccount = (paymentMethod === 'cash') ? cashAccount : bankAccount;
+                        
+                        if (paymentMethod === 'advance' || paymentMethod === 'credit_note' || paymentMethod === 'adjustment') {
+                            // WORLD STANDARD: Reconciliation entry uses AR for both sides
+                            const arAccount = await AccountingService.resolvePatientARAccount(invoice.company_id, settings.ar_account_id, invoice.hms_patient);
+                            if (arAccount) debitAccount = await prisma.accounts.findUnique({ where: { id: arAccount as string } });
+                        } else {
+                            debitAccount = (paymentMethod === 'cash') ? cashAccount : bankAccount;
+                        }
                     }
 
                     const creditAccount = settings.ar_account_id; // Credit AR to reduce debt
@@ -868,27 +873,24 @@ export class AccountingService {
      * Fetches a Daily Accounting Summary for a given date.
      */
     static async getDailyReport(companyId: string, date: Date = new Date()) {
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        const { start, end } = AccountingService.getMedicalDayRange(date);
 
         try {
             const [sales, payments, purchases, journalLines] = await Promise.all([
                 prisma.hms_invoice.findMany({
-                    where: { company_id: companyId, created_at: { gte: startOfDay, lte: endOfDay } }
+                    where: { company_id: companyId, created_at: { gte: start, lte: end } }
                 }),
                 prisma.hms_invoice_payments.findMany({
-                    where: { hms_invoice: { company_id: companyId }, created_at: { gte: startOfDay, lte: endOfDay } }
+                    where: { hms_invoice: { company_id: companyId }, created_at: { gte: start, lte: end } }
                 }),
                 prisma.hms_purchase_receipt.findMany({
-                    where: { company_id: companyId, created_at: { gte: startOfDay, lte: endOfDay } },
+                    where: { company_id: companyId, created_at: { gte: start, lte: end } },
                     include: { hms_purchase_receipt_line: true }
                 }),
                 prisma.journal_entry_lines.findMany({
                     where: {
                         company_id: companyId,
-                        journal_entries: { date: { gte: startOfDay, lte: endOfDay }, posted: true }
+                        journal_entries: { date: { gte: start, lte: end }, posted: true }
                     },
                     include: { accounts: true }
                 })
@@ -931,11 +933,9 @@ export class AccountingService {
             summary.netCashFlow = summary.totalPaid - summary.totalPurchases;
 
             // FETCH PREVIOUS DAY DATA FOR DELTAS
-            const prevDay = new Date(startOfDay);
-            prevDay.setDate(prevDay.getDate() - 1);
-            const prevStart = new Date(prevDay);
-            const prevEnd = new Date(prevDay);
-            prevEnd.setHours(23, 59, 59, 999);
+            const yesterday = new Date(date);
+            yesterday.setDate(yesterday.getDate() - 1);
+            const { start: prevStart, end: prevEnd } = AccountingService.getMedicalDayRange(yesterday);
 
             const [pSales, pPayments, pPurchases] = await Promise.all([
                 prisma.hms_invoice.findMany({
@@ -1398,6 +1398,18 @@ export class AccountingService {
             const salesAccount = settings.sales_account_id;
             if (!arAccount || !salesAccount) throw new Error("Accounts not configured.");
 
+            const meta = (sReturn.metadata as any) || {};
+            const isCashRefund = meta.refund_method === 'cash';
+
+            let creditAccountId = arAccount;
+            if (isCashRefund) {
+                // Fetch Cash Account (1610)
+                const cashAcc = await prisma.accounts.findFirst({
+                    where: { company_id: sReturn.company_id, code: '1610' }
+                });
+                if (cashAcc) creditAccountId = cashAcc.id;
+            }
+
             const journal = await prisma.journal_entries.create({
                 data: {
                     tenant_id: sReturn.tenant_id,
@@ -1414,6 +1426,7 @@ export class AccountingService {
                                 tenant_id: sReturn.tenant_id,
                                 company_id: sReturn.company_id,
                                 account_id: salesAccount,
+                                partner_id: sReturn.patient_id,
                                 debit: sReturn.total_amount,
                                 credit: 0,
                                 description: `Sales Return ${sReturn.return_number} - ${sReturn.hms_patient?.first_name || ''} ${sReturn.hms_patient?.last_name || ''}`
@@ -1421,10 +1434,11 @@ export class AccountingService {
                             {
                                 tenant_id: sReturn.tenant_id,
                                 company_id: sReturn.company_id,
-                                account_id: arAccount,
+                                account_id: creditAccountId,
+                                partner_id: sReturn.patient_id,
                                 debit: 0,
                                 credit: sReturn.total_amount,
-                                description: `Sales Return ${sReturn.return_number}`
+                                description: `Sales Return ${sReturn.return_number} (${isCashRefund ? 'Cash' : 'Credit'})`
                             }
                         ]
                     }
@@ -1529,12 +1543,27 @@ export class AccountingService {
             const startOfLast7 = new Date();
             startOfLast7.setDate(today.getDate() - 7);
 
-            const [lines, pAndL] = await Promise.all([
+            // Fetch P&L for context (used in forecasts)
+            const pAndL = await AccountingService.getProfitAndLoss(
+                companyId, 
+                new Date(today.getFullYear(), today.getMonth(), 1), 
+                today
+            );
+
+            const [lines] = await Promise.all([
                 prisma.journal_entry_lines.findMany({
-                    where: { company_id: companyId, journal_entries: { date: { gte: startOfLast7 }, posted: true } },
-                    include: { accounts: true, journal_entries: { select: { date: true } } }
-                }),
-                this.getProfitAndLoss(companyId, new Date(today.getFullYear(), today.getMonth(), 1), today)
+                    where: { 
+                        company_id: companyId, 
+                        journal_entries: { 
+                            date: { gte: startOfLast7 }, 
+                            posted: true 
+                        } 
+                    },
+                    include: { 
+                        accounts: true, 
+                        journal_entries: { select: { date: true } } 
+                    }
+                })
             ]);
 
             const insights: string[] = [];
@@ -1548,7 +1577,7 @@ export class AccountingService {
 
             const topExpense = Array.from(expenseMap.entries()).sort((a, b) => b[1] - a[1])[0];
             if (topExpense && topExpense[1] > 10000) {
-                insights.push(`Top outflow identified: ${topExpense[0]} has consumed ₹${topExpense[1].toLocaleString()} in the last 7 days.`);
+                insights.push(`Top outflow identified: ${topExpense[0]} has consumed \u20B9${topExpense[1].toLocaleString()} in the last 7 days.`);
             }
 
             // 2. PROFITABILITY FORECAST
@@ -1595,16 +1624,13 @@ export class AccountingService {
      * Fetches Daybook entries for a specific date.
      */
     static async getDaybook(companyId: string, date: Date = new Date()) {
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        const { start, end } = AccountingService.getMedicalDayRange(date);
 
         try {
             const entries = await (prisma.journal_entries.findMany as any)({
                 where: {
                     company_id: companyId,
-                    date: { gte: startOfDay, lte: endOfDay },
+                    date: { gte: start, lte: end },
                     posted: true
                 },
                 include: {
@@ -1976,5 +2002,99 @@ export class AccountingService {
             console.error("Ageing Report Error:", error);
             return { success: false, error: error.message };
         }
+    }
+
+    /**
+     * Generates a Detailed Ledger for a specific account.
+     * World Standard: Includes running balance and opening balance logic.
+     */
+    static async getLedger(companyId: string, accountId: string, startDate?: Date, endDate?: Date) {
+        try {
+            const account = await prisma.accounts.findUnique({ where: { id: accountId } });
+            if (!account) throw new Error("Account not found");
+
+            const where: any = {
+                company_id: companyId,
+                account_id: accountId,
+                journal_entries: { posted: true }
+            };
+
+            if (startDate || endDate) {
+                where.journal_entries.date = {};
+                if (startDate) {
+                    const sd = new Date(startDate);
+                    sd.setHours(0, 0, 0, 0);
+                    where.journal_entries.date.gte = sd;
+                }
+                if (endDate) {
+                    const ed = new Date(endDate);
+                    ed.setHours(23, 59, 59, 999);
+                    where.journal_entries.date.lte = ed;
+                }
+            }
+
+            const lines = await prisma.journal_entry_lines.findMany({
+                where,
+                include: {
+                    journal_entries: {
+                        include: { journals: true }
+                    },
+                    accounts: true
+                },
+                orderBy: [
+                    { journal_entries: { date: 'asc' } },
+                    { created_at: 'asc' }
+                ]
+            });
+
+            // RESOLVE PARTNER NAMES (PATIENTS)
+            const partnerIds = lines.map(l => l.partner_id).filter(Boolean) as string[];
+            const partners = partnerIds.length > 0 ? await prisma.hms_patient.findMany({
+                where: { id: { in: partnerIds } },
+                select: { id: true, first_name: true, last_name: true, patient_number: true }
+            }) : [];
+
+            const partnerMap = new Map(partners.map(p => [p.id, `${p.first_name} ${p.last_name || ''}`.trim()]));
+            const hydratedLines = lines.map(l => ({
+                ...l,
+                partner_name: l.partner_id ? partnerMap.get(l.partner_id) : null
+            }));
+
+            // Calculate Opening Balance if range is provided
+            let openingBalance = 0;
+            if (startDate) {
+                const sd = new Date(startDate);
+                sd.setHours(0, 0, 0, 0);
+                const prevLines = await prisma.journal_entry_lines.aggregate({
+                    where: {
+                        company_id: companyId,
+                        account_id: accountId,
+                        journal_entries: { date: { lt: sd }, posted: true }
+                    },
+                    _sum: { debit: true, credit: true }
+                });
+                openingBalance = Number(prevLines._sum.debit || 0) - Number(prevLines._sum.credit || 0);
+            }
+
+            return { success: true, account, lines: hydratedLines, openingBalance };
+        } catch (error: any) {
+            console.error("Ledger Error:", error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Calculates the "Medical Day" range (8:00 AM to 7:59 AM next day).
+     * This is the world standard for 24/7 hospitals to ensure shift-consistent reporting.
+     */
+    static getMedicalDayRange(date: Date) {
+        const start = new Date(date);
+        start.setHours(8, 0, 0, 0);
+
+        const end = new Date(date);
+        end.setDate(end.getDate() + 1);
+        end.setHours(7, 59, 59, 999);
+
+        return { start, end };
     }
 }

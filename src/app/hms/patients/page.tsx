@@ -31,11 +31,14 @@ export default async function PatientsPage({
         )
     }
 
+    const isAdmin = session?.user?.isAdmin || (session?.user as any)?.isTenantAdmin;
+
     const patients = await prisma.hms_patient.findMany({
         take: 20,
         orderBy: { updated_at: 'desc' },
         where: {
             tenant_id: tenantId, // Filter by current user's tenant
+            ...(!isAdmin && { created_by: session.user.id }), // Filter by user if not admin
             ...(query ? {
                 OR: [
                     { first_name: { contains: query, mode: 'insensitive' } },

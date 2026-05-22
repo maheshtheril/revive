@@ -38,6 +38,43 @@ const normalizeGender = (gender: string | null) => {
     return 'unknown';
 }
 
+export async function getNextPatientNumber(companyId: string, tenantId: string) {
+    const companyData = await prisma.company.findUnique({
+        where: { id: (companyId || tenantId) as string },
+        select: { metadata: true }
+    });
+    const meta = (companyData?.metadata as any) || {};
+    const prefix = meta.patient_id_prefix || 'PAT';
+    const mode = meta.patient_id_mode || 'timestamp';
+    const startNumber = Number(meta.patient_id_start_number) || 1000;
+
+    if (mode === 'sequential') {
+        const lastPatient = await prisma.hms_patient.findFirst({
+            where: {
+                company_id: companyId,
+                patient_number: { startsWith: prefix + '-' }
+            },
+            orderBy: { created_at: 'desc' },
+            select: { patient_number: true }
+        });
+
+        let nextSeq = startNumber;
+        if (lastPatient?.patient_number) {
+            const parts = lastPatient.patient_number.split('-');
+            const lastSeqStr = parts[parts.length - 1];
+            const lastSeq = parseInt(lastSeqStr, 10);
+            if (!isNaN(lastSeq)) {
+                nextSeq = Math.max(lastSeq + 1, startNumber);
+            }
+        }
+        // Use padStart to guarantee it looks clean (like 01000) or just string if it's over
+        return `${prefix}-${nextSeq.toString()}`;
+    }
+
+    // Default timestamp mode
+    return `${prefix}-${Date.now().toString().slice(-6)}`;
+}
+
 export async function createPatientV10(patientId: string | null | any, formData: FormData) {
     const session = await auth();
     if (!session?.user?.id || !session?.user?.tenantId) {
@@ -115,13 +152,15 @@ export async function createPatientV10(patientId: string | null | any, formData:
             if (isUpdate) {
                 patient = await prisma.hms_patient.update({ where: { id: patientId as string }, data: upsertPayload });
             } else {
+                const nextPatientNumber = await getNextPatientNumber(companyId as string, tenantId as string);
+
                 patient = await prisma.hms_patient.create({
                     data: {
                         ...upsertPayload,
                         id: crypto.randomUUID(),
                         tenant_id: tenantId,
                         company_id: companyId,
-                        patient_number: `PAT-${Date.now().toString().slice(-6)}`,
+                        patient_number: nextPatientNumber,
                         created_at: new Date(),
                         created_by: userId,
                         status: 'active'
@@ -200,3 +239,35 @@ export async function createPatientQuick(name: string, phone: string) {
 }
 
 
+export async function updatePatientMetadata(patientId: string, newMetadata: any) {
+    const session = await auth();
+    if (!session?.user?.id || !session?.user?.tenantId) {
+        return { error: "Unauthorized" };
+    }
+
+    try {
+        const patient = await prisma.hms_patient.findUnique({
+            where: { id: patientId, tenant_id: session.user.tenantId },
+            select: { metadata: true }
+        });
+
+        if (!patient) return { error: "Patient not found" };
+
+        const currentMetadata = (patient.metadata as any) || {};
+        const mergedMetadata = { ...currentMetadata, ...newMetadata };
+
+        await prisma.hms_patient.update({
+            where: { id: patientId },
+            data: {
+                metadata: mergedMetadata,
+                updated_at: new Date(),
+                updated_by: session.user.id
+            }
+        });
+
+        return { success: true };
+    } catch (err: any) {
+        console.error("[UPDATE_PATIENT_METADATA_FAIL]", err);
+        return { error: err.message };
+    }
+}

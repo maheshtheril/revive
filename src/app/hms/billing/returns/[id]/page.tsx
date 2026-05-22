@@ -1,184 +1,165 @@
-'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { getSalesReturn, deleteSalesReturn } from '@/app/actions/returns';
-import { ArrowLeft, Loader2, RotateCcw, Trash2, Printer, AlertTriangle } from 'lucide-react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { prisma } from "@/lib/prisma"
+import { auth } from "@/auth"
+import Link from "next/link"
+import { notFound } from "next/navigation"
+import { ArrowLeft, Printer, Download, CreditCard, Calendar, User, FileText, ExternalLink, Edit } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
-export default function SalesReturnDetailsPage() {
-    const router = useRouter();
-    const params = useParams<{ id: string }>();
-    const { toast } = useToast();
-    const [returnIdx, setReturnIdx] = useState<any>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isDeleting, setIsDeleting] = useState(false);
+export default async function SalesReturnDetailsPage({ 
+    params 
+}: { 
+    params: Promise<{ id: string }>
+}) {
+    const session = await auth();
+    const { id } = await params;
 
-    useEffect(() => {
-        async function load() {
-            try {
-                const res = await getSalesReturn(params.id);
-                if (res.success && res.data) {
-                    setReturnIdx(res.data);
-                } else {
-                    toast({ title: "Error", description: res.error || "Return not found", variant: "destructive" });
-                    router.push('/hms/billing/returns');
+    if (!session?.user?.tenantId) return <div>Unauthorized</div>;
+
+    const sReturn = await prisma.hms_sales_return.findUnique({
+        where: {
+            id,
+            tenant_id: session.user.tenantId
+        },
+        include: {
+            hms_patient: true,
+            hms_invoice: true,
+            lines: {
+                include: {
+                    hms_product: true
                 }
-            } catch (error) {
-                console.error("Failed to load return", error);
-            } finally {
-                setIsLoading(false);
             }
         }
-        load();
-    }, [params.id, router, toast]);
+    });
 
-    const handleDelete = async () => {
-        setIsDeleting(true);
-        try {
-            const res = await deleteSalesReturn(params.id);
-            if (res.success) {
-                toast({ title: "Deleted", description: "Return deleted successfully." });
-                router.push('/hms/billing/returns');
-            } else {
-                toast({ title: "Error", description: res.error, variant: "destructive" });
-            }
-        } catch (e) {
-            toast({ title: "Error", description: "Delete failed", variant: "destructive" });
-        } finally {
-            setIsDeleting(false);
-        }
-    };
-
-    if (isLoading) {
-        return (
-            <div className="flex justify-center items-center h-screen bg-background text-foreground">
-                <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
-            </div>
-        );
-    }
-
-    if (!returnIdx) return null;
-
-    const isDraft = returnIdx.status === 'draft';
+    if (!sReturn) return notFound();
 
     return (
-        <div className="min-h-screen bg-background text-foreground font-sans p-8">
-            <div className="max-w-4xl mx-auto">
-                <div className="mb-8 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <Link href="/hms/billing/returns">
-                            <Button variant="ghost" size="icon" className="rounded-full">
-                                <ArrowLeft className="h-5 w-5" />
-                            </Button>
-                        </Link>
-                        <div>
-                            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
-                                Credit Note
-                                <span className="font-mono text-emerald-600">#{returnIdx.return_number}</span>
-                            </h1>
-                            <p className="text-muted-foreground text-sm">
-                                {new Date(returnIdx.return_date).toLocaleDateString()} • {returnIdx.hms_patient?.first_name} {returnIdx.hms_patient?.last_name}
-                            </p>
+        <div className="max-w-4xl mx-auto space-y-8 p-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <Link href="/hms/billing/returns" className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                        <ArrowLeft className="h-5 w-5 text-slate-500" />
+                    </Link>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-2xl font-bold text-slate-900">{sReturn.return_number}</h1>
+                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase rounded-md tracking-widest">Credit Note</span>
                         </div>
+                        <p className="text-slate-500 text-sm">Processed on {new Date(sReturn.created_at).toLocaleDateString()}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                        {!isDraft && (
-                            <div className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest border border-emerald-100">
-                                Posted
-                            </div>
-                        )}
-                        {isDraft && (
-                            <div className="bg-gray-100 text-gray-500 px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest border border-gray-200">
-                                Draft
-                            </div>
-                        )}
-                        <Button variant="outline" size="sm" onClick={() => window.print()}>
-                            <Printer className="h-4 w-4 mr-2" /> Print
+                </div>
+                <div className="flex items-center gap-2">
+                    <Link href={`/hms/billing/returns/${sReturn.id}/edit`}>
+                        <Button variant="outline" className="border-emerald-200 hover:bg-emerald-50 text-emerald-600">
+                            <Edit className="h-4 w-4 mr-2" /> Edit Return
                         </Button>
-                        {isDraft && (
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button variant="destructive" size="sm">
-                                        <Trash2 className="h-4 w-4 mr-2" /> Delete
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Draft Return?</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                            This will permanently delete this return and reverse any stock adjustments made. This action cannot be undone.
-                                        </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
-                        )}
-                    </div>
+                    </Link>
+                    <Link href={`/api/return-printer/${sReturn.id}?autoPrint=true`} target="_blank">
+                        <Button className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100">
+                            <Printer className="h-4 w-4 mr-2" /> Print Credit Note
+                        </Button>
+                    </Link>
+                    <Link href={`/api/return-printer/${sReturn.id}`} target="_blank">
+                        <Button variant="outline">
+                            <Download className="h-4 w-4 mr-2" /> Download PDF
+                        </Button>
+                    </Link>
                 </div>
+            </div>
 
-                <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-                    <div className="p-6 border-b border-border bg-muted/20">
-                        <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Items Returned</h3>
-                    </div>
-                    <div className="divide-y divide-border">
-                        {returnIdx.lines.map((line: any) => (
-                            <div key={line.id} className="grid grid-cols-12 gap-4 px-6 py-4 items-center">
-                                <div className="col-span-8">
-                                    <p className="font-bold text-sm">
-                                        {line.hms_product?.name || line.hms_invoice_line?.description || 'Unknown Item'}
-                                    </p>
-                                    <p className="text-xs text-muted-foreground font-mono mt-1">
-                                        {line.product_id ? line.hms_product?.sku : 'Ad-hoc Item'}
-                                    </p>
-                                </div>
-                                <div className="col-span-2 text-right">
-                                    <p className="text-sm font-bold">{Number(line.qty)}</p>
-                                    <p className="text-[10px] text-muted-foreground uppercase">Qty</p>
-                                </div>
-                                <div className="col-span-2 text-right">
-                                    <p className="text-sm font-bold text-emerald-600">₹{Number(line.line_total).toFixed(2)}</p>
-                                </div>
+            {/* Against Bill Link */}
+            {sReturn.hms_invoice && (
+                <Link href={`/hms/billing/${sReturn.hms_invoice.id}`}>
+                    <div className="p-4 bg-slate-900 text-white rounded-2xl flex items-center justify-between group hover:bg-slate-800 transition-all cursor-pointer border border-white/10 shadow-xl">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white/10 rounded-lg">
+                                <FileText className="h-4 w-4 text-emerald-400" />
                             </div>
-                        ))}
-                    </div>
-                    <div className="p-6 border-t border-border bg-emerald-50/10 flex justify-between items-center">
-                        <div className="text-sm text-muted-foreground max-w-sm">
-                            <span className="font-bold">Reason:</span> {returnIdx.reason || 'No reason provided'}
+                            <div>
+                                <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Linked Document</p>
+                                <p className="font-bold">Against Bill: {sReturn.hms_invoice.invoice_number}</p>
+                            </div>
                         </div>
-                        <div className="text-right">
-                            <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Total Refund</p>
-                            <p className="text-3xl font-black text-emerald-600">₹{Number(returnIdx.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                        <ExternalLink className="h-4 w-4 text-white/20 group-hover:text-white transition-colors" />
+                    </div>
+                </Link>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Patient Info */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                        <User className="h-3 w-3" /> Patient Identity
+                    </h3>
+                    {sReturn.hms_patient ? (
+                        <div className="space-y-1">
+                            <div className="font-bold text-lg text-slate-900">
+                                {sReturn.hms_patient.first_name} {sReturn.hms_patient.last_name}
+                            </div>
+                            <div className="text-slate-500 text-sm">{sReturn.hms_patient.patient_number}</div>
+                        </div>
+                    ) : (
+                        <div className="text-slate-400 italic">Walk-in Patient</div>
+                    )}
+                </div>
+
+                {/* Return Details */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                        <Calendar className="h-3 w-3" /> Transaction Intel
+                    </h3>
+                    <div className="space-y-3 text-sm">
+                        <div className="flex justify-between">
+                            <span className="text-slate-500 font-medium">Return Reason</span>
+                            <span className="font-bold text-slate-900">{sReturn.reason || "Standard Sales Return"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-slate-500 font-medium">Refund Method</span>
+                            <span className="font-bold text-emerald-600 uppercase">{(sReturn.metadata as any)?.refund_method || "Credit Note"}</span>
                         </div>
                     </div>
                 </div>
+            </div>
 
-                {!isDraft && (
-                    <div className="mt-6 flex items-start gap-3 p-4 rounded-lg bg-blue-50 text-blue-700 border border-blue-100">
-                        <AlertTriangle className="h-5 w-5 shrink-0" />
-                        <div className="text-sm">
-                            <p className="font-bold mb-1">Cannot Edit Posted Return</p>
-                            <p>This credit note has been posted to accounting and cannot be modified. If there is an error, this document serves as a permanent record. Reversal functionality is coming soon.</p>
-                        </div>
-                    </div>
-                )}
+            {/* Line Items */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                            <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Item Description</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Qty</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Unit Price</th>
+                            <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Reversed Total</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium">
+                        {sReturn.lines.map((line) => (
+                            <tr key={line.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="px-6 py-4">
+                                    <div className="font-bold text-slate-900">{line.hms_product?.name || "Product"}</div>
+                                    <div className="text-[10px] text-slate-400 font-mono">{(line.metadata as any)?.batch_id?.slice(0,8) || "NO-BATCH"}</div>
+                                </td>
+                                <td className="px-6 py-4 text-right text-slate-600 font-mono">{Number(line.qty)}</td>
+                                <td className="px-6 py-4 text-right text-slate-600 font-mono">₹{Number(line.unit_price).toFixed(2)}</td>
+                                <td className="px-6 py-4 text-right text-slate-900 font-bold font-mono">₹{Number(line.line_total).toFixed(2)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50/80">
+                        <tr>
+                            <td colSpan={3} className="px-6 py-6 text-right font-black text-slate-500 uppercase tracking-widest text-[10px]">Total Refund Amount</td>
+                            <td className="px-6 py-6 text-right text-xl font-black text-emerald-600 font-mono">₹{Number(sReturn.total_amount).toFixed(2)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            {/* Audit Note */}
+            <div className="text-center">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Institutional Credit Note Node • Audited Workflow</p>
             </div>
         </div>
-    );
+    )
 }

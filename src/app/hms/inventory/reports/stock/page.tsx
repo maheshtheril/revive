@@ -331,6 +331,7 @@ export default function StockReportPremium() {
                             <option value="in">In Stock Only (&gt;0)</option>
                             <option value="low">Low Stock (&lt;10)</option>
                             <option value="out">Out of Stock (Zero)</option>
+                            <option value="negative">Negative Stock</option>
                             <option value="expiry">Expiring (3 Months)</option>
                         </select>
 

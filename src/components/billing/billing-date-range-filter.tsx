@@ -28,12 +28,19 @@ export function BillingDateRangeFilter() {
     }, [])
 
     const [range, setRange] = React.useState<DateRange | undefined>(() => {
-        if (fromParam && toParam) {
-            return { from: new Date(fromParam), to: new Date(toParam) }
-        } else if (fromParam) {
-            return { from: new Date(fromParam), to: new Date(fromParam) }
+        try {
+            if (fromParam === 'all' || toParam === 'all') return undefined;
+            const fp = fromParam ?? format(new Date(), 'yyyy-MM-dd');
+            const tp = toParam ?? format(new Date(), 'yyyy-MM-dd');
+            const f = new Date(fp);
+            const t = new Date(tp);
+            if (!isNaN(f.getTime()) && !isNaN(t.getTime())) {
+                return { from: f, to: t };
+            }
+        } catch (e) {
+            return undefined;
         }
-        return undefined
+        return undefined;
     })
 
     if (!mounted) {
@@ -47,7 +54,7 @@ export function BillingDateRangeFilter() {
                     disabled
                 >
                     <CalendarIcon className="mr-2 h-4 w-4 text-slate-400" />
-                    Filtered by Dates
+                    Today (Default)
                 </Button>
             </div>
         )
@@ -65,8 +72,8 @@ export function BillingDateRangeFilter() {
                 params.set('to', format(newRange.from, 'yyyy-MM-dd'))
             }
         } else {
-            params.delete('from')
-            params.delete('to')
+            params.set('from', 'all')
+            params.set('to', 'all')
         }
         replace(`${pathname}?${params.toString()}`)
     }
@@ -74,8 +81,8 @@ export function BillingDateRangeFilter() {
     const clear = () => {
         setRange(undefined)
         const params = new URLSearchParams(searchParams)
-        params.delete('from')
-        params.delete('to')
+        params.set('from', 'all')
+        params.set('to', 'all')
         replace(`${pathname}?${params.toString()}`)
     }
 
@@ -94,14 +101,16 @@ export function BillingDateRangeFilter() {
                         <CalendarIcon className={cn("mr-2 h-4 w-4", !range ? "text-slate-400" : "text-indigo-400")} />
                         {range?.from ? (
                             range.to ? (
-                                <>
-                                    {format(range.from, "LLL dd")} <ArrowRight className="mx-1 h-3 w-3 opacity-50" /> {format(range.to, "LLL dd, y")}
-                                </>
+                                range.from.getTime() === range.to.getTime() ? format(range.from, "LLL dd, y") : (
+                                    <>
+                                        {format(range.from, "LLL dd")} <ArrowRight className="mx-1 h-3 w-3 opacity-50 inline" /> {format(range.to, "LLL dd, y")}
+                                    </>
+                                )
                             ) : (
                                 format(range.from, "LLL dd, y")
                             )
                         ) : (
-                            "Filtered by Dates"
+                            "All Time (No Filter)"
                         )}
                     </Button>
                 </PopoverTrigger>
@@ -143,16 +152,14 @@ export function BillingDateRangeFilter() {
                        >
                          This Month
                        </Button>
-                       {range && (
-                        <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={clear}
-                            className="ml-auto text-[10px] font-black uppercase tracking-widest text-rose-600 hover:bg-rose-50 h-8"
-                        >
-                            <X className="mr-1 h-3 w-3" /> Clear
-                        </Button>
-                       )}
+                       <Button 
+                           variant="ghost" 
+                           size="sm" 
+                           onClick={clear}
+                           className="ml-auto text-[10px] font-black uppercase tracking-widest text-rose-600 hover:bg-rose-50 h-8"
+                       >
+                           <X className="mr-1 h-3 w-3" /> All Time
+                       </Button>
                     </div>
                 </PopoverContent>
             </Popover>

@@ -41,7 +41,7 @@ const ROLES_DEFINITION = [
         module: 'hms',
         description: 'Front desk staff for patient check-in and appointments',
         permissions: [
-            'hms.reception.view', 'hms.appointment.view', 'hms.patient.view', 'hms.patient.create'
+            'hms:dashboard:reception', 'hms:view'
         ]
     },
 

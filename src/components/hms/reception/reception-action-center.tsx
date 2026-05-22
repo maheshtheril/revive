@@ -1,19 +1,22 @@
 'use client'
 
 import { cn } from "@/lib/utils"
+// TurboSync: Refreshing module factory
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
     UserPlus, CalendarPlus, LogIn, CreditCard,
     PhoneIncoming, IdCard, Users, Search,
     Clock, Stethoscope, ChevronRight, Filter, ChevronDown, CheckCircle, Smartphone, MoreVertical, Edit, Activity, IndianRupee,
     Printer, Wallet, Banknote, Fingerprint, Receipt, LayoutDashboard, Kanban, AlertTriangle, Syringe, Zap, Eye, EyeOff, Wifi, Bed as BedIcon,
-    RotateCcw, ShieldAlert, Trash2, Loader2, History
+    RotateCcw, ShieldAlert, Trash2, Loader2, History, BookOpen, MessageSquare, Maximize2, Minimize2, X, FileText
 } from "lucide-react"
 import { ExpenseDialog } from "./expense-dialog"
+import { PaymentVoucherForm } from "@/components/accounting/payment-voucher-form"
 import { PettyCashVoucher } from "./petty-cash-voucher"
 import { ShiftManager } from "./shift-manager"
+import { getCurrentShift } from "@/app/actions/shift"
 import PunchWidget from "@/components/attendance/punch-widget"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuPortal } from "@/components/ui/dropdown-menu"
@@ -27,13 +30,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select"
 import { updateAppointmentStatus } from "@/app/actions/appointment"
 import { searchPatients } from "@/app/actions/patient-search"
-import { getInitialInvoiceData, voidPayment } from "@/app/actions/billing"
+import { voidPayment, getTaxConfiguration, getBillableItems } from "@/app/actions/billing"
+import { getInitialInvoiceData } from "@/app/actions/clinical"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/components/ui/use-toast"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import Link from "next/link"
 import { VisitTypeBadge } from "../visit-type-badge"
-import { MessageSquare } from "lucide-react"
 import { AdmissionDialog } from "@/components/hms/patients/admission-dialog"
 import { OpSlipDialog } from "./op-slip-dialog"
 import { WardManager } from "@/components/wards/ward-manager"
@@ -61,6 +64,15 @@ interface ReceptionActionCenterProps {
 
 import { DashboardDateFilter } from "../dashboard-date-filter"
 
+const getInitials = (firstName?: string, lastName?: string) => {
+    const f = firstName?.trim() || "";
+    const l = lastName?.trim() || "";
+    if (!f && !l) return "U";
+    if (f && !l) return f.substring(0, 2).toUpperCase();
+    if (!f && l) return l.substring(0, 2).toUpperCase();
+    return `${f[0]}${l[0]}`.toUpperCase();
+};
+
 export function ReceptionActionCenter({
     todayAppointments,
     patients,
@@ -86,6 +98,10 @@ export function ReceptionActionCenter({
     const [isPrivacyMode, setIsPrivacyMode] = useState(false)
     const [currentTime, setCurrentTime] = useState(new Date())
     const [activeModal, setActiveModal] = useState<string | null>(null)
+    const [activeShift, setActiveShift] = useState<any>(null)
+    const [isMounted, setIsMounted] = useState(false)
+    const [isExpenseMaximized, setIsExpenseMaximized] = useState(true)
+    const [isJournalMaximized, setIsJournalMaximized] = useState(true)
     const [editingAppointment, setEditingAppointment] = useState<any>(null)
     const [selectedDoctor, setSelectedDoctor] = useState<string>("all")
     const [selectedStatus, setSelectedStatus] = useState<string>("all")
@@ -174,8 +190,37 @@ export function ReceptionActionCenter({
                 })
             }
 
+            // F5 - Expense Entry Modal
+            if (e.key === 'F5' && !activeModal) {
+                e.preventDefault()
+                if (!activeShift) {
+                    toast({ title: "⚠️ Counter Session Closed", description: "You must start a cash shift session and verify your starting float before logging petty cash expenses.", variant: "destructive" })
+                    setActiveModal('shift')
+                    return
+                }
+                setActiveModal('expense')
+            }
+
+            // F7 - Journal / Voucher Entry Modal
+            if (e.key === 'F7' && !activeModal) {
+                e.preventDefault()
+                if (!activeShift) {
+                    toast({ title: "⚠️ Counter Session Closed", description: "You must start a cash shift session and verify your starting float before entering accounting vouchers.", variant: "destructive" })
+                    setActiveModal('shift')
+                    return
+                }
+                setActiveModal('journal')
+            }
+
             // Escape - Close Modal
             if (e.key === 'Escape' && activeModal) {
+                const target = e.target as HTMLElement;
+                if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.closest('[role="combobox"]') || target.closest('[role="listbox"]') || target.closest('[role="dialog"]') || target.closest('.z-\\[120\\]') || target.closest('.z-\\[200\\]'))) {
+                    return;
+                }
+                if (document.querySelector('.z-\\[120\\]') || document.querySelector('.z-\\[200\\]')) {
+                    return;
+                }
                 setActiveModal(null)
                 setEditingAppointment(null)
             }
@@ -183,7 +228,7 @@ export function ReceptionActionCenter({
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [activeModal, router, toast])
+    }, [activeModal, router, toast, activeShift])
 
     const handleEditClick = (apt: any) => {
         setEditingAppointment(apt)
@@ -191,12 +236,28 @@ export function ReceptionActionCenter({
     }
 
     const handleAction = (actionId: string) => {
+        if (['voucher', 'billing', 'expense', 'journal', 'appointment', 'create-patient'].includes(actionId)) {
+            if (!activeShift) {
+                toast({ title: "⚠️ Counter Session Closed", description: "You must start a cash counter session and verify your starting float before processing registrations, billing, or vouchers.", variant: "destructive" })
+                setActiveModal('shift')
+                return
+            }
+        }
+
         if (actionId === 'voucher') {
             router.push('/hms/reception/registration-voucher')
             return
         }
         if (actionId === 'billing') {
             router.push('/hms/billing')
+            return
+        }
+        if (actionId === 'ledger_view') {
+            setIsPaymentsOpen(true)
+            return
+        }
+        if (actionId === 'expense_report') {
+            router.push('/hms/accounting/payments')
             return
         }
         if (actionId === 'beds') {
@@ -209,7 +270,6 @@ export function ReceptionActionCenter({
         setActiveModal(actionId as any)
     }
 
-    // Filter Logic for Appointments
     // Filter Logic for Appointments
     const filteredAppointments = todayAppointments.filter(apt => {
         const matchesDoctor = selectedDoctor === 'all' || apt.clinician?.id === selectedDoctor
@@ -302,13 +362,21 @@ export function ReceptionActionCenter({
         { id: 'voucher', title: 'Reg Voucher', icon: CreditCard, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', border: 'border-orange-100 dark:border-orange-800' },
         { id: 'appointment', title: 'OP/IP Registration', icon: CalendarPlus, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', border: 'border-blue-100 dark:border-blue-800' },
         { id: 'billing', title: 'IP/OP Billing', icon: CreditCard, color: 'text-violet-600', bg: 'bg-violet-50 dark:bg-violet-900/20', border: 'border-violet-100 dark:border-violet-800' },
-        { id: 'beds', title: 'Bed Units', icon: BedIcon, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', border: 'border-indigo-100 dark:border-indigo-800' },
-        { id: 'expense', title: 'Expense', icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', border: 'border-amber-100 dark:border-amber-800' },
+        { id: 'journal', title: 'Advanced Voucher (F7)', icon: BookOpen, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-100 dark:border-emerald-800' },
+        { id: 'ledger_view', title: 'Financial Ledger', icon: History, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', border: 'border-blue-100 dark:border-blue-800' },
+        { id: 'expense', title: 'Petty Cash / Exp (F5)', icon: Wallet, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', border: 'border-amber-100 dark:border-amber-800' },
         { id: 'shift', title: 'Cash Counter', icon: Banknote, color: 'text-slate-600', bg: 'bg-slate-50 dark:bg-slate-800/50', border: 'border-slate-200 dark:border-slate-700' },
+        { id: 'expense_report', title: 'Expense Reports', icon: FileText, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-900/20', border: 'border-rose-100 dark:border-rose-800' },
     ]
 
-    const [isMounted, setIsMounted] = useState(false)
-    useEffect(() => { setIsMounted(true) }, [])
+    useEffect(() => { 
+        setIsMounted(true)
+        async function fetchShift() {
+            const s = await getCurrentShift();
+            setActiveShift(s);
+        }
+        fetchShift();
+    }, [])
 
     if (!isMounted) return (
         <div className="flex-1 space-y-6 pt-6 p-8 bg-slate-50 dark:bg-slate-900 min-h-screen">
@@ -325,82 +393,99 @@ export function ReceptionActionCenter({
     )
 
     return (
-        <div className="flex-1 space-y-6 pt-6 overflow-x-hidden animate-in fade-in duration-500 relative">
+        <div className="flex-1 space-y-8 pt-6 overflow-x-hidden animate-in fade-in duration-700 relative">
             {/* GLOBAL DATE HUB & LIVE PULSE */}
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-4">
-                <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                        <h1 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Front <span className="text-indigo-600">Office</span></h1>
-                        <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50 shadow-sm shrink-0">
-                            <div className="relative flex h-1.5 w-1.5">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                            </div>
-                            <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                                <Wifi className="h-2.5 w-2.5" /> LIVE PULSE
-                            </span>
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-2 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl p-6 rounded-3xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.06)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)]">
+                <div className="space-y-1.5">
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-2xl font-black bg-gradient-to-r from-indigo-600 via-purple-600 to-emerald-600 bg-clip-text text-transparent uppercase tracking-tighter italic drop-shadow-sm">Front Office Hub</span>
+                        <div className="flex items-center gap-2 px-3.5 py-1 rounded-full bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 shadow-sm">
+                            <Clock className="h-3.5 w-3.5 text-indigo-500 animate-spin-slow" />
+                            <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Shift Active: 08:00 AM - 07:59 AM</span>
+                        </div>
+                        <div 
+                            onClick={() => setActiveModal('shift')}
+                            className={cn(
+                                "flex items-center gap-2 px-3.5 py-1 rounded-full border shadow-sm cursor-pointer transition-all active:scale-95 font-mono",
+                                activeShift 
+                                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border-emerald-500/30"
+                                    : "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 border-rose-500/30 animate-pulse shadow-rose-500/10"
+                            )}
+                        >
+                            {activeShift ? (
+                                <><CheckCircle className="h-3.5 w-3.5 text-emerald-500" /> <span className="text-[10px] font-black uppercase tracking-wider font-sans">Counter Open</span></>
+                            ) : (
+                                <><AlertTriangle className="h-3.5 w-3.5 text-rose-500" /> <span className="text-[10px] font-black uppercase tracking-wider font-sans">⚠️ Counter Closed: Click to Open Float</span></>
+                            )}
                         </div>
                     </div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Daily Operations Hub • World Standard Triage</p>
+                    <p className="text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2 pl-1">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        World Standard 24/7 Medical Day Triaging
+                    </p>
                 </div>
 
-                <div className="w-full md:w-auto flex justify-end">
+                <div className="flex items-center gap-4">
+                    <div className="hidden md:flex flex-col items-end border-r border-slate-200 dark:border-slate-800 pr-5">
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Reporting Window</span>
+                        <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 tracking-wider">SHIFT: {currentTime.getHours() < 8 ? 'NIGHT' : 'DAY'}</span>
+                    </div>
                     <DashboardDateFilter />
                 </div>
             </div>
 
             {/* TOP STATS */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                <Card className="p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-white/20 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5">
+                <Card className="p-5 bg-white/70 dark:bg-slate-900/70 backdrop-blur-2xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] rounded-3xl flex items-center justify-between group hover:-translate-y-1.5 hover:shadow-xl transition-all duration-300">
                     <div className="space-y-1">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Expected</p>
-                        <h3 className="text-xl font-black text-slate-900 dark:text-white">{todayAppointments.length}</h3>
+                        <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Expected</p>
+                        <h3 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{todayAppointments.length}</h3>
                     </div>
-                    <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center">
-                        <Users className="h-5 w-5 text-indigo-500" />
+                    <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-indigo-500/30 dark:from-indigo-900/20 dark:to-indigo-900/40 border border-indigo-500/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                        <Users className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                     </div>
                 </Card>
-                <Card className="p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-white/20 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
+                <Card className="p-5 bg-white/70 dark:bg-slate-900/70 backdrop-blur-2xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] rounded-3xl flex items-center justify-between group hover:-translate-y-1.5 hover:shadow-xl transition-all duration-300">
                     <div className="space-y-1">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">In Waiting</p>
-                        <h3 className="text-xl font-black text-blue-600">{todayAppointments.filter(a => ['arrived', 'checked_in'].includes(a.status)).length}</h3>
+                        <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">In Waiting</p>
+                        <h3 className="text-3xl font-black text-blue-600 dark:text-blue-400 tracking-tight">{todayAppointments.filter(a => ['arrived', 'checked_in'].includes(a.status)).length}</h3>
                     </div>
-                    <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
-                        <Clock className="h-5 w-5 text-blue-500" />
+                    <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-500/30 dark:from-blue-900/20 dark:to-blue-900/40 border border-blue-500/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                        <Clock className="h-6 w-6 text-blue-600 dark:text-blue-400" />
                     </div>
                 </Card>
                 <Link href="/hms/billing?status=draft" className="block cursor-pointer">
-                    <Card className="p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-white/20 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:shadow-md transition-all hover:ring-2 hover:ring-orange-500/20">
+                    <Card className="p-5 bg-white/70 dark:bg-slate-900/70 backdrop-blur-2xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] rounded-3xl flex items-center justify-between group hover:-translate-y-1.5 hover:shadow-xl hover:border-orange-500/30 transition-all duration-300">
                         <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Draft Bills</p>
-                            <h3 className="text-xl font-black text-orange-600">{draftCount}</h3>
+                            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Draft Bills</p>
+                            <h3 className="text-3xl font-black text-orange-600 dark:text-orange-400 tracking-tight">{draftCount}</h3>
                         </div>
-                        <div className="h-10 w-10 rounded-xl bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
-                            <Activity className="h-5 w-5 text-orange-500" />
+                        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500/10 to-orange-500/30 dark:from-orange-900/20 dark:to-orange-900/40 border border-orange-500/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                            <Activity className="h-6 w-6 text-orange-600 dark:text-orange-400 animate-pulse" />
                         </div>
                     </Card>
                 </Link>
                 <div onClick={() => setActiveModal('beds')} className="block cursor-pointer">
-                    <Card className="p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-white/20 dark:border-slate-800 shadow-sm flex items-center justify-between group hover:shadow-md transition-all hover:ring-2 hover:ring-indigo-500/20">
+                    <Card className="p-5 bg-white/70 dark:bg-slate-900/70 backdrop-blur-2xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] rounded-3xl flex items-center justify-between group hover:-translate-y-1.5 hover:shadow-xl hover:border-indigo-500/30 transition-all duration-300">
                         <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Beds Vacant</p>
-                            <h3 className="text-xl font-black text-indigo-600">{availableBeds}</h3>
+                            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Beds Vacant</p>
+                            <h3 className="text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tight">{availableBeds}</h3>
                         </div>
-                        <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center">
-                            <BedIcon className="h-5 w-5 text-indigo-500" />
+                        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-indigo-500/30 dark:from-indigo-900/20 dark:to-indigo-900/40 border border-indigo-500/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                            <BedIcon className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                         </div>
                     </Card>
                 </div>
                 <Link href="/hms/billing?status=pending" className="block cursor-pointer">
-                    <Card className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-800 shadow-sm flex items-center justify-between group hover:shadow-md transition-all hover:ring-2 hover:ring-emerald-500/20">
+                    <Card className="p-5 bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-transparent dark:from-emerald-950/40 backdrop-blur-2xl border border-emerald-500/30 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] rounded-3xl flex items-center justify-between group hover:-translate-y-1.5 hover:shadow-xl hover:border-emerald-500/50 transition-all duration-300">
                         <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Awaiting Billing</p>
-                            <h3 className="text-xl font-black text-emerald-700 dark:text-emerald-400">
+                            <p className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Awaiting Billing</p>
+                            <h3 className="text-3xl font-black text-emerald-700 dark:text-emerald-300 tracking-tight">
                                 {todayAppointments.filter(a => (a.status === 'completed' || a.hasPrescription) && a.invoiceStatus !== 'paid').length}
                             </h3>
                         </div>
-                        <div className="h-10 w-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-                            <IndianRupee className="h-5 w-5 text-emerald-600" />
+                        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-emerald-500/40 border border-emerald-500/30 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                            <IndianRupee className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
                         </div>
                     </Card>
                 </Link>
@@ -436,8 +521,9 @@ export function ReceptionActionCenter({
                                         className="h-14 px-6 rounded-2xl border-2 border-orange-100 hover:border-orange-500 hover:bg-orange-50 transition-all flex items-center gap-3 group"
                                     >
                                         <Avatar className="h-8 w-8 border-2 border-white">
+                                            <AvatarImage src={(apt.patient?.metadata as any)?.profile_pic} alt={apt.patient?.first_name} />
                                             <AvatarFallback className="text-[10px] font-bold bg-orange-100 text-orange-600">
-                                                {apt.patient?.first_name?.[0]}{apt.patient?.last_name?.[0]}
+                                                {getInitials(apt.patient?.first_name, apt.patient?.last_name)}
                                             </AvatarFallback>
                                         </Avatar>
                                         <div className="text-left">
@@ -578,10 +664,10 @@ export function ReceptionActionCenter({
                                         {filteredAppointments.filter(a => ['scheduled', 'arrived', 'checked_in'].includes(a.status)).length}
                                     </Badge>
                                 </div>
-                                <div className="flex-1 bg-slate-50/50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-2 space-y-3 overflow-y-auto max-h-[700px] custom-scrollbar">
+                                <div className="flex-1 bg-slate-50/50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-2 space-y-3">
                                     {filteredAppointments
                                         .filter(a => ['scheduled', 'arrived', 'checked_in'].includes(a.status))
-                                        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                                        .sort((a, b) => new Date(a.starts_at || a.start_time).getTime() - new Date(b.starts_at || b.start_time).getTime())
                                         .map(apt => (
                                             <PatientCard
                                                 key={apt.id}
@@ -611,10 +697,10 @@ export function ReceptionActionCenter({
                                         {filteredAppointments.filter(a => ['confirmed', 'in_progress'].includes(a.status) || (a.status === 'completed' && a.labStatus === 'pending')).length}
                                     </Badge>
                                 </div>
-                                <div className="flex-1 bg-indigo-50/30 dark:bg-indigo-900/10 rounded-xl border border-indigo-100 dark:border-indigo-900/30 p-2 space-y-3 overflow-y-auto max-h-[700px] custom-scrollbar">
+                                <div className="flex-1 bg-indigo-50/30 dark:bg-indigo-900/10 rounded-xl border border-indigo-100 dark:border-indigo-900/30 p-2 space-y-3">
                                     {filteredAppointments
                                         .filter(a => ['confirmed', 'in_progress'].includes(a.status) || (a.status === 'completed' && a.labStatus === 'pending'))
-                                        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                                        .sort((a, b) => new Date(a.starts_at || a.start_time).getTime() - new Date(b.starts_at || b.start_time).getTime())
                                         .map(apt => (
                                             <PatientCard
                                                 key={apt.id}
@@ -645,10 +731,10 @@ export function ReceptionActionCenter({
                                         {filteredAppointments.filter(a => (a.status === 'completed' || a.hasPrescription) && a.invoiceStatus !== 'paid').length}
                                     </Badge>
                                 </div>
-                                <div className="flex-1 bg-orange-50/30 dark:bg-orange-900/10 rounded-xl border border-orange-100 dark:border-orange-900/30 p-2 space-y-3 overflow-y-auto max-h-[700px] custom-scrollbar">
+                                <div className="flex-1 bg-orange-50/30 dark:bg-orange-900/10 rounded-xl border border-orange-100 dark:border-orange-900/30 p-2 space-y-3">
                                     {filteredAppointments
                                         .filter(a => (a.status === 'completed' || a.hasPrescription) && a.invoiceStatus !== 'paid')
-                                        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                                        .sort((a, b) => new Date(a.starts_at || a.start_time).getTime() - new Date(b.starts_at || b.start_time).getTime())
                                         .map(apt => (
                                             <PatientCard
                                                 key={apt.id}
@@ -679,7 +765,7 @@ export function ReceptionActionCenter({
                                         {filteredAppointments.filter(a => a.status === 'completed' && a.invoiceStatus === 'paid').length}
                                     </Badge>
                                 </div>
-                                <div className="flex-1 bg-slate-50/50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-2 space-y-3 overflow-y-auto max-h-[700px] custom-scrollbar">
+                                <div className="flex-1 bg-slate-50/50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-2 space-y-3">
                                     {filteredAppointments.filter(a => a.status === 'completed' && a.invoiceStatus === 'paid').map(apt => (
                                         <PatientCard
                                             key={apt.id}
@@ -700,8 +786,8 @@ export function ReceptionActionCenter({
                             </div>
                         </div>
                     ) : (
-                        <Card className="border border-slate-100 dark:border-slate-800 shadow-xl bg-white dark:bg-slate-900 overflow-hidden flex-1 h-full">
-                            <div className="overflow-y-auto max-h-[700px] custom-scrollbar">
+                        <Card className="border border-slate-100 dark:border-slate-800 shadow-xl bg-white dark:bg-slate-900 overflow-hidden flex-1">
+                            <div className="overflow-x-auto custom-scrollbar scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800">
                                 <table className="w-full text-left">
                                     <thead className="sticky top-0 bg-slate-50/90 dark:bg-slate-800/90 backdrop-blur-md z-10">
                                         <tr className="text-[10px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-widest border-b border-slate-100 dark:border-slate-800">
@@ -735,7 +821,7 @@ export function ReceptionActionCenter({
                                                     <td className="px-6 py-5">
                                                         <div className="flex flex-col">
                                                             <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 font-mono">
-                                                                {new Date(apt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                {new Date(apt.starts_at || apt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                             </span>
                                                             {apt.token_number && (
                                                                 <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 mt-1 uppercase">
@@ -747,8 +833,9 @@ export function ReceptionActionCenter({
                                                     <td className="px-6 py-5">
                                                         <div className="flex items-center gap-3">
                                                             <Avatar className="h-9 w-9 border-2 border-white dark:border-slate-800">
-                                                                <AvatarFallback className="text-xs font-bold">
-                                                                    {isPrivacyMode ? '**' : `${apt.patient?.first_name?.[0]}${apt.patient?.last_name?.[0]}`}
+                                                                <AvatarImage src={(apt.patient?.metadata as any)?.profile_pic} alt={apt.patient?.first_name} className={isPrivacyMode ? "blur-sm" : ""} />
+                                                                <AvatarFallback className="text-xs font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
+                                                                    {isPrivacyMode ? '**' : getInitials(apt.patient?.first_name, apt.patient?.last_name)}
                                                                 </AvatarFallback>
                                                             </Avatar>
                                                             <div>
@@ -801,9 +888,22 @@ export function ReceptionActionCenter({
                                                                         hospitalInfo={hospitalInfo}
                                                                         defaultPrintMode="standard"
                                                                         initialTab="voucher"
+                                                                        directPrint={true}
                                                                         trigger={
                                                                             <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-500 hover:bg-indigo-100 dark:hover:bg-indigo-900/30" title="Print OP Slip (Standard)">
                                                                                 <Printer className="h-4 w-4" />
+                                                                            </Button>
+                                                                        }
+                                                                    />
+                                                                    <OpSlipDialog
+                                                                        appointment={apt}
+                                                                        hospitalInfo={hospitalInfo}
+                                                                        defaultPrintMode="standard"
+                                                                        initialTab="voucher"
+                                                                        directPrint={false}
+                                                                        trigger={
+                                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800" title="Preview Slip Options">
+                                                                                <Eye className="h-4 w-4" />
                                                                             </Button>
                                                                         }
                                                                     />
@@ -813,6 +913,7 @@ export function ReceptionActionCenter({
                                                                         hospitalInfo={hospitalInfo}
                                                                         defaultPrintMode="label"
                                                                         initialTab="voucher"
+                                                                        directPrint={true}
                                                                         trigger={
                                                                             <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30" title="Print Token Slip (Label)">
                                                                                 <Fingerprint className="h-4 w-4" />
@@ -825,6 +926,7 @@ export function ReceptionActionCenter({
                                                                         hospitalInfo={hospitalInfo}
                                                                         defaultPrintMode="standard"
                                                                         initialTab="invoice"
+                                                                        directPrint={true}
                                                                         trigger={
                                                                             <Button
                                                                                 variant="ghost"
@@ -896,51 +998,57 @@ export function ReceptionActionCenter({
                 </div >
 
                 {/* RIGHT SIDEBAR */}
-                < div className="w-full xl:w-96 space-y-6" >
-                    <Card className="p-6 bg-gradient-to-br from-indigo-600 to-indigo-800 text-white border-none shadow-2xl relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl" />
-                        <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-indigo-100">Quick Actions</h3>
+                <div className="w-full xl:w-96 space-y-6">
+                    <Card className="p-6 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white border-none shadow-[0_20px_50px_rgba(79,70,229,0.3)] relative overflow-hidden rounded-3xl">
+                        <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full -mr-20 -mt-20 blur-3xl pointer-events-none" />
+                        <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/20 rounded-full -ml-20 -mb-20 blur-2xl pointer-events-none" />
+                        <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-indigo-100/90 flex items-center gap-2 relative z-10">
+                            <Zap className="h-4 w-4 text-amber-300 animate-pulse" /> Quick Actions Hub
+                        </h3>
                         <div className="grid grid-cols-2 gap-3 relative z-10">
                             {actions.map((action) => (
                                 <button
                                     key={action.id}
                                     onClick={() => handleAction(action.id)}
-                                    className="flex flex-col items-center justify-center p-4 rounded-2xl bg-white/10 hover:bg-white/20 transition-all border border-white/20 group"
+                                    className="flex flex-col items-center justify-center p-4 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-95 transition-all border border-white/20 group hover:shadow-lg backdrop-blur-md"
                                 >
-                                    <div className={`p-2 rounded-xl bg-white mb-2 ${action.color}`}>
+                                    <div className={`p-2.5 rounded-xl bg-white mb-2 shadow-sm group-hover:scale-110 transition-transform duration-300 ${action.color}`}>
                                         <action.icon className="h-5 w-5" />
                                     </div>
-                                    <span className="text-[10px] font-black uppercase tracking-widest">{action.title}</span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-50 leading-tight text-center">{action.title}</span>
                                 </button>
                             ))}
                         </div>
                     </Card>
 
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="space-y-4 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl p-5 rounded-3xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
                             <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Master Registry</h3>
-                            <button onClick={() => router.push('/hms/patients')} className="text-[10px] font-bold text-indigo-500">VIEW ALL</button>
+                            <button onClick={() => router.push('/hms/patients')} className="text-[10px] font-black tracking-wider text-indigo-600 dark:text-indigo-400 hover:underline uppercase">VIEW ALL</button>
                         </div>
                         <div className="relative">
-                            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                            <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
                             <Input
-                                placeholder="Search patients..."
+                                placeholder="Search registry..."
                                 value={patientSearchQuery}
                                 onChange={(e) => setPatientSearchQuery(e.target.value)}
-                                className="pl-9 h-9 text-xs"
+                                className="pl-10 h-10 text-xs rounded-2xl bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 focus-visible:ring-indigo-500"
                             />
-                            {isSearching && <Loader2 className="absolute right-3 top-2.5 h-4 w-4 text-indigo-500 animate-spin" />}
+                            {isSearching && <Loader2 className="absolute right-3.5 top-3 h-4 w-4 text-indigo-500 animate-spin" />}
                         </div>
                         <div className="max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar">
                             {filteredPatients.slice(0, 5).map(p => (
-                                <div key={p.id} className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors">
+                                <div key={p.id} className="p-3 rounded-2xl bg-white/80 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-800 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/50 shadow-sm transition-all">
                                     <div className="flex items-center gap-3">
-                                        <Avatar className="h-8 w-8">
-                                            <AvatarFallback className="text-[10px] font-bold">{p.first_name?.[0]}{p.last_name?.[0]}</AvatarFallback>
+                                        <Avatar className="h-9 w-9 border-2 border-white dark:border-slate-700 shadow-sm">
+                                            <AvatarImage src={(p.metadata as any)?.profile_pic} alt={p.first_name} />
+                                            <AvatarFallback className="text-[10px] font-black bg-gradient-to-br from-slate-100 to-slate-200 text-slate-700 dark:from-slate-800 dark:to-slate-900 dark:text-slate-300">
+                                                {getInitials(p.first_name, p.last_name)}
+                                            </AvatarFallback>
                                         </Avatar>
                                         <div>
-                                            <div className="text-xs font-bold">{p.first_name} {p.last_name}</div>
-                                            <div className="text-[9px] text-slate-400">{p.patient_number}</div>
+                                            <div className="text-xs font-bold text-slate-900 dark:text-white leading-tight">{p.first_name} {p.last_name}</div>
+                                            <div className="text-[9px] text-slate-400 font-mono tracking-tighter">{p.patient_number}</div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1">
@@ -949,7 +1057,7 @@ export function ReceptionActionCenter({
                                                 size="sm"
                                                 variant="ghost"
                                                 className={cn(
-                                                    "h-7 px-2 text-[9px] font-black border uppercase tracking-tighter",
+                                                    "h-7 px-2 text-[9px] font-black border uppercase tracking-tighter rounded-xl",
                                                     todayAppointments.find(a => a.patient_id === p.id && a.status === 'completed' && a.invoiceStatus !== 'paid')?.pendingConsumablesCount > 0
                                                         ? "bg-amber-50 text-amber-700 border-amber-100"
                                                         : "bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700 border-orange-100 transition-all"
@@ -971,7 +1079,7 @@ export function ReceptionActionCenter({
                                             patientId={p.id}
                                             patientName={`${p.first_name} ${p.last_name}`}
                                         />
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => router.push(`/hms/patients/${p.id}`)}>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-xl hover:bg-indigo-50 hover:text-indigo-600" onClick={() => router.push(`/hms/patients/${p.id}`)}>
                                             <ChevronRight className="h-4 w-4" />
                                         </Button>
                                     </div>
@@ -980,64 +1088,83 @@ export function ReceptionActionCenter({
                         </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <div className="flex items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                    <div className="space-y-4 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl p-5 rounded-3xl border border-white/80 dark:border-slate-800/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
                             <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Revenue Pulse</h3>
+                            <span className="text-[9px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-widest">Live Flow</span>
                         </div>
-                        <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 relative group">
-                            <IndianRupee className="h-5 w-5 text-emerald-600 mb-2" />
-                            <div className="text-2xl font-black text-emerald-700 dark:text-emerald-400">₹{dailyCollection.toLocaleString()}</div>
-                            <div className="text-[10px] font-bold text-emerald-600/60 uppercase">Today's Total</div>
+                        <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-transparent dark:from-emerald-950/40 backdrop-blur-xl border border-emerald-500/30 relative group shadow-sm hover:border-emerald-500/50 transition-all duration-300">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none -mr-8 -mt-8" />
+                            <div className="flex items-center gap-4 mb-3">
+                                <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform duration-300">
+                                    <IndianRupee className="h-6 w-6" />
+                                </div>
+                                <div>
+                                    <div className="text-3xl font-black italic tracking-tighter bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-300 bg-clip-text text-transparent">₹{dailyCollection.toLocaleString()}</div>
+                                    <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Today's Gross Flow</div>
+                                </div>
+                            </div>
                             <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
                                 onClick={() => setIsPaymentsOpen(true)}
-                                className="absolute top-2 right-2 text-[8px] font-black uppercase tracking-widest text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="w-full h-10 rounded-xl text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 transition-colors flex items-center justify-center gap-2"
                             >
-                                View Details
+                                <History className="h-3.5 w-3.5" /> View Detailed Ledger
                             </Button>
                         </div>
                     </div>
-                </div >
-            </div >
+                </div>
+            </div>
 
             {/* MODALS */}
 
             {/* ELITE CLINICAL TERMINAL - PERSISTENT STATE ENGINE */}
-            <AnimatePresence>
-                {(activeModal === 'appointment' || activeModal === 'edit-appointment') && (
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{
-                            opacity: isTerminalMinimized ? 0 : 1,
-                            scale: isTerminalMinimized ? 0.9 : 1,
-                            pointerEvents: isTerminalMinimized ? 'none' : 'auto',
-                            translateY: isTerminalMinimized ? 100 : 0
-                        }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="fixed inset-0 z-[110] bg-slate-950/20 backdrop-blur-sm flex items-center justify-center p-0"
-                    >
-                        <div className="w-full h-full">
-                            <AppointmentForm
-                                key={(editingAppointment?.id || 'new')}
-                                onClose={() => {
-                                    setActiveModal(null);
-                                    setEditingAppointment(null);
-                                    setIsTerminalMinimized(false);
-                                }}
-                                onMinimize={() => setIsTerminalMinimized(true)}
-                                patients={patients}
-                                doctors={doctors}
-                                editingAppointment={editingAppointment}
-                                billableItems={billableItems}
-                                taxConfig={taxConfig}
-                                uoms={uoms}
-                                currency={currency}
-                            />
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            <Dialog open={(activeModal === 'appointment' || activeModal === 'edit-appointment') && !isTerminalMinimized} onOpenChange={(open) => {
+                if (!open) {
+                    setActiveModal(null);
+                    setEditingAppointment(null);
+                    setIsTerminalMinimized(false);
+                }
+            }}>
+                <DialogContent
+                    onInteractOutside={(e) => e.preventDefault()}
+                    onEscapeKeyDown={(e) => {
+                        const target = e.target as HTMLElement;
+                        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.closest('[role="combobox"]') || target.closest('[role="listbox"]') || target.closest('.z-\\[120\\]') || target.closest('.z-\\[200\\]'))) {
+                            e.preventDefault();
+                            return;
+                        }
+                        if (document.querySelector('.z-\\[120\\]') || document.querySelector('.z-\\[200\\]')) {
+                            e.preventDefault();
+                            return;
+                        }
+                    }}
+                    className="max-w-[95vw] h-[92vh] p-0 overflow-hidden bg-slate-900 rounded-[2.5rem] border border-slate-800 shadow-2xl flex flex-col focus:outline-none"
+                >
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>{editingAppointment ? `Editing: ${editingAppointment.patient?.first_name}` : 'New OP Registration'}</DialogTitle>
+                    </DialogHeader>
+                    <div className="w-full h-full overflow-hidden flex flex-col">
+                        <AppointmentForm
+                            key={(editingAppointment?.id || 'new')}
+                            onClose={() => {
+                                setActiveModal(null);
+                                setEditingAppointment(null);
+                                setIsTerminalMinimized(false);
+                            }}
+                            onMinimize={() => setIsTerminalMinimized(true)}
+                            patients={patients}
+                            doctors={doctors}
+                            editingAppointment={editingAppointment}
+                            billableItems={billableItems}
+                            taxConfig={taxConfig}
+                            uoms={uoms}
+                            currency={currency}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* MINIMIZED TERMINAL DOCK */}
             <AnimatePresence>
@@ -1071,20 +1198,87 @@ export function ReceptionActionCenter({
             </AnimatePresence>
 
             <Dialog open={activeModal === 'expense'} onOpenChange={() => setActiveModal(null)}>
-                <DialogContent className="w-screen h-screen max-w-none p-0 overflow-hidden bg-white">
+                <DialogContent className={isExpenseMaximized ? "w-screen h-screen max-w-none rounded-none border-none p-0 overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col" : "max-w-5xl h-[85vh] p-0 overflow-hidden bg-slate-50 dark:bg-slate-950 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col"}>
                     <DialogHeader className="sr-only">
                         <DialogTitle>Hospital Expense Management Terminal</DialogTitle>
                     </DialogHeader>
-                    <ExpenseDialog onClose={() => setActiveModal(null)} />
+                    <ExpenseDialog
+                        onClose={() => setActiveModal(null)}
+                        headerActions={
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setIsExpenseMaximized(!isExpenseMaximized)}
+                                    className="h-8 w-8 text-white hover:text-white hover:bg-white/20 rounded-lg transition-all"
+                                    title={isExpenseMaximized ? "Restore window" : "Maximize window"}
+                                >
+                                    {isExpenseMaximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4 text-white" />}
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setActiveModal(null)}
+                                    className="h-8 w-8 text-white hover:text-white hover:bg-white/20 rounded-lg transition-all"
+                                    title="Close window (Esc)"
+                                >
+                                    <X className="h-4 w-4 text-white" />
+                                </Button>
+                            </div>
+                        }
+                    />
                 </DialogContent>
             </Dialog>
+
+            <Dialog open={activeModal === 'journal'} onOpenChange={() => setActiveModal(null)}>
+                <DialogContent className={isJournalMaximized ? "w-screen h-screen max-w-none rounded-none border-none p-0 overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col" : "max-w-5xl h-[85vh] p-0 overflow-hidden bg-slate-50 dark:bg-slate-950 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col"}>
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Financial Voucher Terminal (F7)</DialogTitle>
+                    </DialogHeader>
+                    <PaymentVoucherForm
+                        initialData={{}}
+                        onClose={() => setActiveModal(null)}
+                        onSuccess={() => setActiveModal(null)}
+                        simplified={false}
+                        headerActions={
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setIsJournalMaximized(!isJournalMaximized)}
+                                    className="h-8 w-8 text-white hover:text-white hover:bg-white/20 rounded-lg transition-all"
+                                    title={isJournalMaximized ? "Restore window" : "Maximize window"}
+                                >
+                                    {isJournalMaximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4 text-white" />}
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setActiveModal(null)}
+                                    className="h-8 w-8 text-white hover:text-white hover:bg-white/20 rounded-lg transition-all"
+                                    title="Close window (Esc)"
+                                >
+                                    <X className="h-4 w-4 text-white" />
+                                </Button>
+                            </div>
+                        }
+                    />
+                </DialogContent>
+            </Dialog>
+
+
 
             <Dialog open={activeModal === 'shift'} onOpenChange={() => setActiveModal(null)}>
                 <DialogContent className="max-w-3xl p-0">
                     <DialogHeader className="sr-only">
                         <DialogTitle>Staff Shift & Handover Manager</DialogTitle>
                     </DialogHeader>
-                    <ShiftManager />
+                    <ShiftManager 
+                        onShiftUpdate={(s) => setActiveShift(s)} 
+                        onOpenExpense={() => {
+                            setActiveModal('expense');
+                        }} 
+                    />
                 </DialogContent>
             </Dialog>
 
@@ -1152,6 +1346,9 @@ export function ReceptionActionCenter({
 
             <Dialog open={isPaymentsOpen} onOpenChange={setIsPaymentsOpen}>
                 <DialogContent className="max-w-4xl p-0 overflow-hidden bg-white dark:bg-[#0a0f1e] rounded-[3rem] border-none shadow-[0_50px_100px_rgba(0,0,0,0.3)]">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Financial Revenue Ledger & Payment History</DialogTitle>
+                    </DialogHeader>
                     <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-8 text-white">
                         <div className="flex justify-between items-start">
                             <div className="flex items-center gap-4">
@@ -1160,7 +1357,17 @@ export function ReceptionActionCenter({
                                 </div>
                                 <div>
                                     <h3 className="text-2xl font-black italic uppercase tracking-tighter">Daily Revenue Ledger</h3>
-                                    <p className="text-[10px] font-black uppercase text-emerald-100 tracking-widest">Real-time Financial Pulse</p>
+                                    <div className="flex items-center gap-3 mt-1">
+                                        <p className="text-[10px] font-black uppercase text-emerald-100 tracking-widest">Real-time Financial Pulse</p>
+                                        <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            className="h-7 px-3 text-[10px] font-black rounded-lg bg-white text-emerald-800 hover:bg-emerald-50 transition-all uppercase tracking-widest"
+                                            onClick={() => router.push('/hms/accounting/payments')}
+                                        >
+                                            View Expense Register ➜
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
                             <div className="text-right">
@@ -1343,7 +1550,7 @@ function PatientCard({
     const isPendingBilling = apt.status === 'completed' && apt.invoiceStatus !== 'paid';
     const isPaid = apt.invoiceStatus === 'paid';
 
-    const startTime = new Date(apt.start_time);
+    const startTime = new Date(apt.starts_at || apt.start_time);
     const diffMins = Math.max(0, Math.floor((currentTime.getTime() - startTime.getTime()) / 60000));
     const isOverdue = type === 'billing' && diffMins > 10;
     const isWarning = type === 'billing' && diffMins > 5;
@@ -1369,16 +1576,17 @@ function PatientCard({
 
             <div className="flex justify-between items-start mb-2 relative z-10">
                 <div className="flex items-center gap-2">
-                    <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-[10px] font-bold">
-                            {isPrivacyMode ? '**' : `${apt.patient?.first_name?.[0]}${apt.patient?.last_name?.[0]}`}
+                    <Avatar className="h-8 w-8 shadow-sm">
+                        <AvatarImage src={(apt.patient?.metadata as any)?.profile_pic} alt={apt.patient?.first_name} className={isPrivacyMode ? "blur-sm" : ""} />
+                        <AvatarFallback className="text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
+                            {isPrivacyMode ? '**' : getInitials(apt.patient?.first_name, apt.patient?.last_name)}
                         </AvatarFallback>
                     </Avatar>
                     <div>
-                        <h4 className="text-xs font-bold leading-tight">
+                        <h4 className="text-xs font-bold leading-tight text-slate-900 dark:text-white">
                             {mask(apt.patient?.first_name)} {mask(apt.patient?.last_name)}
                         </h4>
-                        <span className="text-[9px] text-slate-400">{apt.patient?.patient_number}</span>
+                        <span className="text-[9px] text-slate-400 font-mono tracking-tighter">{apt.patient?.patient_number}</span>
                     </div>
                 </div>
                 <div className="flex flex-col items-end">
@@ -1396,12 +1604,26 @@ function PatientCard({
                     <OpSlipDialog
                         appointment={apt}
                         hospitalInfo={hospitalInfo}
+                        directPrint={true}
                         trigger={
                             <button
-                                className="p-1 rounded-md text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
-                                title="Print OP Slip / Rx Sheet"
+                                className="p-1 rounded-md text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 transition-all"
+                                title="Print OP Slip / Rx Sheet (Direct)"
                             >
-                                <Printer className="h-3.5 w-3.5" />
+                                <Printer className="h-4 w-4" />
+                            </button>
+                        }
+                    />
+                    <OpSlipDialog
+                        appointment={apt}
+                        hospitalInfo={hospitalInfo}
+                        directPrint={false}
+                        trigger={
+                            <button
+                                className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all"
+                                title="Preview / Options"
+                            >
+                                <Eye className="h-4 w-4" />
                             </button>
                         }
                     />

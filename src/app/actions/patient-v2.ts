@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { redirect } from "next/navigation"
 import { auth } from "@/auth"
+import { getNextPatientNumber } from "./patient-v10"
 
 const normalizeGender = (gender: string | null) => {
     if (!gender) return null;
@@ -143,6 +144,8 @@ export async function createPatient(existingId: string | null | any, formData: F
             metadata.status = 'awaiting_payment';
             metadata.accounting_group = (formData.get('accounting_group') as string) || 'general';
 
+            const nextPatientNumber = await getNextPatientNumber(companyId as string, tenantId as string);
+
             patient = await prisma.hms_patient.create({
                 data: {
                     id: crypto.randomUUID(),
@@ -157,7 +160,7 @@ export async function createPatient(existingId: string | null | any, formData: F
                     blood_group: blood_group || null,
                     profile_image_url: (formData.get("profile_image_url") as string) || null,
                     metadata: metadata as any,
-                    patient_number: `PAT-${Date.now()}`,
+                    patient_number: nextPatientNumber,
                     created_by: userId,
                     updated_by: userId
                 }
@@ -199,6 +202,8 @@ export async function createPatientQuick(formData: FormData) {
     }
 
     try {
+        const nextPatientNumber = await getNextPatientNumber(companyId as string, tenantId as string);
+
         const patient = await prisma.hms_patient.create({
             data: {
                 tenant_id: tenantId,
@@ -208,7 +213,7 @@ export async function createPatientQuick(formData: FormData) {
                 dob: dob ? new Date(dob) : null,
                 gender: normalizeGender(gender),
                 contact: contact as any,
-                patient_number: `PAT-${Date.now()}`,
+                patient_number: nextPatientNumber,
                 created_by: userId,
                 updated_by: userId
             }

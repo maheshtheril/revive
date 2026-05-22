@@ -23,7 +23,7 @@ export default async function AccountingDashboardPage({ searchParams }: { search
             }>
                 <FinancialDashboard
                     currencyCode={session?.user?.currencyCode || 'INR'}
-                    currencySymbol={session?.user?.currencySymbol || '₹'}
+                    currencySymbol={session?.user?.currencySymbol || '\u20B9'}
                     initialView={params.view === 'classic' ? 'classic' : 'modern'}
                     initialTab={params.tab === 'bs' ? 'bs' : 'pl'}
                 />

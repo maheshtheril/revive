@@ -25,7 +25,7 @@ interface DetailedLedgerProps {
 export function DetailedLedgerReport({
     type,
     currencyCode = 'INR',
-    currencySymbol = '₹'
+    currencySymbol = 'Rs.'
 }: DetailedLedgerProps) {
     const [loading, setLoading] = useState(true)
     const [date, setDate] = useState(new Date())
@@ -94,10 +94,11 @@ export function DetailedLedgerReport({
     }
 
     const formatCurrency = (val: number) => {
-        return new Intl.NumberFormat(currencyCode === 'INR' ? 'en-IN' : 'en-US', {
-            style: 'currency',
-            currency: currencyCode
+        const formatted = new Intl.NumberFormat('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
         }).format(val)
+        return `${currencySymbol}${formatted}`
     }
 
     const filteredEntries = entries.filter(e =>
@@ -205,7 +206,7 @@ export function DetailedLedgerReport({
             <div className="h-8 bg-[#004d4d] flex items-center justify-between px-4 border-b border-[#006666] text-[10px] font-bold no-print">
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">{titleMap[type].toUpperCase()}</span>
-                    <span className="text-[#ffffcc]">Ziona HMS v4.5</span>
+                    <span className="text-[#ffffcc]">System Integrated Report</span>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-[#64ffff]">Enterprise ERP</span>
@@ -292,7 +293,7 @@ export function DetailedLedgerReport({
                             ) : (
                                 <div className="flex items-center gap-2">
                                     <div className="flex items-center bg-[#002b2b] border border-[#008080] px-2 rounded">
-                                        <span className="text-[8px] opacity-50 mr-2">FROM</span>
+                                        <span className="text-[9px] opacity-70">SECURE SYSTEM ACCESS</span>
                                         <input
                                             type="date"
                                             value={format(startDate, 'yyyy-MM-dd')}

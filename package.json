@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0",
+    "dev": "next dev -p 3002 -H 0.0.0.0",
+    "dev:lan": "node scripts/auto-ip-config.js && next dev -p 3002 -H 0.0.0.0",
     "cache-bust": "echo 'Clearing Vercel Cache of Feb 26' && exit 0",
     "build": "prisma generate && next build",
-    "start": "next start -H 0.0.0.0",
+    "start": "next start -p 3002 -H 0.0.0.0",
     "lint": "eslint"
   },
   "overrides": {

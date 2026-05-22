@@ -23,6 +23,7 @@ export function AccountingSettingsForm({ settings, accounts, taxRates, taxLabel,
 
     // Separate State for Period Locking (Enterprise Standard)
     const [lockDate, setLockDate] = useState(settings?.lock_date ? new Date(settings.lock_date).toISOString().split('T')[0] : '')
+    const [supervisorPin, setSupervisorPin] = useState(settings?.localization || '2035')
 
     // Form State (Configuration Only)
     const [formData, setFormData] = useState({
@@ -73,11 +74,11 @@ export function AccountingSettingsForm({ settings, accounts, taxRates, taxLabel,
     const handleLock = async () => {
         setLockLoading(true)
         try {
-            const res = await lockAccountingPeriod(lockDate)
+            const res = await lockAccountingPeriod(lockDate, supervisorPin)
             if (res.success) {
                 toast({
-                    title: "Period Locked",
-                    description: `Accounting period locked through ${lockDate || 'Indefinite'}.`,
+                    title: "Security Controls Saved",
+                    description: `Period locked & Supervisor PIN updated successfully.`,
                     className: "bg-amber-600 text-white border-none"
                 })
                 router.refresh()
@@ -193,25 +194,39 @@ export function AccountingSettingsForm({ settings, accounts, taxRates, taxLabel,
                 </div>
                 <h2 className="text-lg font-bold text-amber-900 dark:text-amber-100 mb-6 flex items-center gap-2">
                     <Lock className="w-5 h-5 text-amber-600" />
-                    Period Control Center
+                    Period Control Center & Security
                 </h2>
-                <div className="flex items-end gap-4 max-w-xl">
-                    <div className="flex-1 space-y-1">
-                        <label className="block text-sm font-semibold text-amber-900 dark:text-amber-200 mb-1.5">Lock Date</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mb-6">
+                    <div className="space-y-1">
+                        <label className="block text-sm font-semibold text-amber-900 dark:text-amber-200 mb-1.5">Fiscal Lock Date</label>
                         <input
                             type="date"
                             value={lockDate}
                             onChange={e => setLockDate(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-amber-200 dark:border-amber-700 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all"
+                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-amber-200 dark:border-amber-700 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all font-mono"
                         />
                         <p className="text-xs text-amber-700 dark:text-amber-400">Transactions on or before this date cannot be modified.</p>
                     </div>
+                    <div className="space-y-1">
+                        <label className="block text-sm font-semibold text-amber-900 dark:text-amber-200 mb-1.5">Supervisor Security PIN</label>
+                        <input
+                            type="text"
+                            maxLength={8}
+                            placeholder="e.g. 8899"
+                            value={supervisorPin}
+                            onChange={e => setSupervisorPin(e.target.value)}
+                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-amber-200 dark:border-amber-700 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none transition-all font-mono font-bold tracking-widest text-amber-900 dark:text-amber-100"
+                        />
+                        <p className="text-xs text-amber-700 dark:text-amber-400">Passkey used by receptionists/cashiers to override bill voids.</p>
+                    </div>
+                </div>
+                <div>
                     <button
                         onClick={handleLock}
                         disabled={lockLoading}
-                        className="px-6 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50"
+                        className="px-8 py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50"
                     >
-                        {lockLoading ? "Locking..." : "Update Lock"}
+                        {lockLoading ? "Updating Security..." : "Save Security Controls"}
                     </button>
                 </div>
             </div>

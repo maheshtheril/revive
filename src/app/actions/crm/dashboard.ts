@@ -20,14 +20,18 @@ export async function getDashboardData() {
     const tenantId = user.tenantId
 
     // Get Company & Currency Settings
-    const company = await prisma.company.findFirst({
-        where: { tenant_id: tenantId },
-        include: { countries: true }
+    const companyRow = await prisma.company.findFirst({
+        where: { tenant_id: tenantId }
     })
+
+    let countryRow = null;
+    if (companyRow?.country_id) {
+        countryRow = await prisma.countries.findUnique({ where: { id: companyRow.country_id } });
+    }
 
     // Default to US if not found, but we should probably use the utility
     // We import this dynamically or strictly
-    const countryCode = company?.countries?.iso2 || 'US'
+    const countryCode = countryRow?.iso2 || 'US'
 
     // 1. KPI: Total Revenue (Won Deals)
     const wonDeals = await prisma.crm_deals.findMany({

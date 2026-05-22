@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/navigation';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, Home, Activity } from 'lucide-react';
@@ -7,6 +8,13 @@ import { cn } from '@/lib/utils';
 
 export function Breadcrumbs() {
     const pathname = usePathname();
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    if (!mounted) return null;
     
     // Split pathname and remove empty segments
     const segments = pathname.split('/').filter(Boolean);

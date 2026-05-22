@@ -17,7 +17,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
 // Using 2.5 and 2.0 as primary stables.
 const AI_MODEL_PRIMARY = "gemini-2.5-flash";
 const AI_MODEL_FALLBACK = "gemini-2.0-flash";
-const AI_MODEL_LATESTStable = "gemini-flash-latest";
+const AI_MODEL_LATESTStable = "gemini-2.5-flash";
 
 
 export async function scanInvoiceAction(input: FormData | string, supplierId?: string): Promise<{ success?: boolean; data?: any; error?: string }> {
@@ -127,6 +127,7 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
         }
 
         const dynamicGenAI = new GoogleGenerativeAI(finalApiKey);
+        console.log(`[ScanInvoice] Using API Key starting with: ${finalApiKey.substring(0, 8)}... (Source: ${finalApiKey === process.env.GOOGLE_GENERATIVE_AI_API_KEY ? 'ENV' : 'DATABASE'})`);
         // ----------------------------
 
 
@@ -185,12 +186,7 @@ export async function scanInvoiceFromUrl(fileUrl: string, supplierId?: string) {
 
         const configurations = [
             { name: "gemini-2.5-flash", version: "v1beta", useJsonMode: true },
-            { name: "gemini-2.5-flash", version: "v1", useJsonMode: true },
-            { name: "gemini-flash-latest", version: "v1beta", useJsonMode: true },
             { name: "gemini-2.0-flash", version: "v1beta", useJsonMode: true },
-            { name: "gemini-2.0-flash-lite", version: "v1beta", useJsonMode: true },
-            { name: "models/gemini-2.5-flash", version: "v1beta", useJsonMode: true },
-            { name: "gemini-pro-latest", version: "v1", useJsonMode: false },
         ];
 
 
@@ -529,10 +525,31 @@ async function processInvoiceData(session: any, data: any) {
                     }
                 }
 
+                let lastSalePrice = 0;
+                let lastMarginPct = 0;
+                let lastMarkupPct = 0;
+                let pricingStrategy = 'manual';
+                let vendorUomConv = 1;
+                let vendorUomName = "";
+
                 if (accepted) {
                     productId = p.id;
                     finalName = p.name; // Use DB name to standardize
-                    console.log(`[SmartMatch] Matched '${item.productName}' -> '${p.name}' (Score: ${score.toFixed(2)}, Type: ${matchResult.type}, Conf: ${matchConfidence})`);
+                    const meta = p.metadata as any || {};
+                    lastSalePrice = Number(meta.last_sale_price || p.price || 0);
+                    lastMarginPct = Number(meta.last_margin_pct || 0);
+                    lastMarkupPct = Number(meta.last_markup_pct || 0);
+                    pricingStrategy = meta.pricing_strategy || 'manual';
+
+                    if (supplierId && meta.vendor_uom_map && meta.vendor_uom_map[supplierId]) {
+                        const vMap = meta.vendor_uom_map[supplierId];
+                        if (vMap.conversion && Number(vMap.conversion) > 1) {
+                            vendorUomConv = Number(vMap.conversion);
+                            vendorUomName = vMap.uom || meta.uom || "PCS";
+                            console.log(`[VendorMemory] Applying saved UOM ${vendorUomName} (x${vendorUomConv}) for supplier ${supplierId}`);
+                        }
+                    }
+                    console.log(`[SmartMatch] Matched '${item.productName}' -> '${p.name}' (Score: ${score.toFixed(2)}, Type: ${matchResult.type}, Conf: ${matchConfidence}, SP: ${lastSalePrice}, Margin: ${lastMarginPct}%)`);
                 } else {
                     console.log(`[SmartMatch] Rejected '${item.productName}' -> Best: '${p.name}' (Score: ${score.toFixed(2)} - Too Low)`);
                 }
@@ -554,8 +571,7 @@ async function processInvoiceData(session: any, data: any) {
                 finalMrp = temp;
             }
 
-            // HEURISTIC: Identify UOM from either uom or packing field if one is missing
-            let finalUom = item.uom;
+            let finalUom = vendorUomName || item.uom;
             if (!finalUom && item.packing) {
                 // If packing looks like a UOM (contains numbers or pharma terms), use it as UOM
                 if (item.packing.match(/\d+/) || /STRIP|BOX|PACK|VIAL|AMP/i.test(item.packing)) {
@@ -564,15 +580,32 @@ async function processInvoiceData(session: any, data: any) {
             }
             finalUom = finalUom || 'PCS';
 
+            let rawQty = item.qty !== undefined && item.qty !== null ? parseNumber(item.qty) : 1;
+            if (vendorUomConv > 1) {
+                rawQty = rawQty * vendorUomConv;
+                finalPrice = Number((finalPrice / vendorUomConv).toFixed(2));
+                finalMrp = Number((finalMrp / vendorUomConv).toFixed(2));
+            }
+
+            let itemSP = matchResult?.product ? Number((matchResult.product.metadata as any)?.last_sale_price || matchResult.product.price || 0) : 0;
+            let itemMargin = matchResult?.product ? Number((matchResult.product.metadata as any)?.last_margin_pct || 0) : 0;
+            let itemMarkup = matchResult?.product ? Number((matchResult.product.metadata as any)?.last_markup_pct || 0) : 0;
+            let itemStrategy = matchResult?.product ? ((matchResult.product.metadata as any)?.pricing_strategy || 'manual') : 'manual';
+
             processedItems.push({
                 productId,
                 productName: finalName,
                 sku: item.sku,
-                qty: parseNumber(item.qty) || 1,
+                qty: rawQty,
                 uom: finalUom,
+                vendorConversion: vendorUomConv,
                 packing: item.packing,
                 unitPrice: finalPrice,
                 mrp: finalMrp,
+                salePrice: itemSP,
+                marginPct: itemMargin,
+                markupPct: itemMarkup,
+                pricingStrategy: itemStrategy,
                 batch: item.batch,
                 expiry: item.expiry,
                 taxRate: item.taxRate,

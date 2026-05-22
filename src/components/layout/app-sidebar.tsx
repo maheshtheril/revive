@@ -11,7 +11,7 @@ import {
 import { useTheme } from '@/contexts/theme-context';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { logout } from '@/app/actions/auth';
+import { signOut } from 'next-auth/react';
 import { CompactOrgSwitcher } from '@/components/layout/compact-org-switcher';
 import {
     DropdownMenu,
@@ -321,7 +321,7 @@ function SidebarContent({ menuItems, currentCompany, tenant, user, collapsed, se
 
             {/* Scrollable Navigation */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-8 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                {filteredMenuItems.map((group: any) => (
+                {(filteredMenuItems || []).map((group: any) => (
                     <div key={group.module.module_key} className={collapsed ? "text-center" : ""}>
                         {!collapsed && (
                             <h3 className="px-3 text-[11px] font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider mb-2 font-mono">
@@ -442,7 +442,8 @@ function SidebarContent({ menuItems, currentCompany, tenant, user, collapsed, se
 
                         <DropdownMenuItem
                             onClick={async () => {
-                                await logout();
+                                await signOut({ redirect: false });
+                                window.location.href = '/login';
                             }}
                             className="focus:bg-red-50 dark:focus:bg-red-900/20 focus:text-red-600 dark:focus:text-red-400 cursor-pointer rounded-lg text-red-600 dark:text-red-500 flex items-center gap-3 px-2 h-10 font-medium"
                         >

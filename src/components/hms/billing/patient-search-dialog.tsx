@@ -196,13 +196,18 @@ export function PatientSearchWithCreate({ onSelect, selectedPatientId }: Patient
                         <span className="hidden sm:inline">Add New Patient</span>
                     </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-7xl max-h-[95vh] overflow-hidden p-0 border-none">
-                    <CreatePatientForm
-                        onClose={() => setDialogOpen(false)}
-                        onSuccess={handlePatientCreated}
-                        hideBilling={false}
-                        isDialog={true}
-                    />
+                <DialogContent className="max-w-7xl h-[90vh] bg-white dark:bg-slate-950 rounded-[2.5rem] overflow-hidden p-0 border border-white/20 shadow-2xl flex flex-col focus:outline-none">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>Add New Patient</DialogTitle>
+                    </DialogHeader>
+                    <div className="w-full h-full overflow-hidden flex flex-col">
+                        <CreatePatientForm
+                            onClose={() => setDialogOpen(false)}
+                            onSuccess={handlePatientCreated}
+                            hideBilling={false}
+                            isDialog={true}
+                        />
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

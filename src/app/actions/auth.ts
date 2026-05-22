@@ -34,6 +34,8 @@ export async function signup(prevState: any, formData: FormData) {
     const industry = rawData.industry as string
     const selectedModules = (rawData.modules as string || '').split(',').filter(Boolean);
     const taxId = rawData.taxId as string // Optional tax ID if they selected one
+    const address = (rawData.address as string) || '';
+    const phone = (rawData.phone as string) || '';
 
     if (!email || !password || !name || !companyName) {
         return { error: "Missing required fields" }
@@ -106,7 +108,12 @@ export async function signup(prevState: any, formData: FormData) {
                 name: companyName,
                 country_id: resolvedCountryId || undefined,
                 industry: industry,
-                enabled: true
+                enabled: true,
+                metadata: {
+                    address: address,
+                    phone: phone,
+                    email: email
+                }
             }
         });
 
@@ -120,7 +127,15 @@ export async function signup(prevState: any, formData: FormData) {
                 name: isHms ? "Main Clinic" : "Head Office",
                 code: "MAIN",
                 is_active: true,
-                type: isHms ? "clinic" : "office"
+                type: isHms ? "clinic" : "office",
+                address: address,
+                phone: phone,
+                email: email,
+                metadata: {
+                    address: address,
+                    phone: phone,
+                    email: email
+                }
             }
         });
 
@@ -237,7 +252,7 @@ export async function signup(prevState: any, formData: FormData) {
             // 10. Default Products (HMS Only)
             if (modulesToEnable.has('hms')) {
                 const standardProducts = [
-                    { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 100, is_service: true, stockable: false },
+                    { sku: 'REG-FEE', name: 'Patient Registration Fee', uom: 'EACH', price: 150, is_service: true, stockable: false },
                     { sku: 'CONS-GEN', name: 'General Consultation', uom: 'VISIT', price: 250, is_service: true, stockable: false },
                     { sku: 'CONS-SPEC', name: 'Specialist Consultation', uom: 'VISIT', price: 500, is_service: true, stockable: false },
                     { sku: 'PARA-500', name: 'Paracetamol 500mg', uom: 'TAB', price: 5, is_service: false, stockable: true },

@@ -113,8 +113,8 @@ export default function LoginClient({ branding }: { branding: Branding | null })
             <div className="relative z-10 w-full max-w-7xl mx-auto p-4 flex flex-col items-center justify-center">
 
                 <motion.div
-                    initial={{ opacity: 0, y: 30 }}
-                    animate={{ opacity: 1, y: 0 }}
+                    initial={{ y: 30 }}
+                    animate={{ y: 0 }}
                     transition={{ duration: 0.6, ease: "easeOut" }}
                     className="w-full max-w-md"
                 >

@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getWhatsAppConfig } from "@/app/actions/settings";
-import { generateInvoicePDFBase64, generateLabReportPDFBase64 } from "@/lib/utils/pdf-generator";
-import { generatePrescriptionPDFBase64 } from "@/lib/utils/prescription-pdf-generator";
+import { generateUniversalPDF } from "@/lib/pdf/universal-engine";
 
 export class NotificationService {
     /**
@@ -21,18 +20,27 @@ export class NotificationService {
                     where: { id: invoiceId },
                     include: {
                         hms_patient: true,
-                        hms_invoice_lines: true,
-                        hms_invoice_payments: true
+                        hms_invoice_lines: {
+                            include: { hms_product: true }
+                        },
+                        hms_invoice_payments: true,
+                        hms_appointment: {
+                            include: { hms_clinician: true }
+                        }
                     }
                 });
             } else {
-                // If not UUID, it's likely an invoice_number like INV-24-25-001
                 invoice = await prisma.hms_invoice.findFirst({
                     where: { invoice_number: invoiceId, tenant_id: tenantId },
                     include: {
                         hms_patient: true,
-                        hms_invoice_lines: true,
-                        hms_invoice_payments: true
+                        hms_invoice_lines: {
+                            include: { hms_product: true }
+                        },
+                        hms_invoice_payments: true,
+                        hms_appointment: {
+                            include: { hms_clinician: true }
+                        }
                     }
                 });
             }
@@ -81,7 +89,7 @@ export class NotificationService {
             if (!finalPdfBase64) {
                 try {
                     console.log(`[NotificationService] Auto-generating PDF for ${invoice.invoice_number}`);
-                    finalPdfBase64 = await generateInvoicePDFBase64(invoice, company);
+                    finalPdfBase64 = await generateUniversalPDF('sale_bill', invoice, company, invoice.branch_id || undefined);
                 } catch (pdfErr) {
                     console.error("[NotificationService] PDF Generation failed, falling back to text only", pdfErr);
                 }
@@ -269,6 +277,9 @@ export class NotificationService {
                 where: { id: prescriptionId },
                 include: {
                     hms_patient: true,
+                    hms_appointment: {
+                        include: { hms_clinician: true }
+                    },
                     prescription_items: {
                         include: {
                             hms_product: true
@@ -297,8 +308,18 @@ export class NotificationService {
                 return { success: false, error: 'No phone number' };
             }
 
-            // 3. Generate PDF
-            const pdfBase64 = await generatePrescriptionPDFBase64(prescription, company);
+            // 3. Generate PDF (Unified Engine)
+            // Flatten medicines for the universal engine
+            const mappedPrescription = {
+                ...prescription,
+                medicines: prescription.prescription_items.map(i => ({
+                    ...i,
+                    name: i.hms_product?.name,
+                    dosage: i.dosage,
+                    timing: i.timing
+                }))
+            };
+            const pdfBase64 = await generateUniversalPDF('prescription', mappedPrescription, company, prescription.branch_id || undefined);
 
             // 4. Construct Message
             const companyName = company?.name || "HealthCare Center";
@@ -440,8 +461,8 @@ export class NotificationService {
                 return { success: false, error: 'No valid phone number found' };
             }
 
-            // 3. Generate PDF
-            const pdfBase64 = await generateLabReportPDFBase64(order, company);
+            // 3. Generate PDF (Unified Engine)
+            const pdfBase64 = await generateUniversalPDF('lab_report', order, company, order.branch_id || undefined);
 
             // 4. Construct Message
             const companyName = company?.name || "HealthCare Center";

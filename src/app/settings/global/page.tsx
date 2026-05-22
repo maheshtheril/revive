@@ -3,12 +3,18 @@ import { auth } from "@/auth"
 import { GlobalSettingsForm } from "./global-settings-form"
 import { redirect } from "next/navigation"
 import { getWhatsAppSettings, getPDFSettings, getAISettings } from "@/app/actions/settings"
+import { checkPermission } from "@/app/actions/rbac"
 
 export const dynamic = 'force-dynamic'
 
 export default async function GlobalSettingsPage() {
     const session = await auth()
     if (!session?.user?.id) redirect('/login')
+
+    const hasAccess = await checkPermission('settings:view');
+    if (!hasAccess && !session.user.isAdmin && !(session.user as any).isTenantAdmin) {
+        redirect('/hms/reception/dashboard');
+    }
 
     console.log("Global Settings: Session OK", session?.user?.id);
 

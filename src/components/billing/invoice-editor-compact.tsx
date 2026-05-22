@@ -5,24 +5,28 @@ import {
   Loader2, CreditCard, Banknote, Smartphone, Maximize2,
   Minimize2, Check, QrCode, Clock, ArrowRight, Activity, Package, Landmark,
   Copy, AlertTriangle, Info, SidebarOpen, SidebarClose, FlaskConical, Zap,
-  ShieldCheck, CheckCircle2, PlusCircle, RefreshCcw
+  ShieldCheck, CheckCircle2, PlusCircle, RefreshCcw, RotateCcw, Hash
 } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import { QRCodeSVG } from 'qrcode.react'
-import { createInvoice, updateInvoice, cancelInvoice, createQuickPatient, getPatientOutstandingBalance, getPatientLedger, getNextVoucherNumber, shareInvoiceWhatsapp } from '@/app/actions/billing'
+import { createInvoice, updateInvoice, cancelInvoice, restoreInvoice, createQuickPatient, getPatientBalance, getPatientLedger, getNextVoucherNumber, shareInvoiceWhatsapp } from '@/app/actions/billing'
+import { getInitialInvoiceData, getPatientActiveAppointmentForBilling } from "@/app/actions/clinical"
 import { getPDFConfig, getHMSSettings } from '@/app/actions/settings';
 import { getBestBatch, getProductBatches, getProductsPremium, getProduct } from '@/app/actions/inventory'
+import { createProductQuick } from '@/app/actions/purchase'
+import { createSalesReturn, updateSalesReturn } from '@/app/actions/returns'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { searchPatients } from '@/app/actions/patient-search'
 import { useToast } from '@/components/ui/use-toast'
-import { useSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { format } from "date-fns"
 import { useRouter, useSearchParams } from 'next/navigation'
 import { BatchSelectorDialog } from "./batch-selector-dialog"
+import { REG_FEE_SKU } from "@/lib/hms-constants"
 
 // ------------------------------------------------------------------------------------------------
 // POS DEVICE SERVICE (INLINED TO RESOLVE CIRCULAR/EVALUATION ERRORS)
@@ -78,10 +82,14 @@ export function CompactInvoiceEditor({
   initialInvoice = null, 
   onClose, 
   onPaymentSuccess, 
-  currency = '₹',
+  currency = '\u20B9',
   isRegistrationFee = false,
   gatewayConfig = null,
-  defaultTaxMode
+  defaultTaxMode,
+  mode,
+  externalProvisionalNo,
+  initialReturn = null,
+  currentUser = null
 }: {
   patients?: any[],
   billableItems?: any[],
@@ -96,8 +104,13 @@ export function CompactInvoiceEditor({
   currency?: string,
   isRegistrationFee?: boolean,
   gatewayConfig?: { enabled: boolean, keyId: string, upiVpa: string, businessName: string } | null,
-  defaultTaxMode?: 'exclusive' | 'inclusive' | 'exempt'
+  defaultTaxMode?: 'exclusive' | 'inclusive' | 'exempt',
+  mode?: 'sale' | 'return',
+  externalProvisionalNo?: string,
+  initialReturn?: any,
+  currentUser?: any
 }) {
+  const isReturn = mode === 'return';
   // INTERNAL SAFETY NORMALIZATION: Handle nulls passed via JSX props
   const safePatients = Array.isArray(patients) ? patients : [];
   const safeBillableItems = Array.isArray(billableItems) ? billableItems : [];
@@ -106,6 +119,16 @@ export function CompactInvoiceEditor({
   const safeTaxRates = Array.isArray(safeTaxConfig.taxRates) ? safeTaxConfig.taxRates : [];
   const defaultTaxId = (safeTaxConfig.defaultTax as any)?.id || '';
 
+  // [CURRENCY-SHIELD] Sanitize corrupted currency symbols from DB or Props
+  const [safeCurrency, setSafeCurrency] = useState(currency || '\u20B9');
+  useEffect(() => {
+    let clean = currency || '\u20B9';
+    if (clean.includes('Γé╣') || clean.length > 3) {
+      clean = '\u20B9';
+    }
+    setSafeCurrency(clean);
+  }, [currency]);
+
   const [isMounted, setIsMounted] = useState(false)
   const [time, setTime] = useState('')
   useEffect(() => { 
@@ -113,12 +136,37 @@ export function CompactInvoiceEditor({
     setTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
   }, [])
 
+  // [TERMINAL-SYNC] Local Registry for Quick-Created Items
+  const [localBillableItems, setLocalBillableItems] = useState(safeBillableItems);
+  useEffect(() => {
+    setLocalBillableItems(safeBillableItems);
+  }, [billableItems]);
+
     // Robust Line Item State (PRE-INITIALIZED FOR DEPENDENCY REASONS)
     const [lines, setLines] = useState<any[]>(() => {
         try {
             let combinedLines: any[] = []
 
-            // [CLEAN-UI] Filter out legacy clinical markers that were auto-injected by previous systems.
+            // [RETURN-EDIT-LOGIC] If we are editing an existing return, load its lines first
+      if (initialReturn?.lines) {
+          return initialReturn.lines.map((l: any, idx: number) => ({
+              id: l.id || `ret-${idx}-${Date.now()}`,
+              product_id: l.product_id || '',
+              description: l.hms_product?.name || l.description || 'Returned Item',
+              quantity: Number(l.qty || l.quantity || 1),
+              uom: l.uom || l.hms_product?.uom || 'PCS',
+              unit_price: Number(l.unit_price || 0),
+              tax_rate_id: l.tax_rate_id || defaultTaxId,
+              tax_amount: Number(l.tax_amount || 0),
+              discount_amount: 0,
+              base_price: Number(l.unit_price || 0),
+              item_type: 'item',
+              isFromReturn: true,
+              invoice_line_id: l.invoice_line_id
+          }));
+      }
+
+      // [CLEAN-UI] Filter out legacy clinical markers that were auto-injected by previous systems.
             // These usually have prefixes like (Nursing) and 0 price. 
             // We ignore them during grid load so the cashier has a clean start.
             if (initialInvoice?.hms_invoice_lines) {
@@ -146,7 +194,15 @@ export function CompactInvoiceEditor({
 
             // 2. Integration: Merge initialMedicines from props (Consultations/Prescriptions)
             if (initialMedicines && initialMedicines.length > 0) {
-                const medLines = initialMedicines.map((m: any, idx: number) => ({
+                const medLines = initialMedicines
+                    .filter((m: any) => {
+                        // Hard deduplication against already merged lines
+                        return !combinedLines.some(cl => 
+                            (m.id && cl.product_id === m.id) || 
+                            (m.name?.toLowerCase().includes('registration') && cl.description?.toLowerCase().includes('registration'))
+                        );
+                    })
+                    .map((m: any, idx: number) => ({
                     id: `med-${idx}-${Date.now()}`,
                     product_id: m.id || m.product_id || '',
                     description: m.name || m.description || 'Unknown Medicine',
@@ -159,6 +215,7 @@ export function CompactInvoiceEditor({
                     item_type: m.type || 'item',
                     fromSource: true
                 }));
+                
                 combinedLines = [...combinedLines, ...medLines];
             }
 
@@ -175,27 +232,33 @@ export function CompactInvoiceEditor({
     })
 
 
-    const getUomOptions = (itemType: string, currentUom: string, metadata?: any) => {
+    const getUomOptions = (itemType: string, currentUom: string, productId?: string) => {
         try {
             const safeUomsList = Array.isArray(uoms) ? uoms : [];
-            const dbUnitNames = safeUomsList.map(u => (u?.name || '').toUpperCase()).filter(Boolean);
-
-            // World Class Integration: Always include metadata UOMs (Packing context) even if not in master table
-            const metaUnits = metadata ? [
-                (metadata.baseUom || '').toUpperCase(),
-                (metadata.packUom || '').toUpperCase()
-            ].filter(Boolean) : [];
-
-            const allUnits = Array.from(new Set([
-                ...dbUnitNames,
-                ...metaUnits,
-                (currentUom || '').toUpperCase()
-            ])).filter(Boolean);
-
-            if (itemType === 'service') {
-                return allUnits.filter(u => (u === (currentUom || '').toUpperCase()) || (safeUomsList.find(du => (du?.name || '').toUpperCase() === u && du?.uom_type === 'service')));
+            
+            // For services or items without a master product link, show standard defaults
+            if (itemType === 'service' || !productId) {
+                const defaults = itemType === 'service' ? ['SVC', 'VISIT', 'HOUR', 'PROC'] : ['PCS', 'UNIT', 'EACH'];
+                return Array.from(new Set([...defaults, (currentUom || '').toUpperCase()])).filter(Boolean);
             }
-            return allUnits; // For products, show all relevant units including packing units from metadata
+
+            // [SERIOUS-UOM] Find the master product to identify its UOM Category
+            const product = localBillableItems.find(i => i.id === productId);
+            const baseUomId = product?.uom_id;
+            const baseUom = safeUomsList.find(u => u.id === baseUomId);
+            
+            if (baseUom?.category_id) {
+                // Return all UOMs in the same category (e.g. Mass, Quantity, Time)
+                const relevant = safeUomsList
+                    .filter(u => u.category_id === baseUom.category_id)
+                    .map(u => (u.name || '').toUpperCase());
+                
+                return Array.from(new Set([...relevant, (currentUom || '').toUpperCase()])).filter(Boolean);
+            }
+
+            // Fallback to legacy defaults if no category link exists (Deduplicated)
+            return Array.from(new Set(['PCS', 'UNIT', 'EACH', (currentUom || '').toUpperCase()])).filter(Boolean);
+
         } catch (e) {
             return ['PCS', 'UNIT'];
         }
@@ -212,13 +275,13 @@ export function CompactInvoiceEditor({
   const searchParams = useSearchParams()
   const { toast } = useToast()
 
-  const { data: session } = useSession()
-  const isAdmin = session?.user?.isAdmin
-  const tenantId = session?.user?.tenantId;
-  const companyId = session?.user?.companyId;
+  const isAdmin = currentUser?.isAdmin || (initialInvoice as any)?.isAdmin || false;
+  const tenantId = currentUser?.tenantId || (initialInvoice as any)?.tenant_id;
+  const companyId = currentUser?.companyId || (initialInvoice as any)?.company_id;
 
   // Active persistence state
   const [activeInvoice, setActiveInvoice] = useState<any>(initialInvoice)
+  const [activeReturn, setActiveReturn] = useState<any>(initialReturn)
 
   // UI State
   const [loading, setLoading] = useState(false)
@@ -227,15 +290,51 @@ export function CompactInvoiceEditor({
   const [isMaximized, setIsMaximized] = useState(false)
   const [isQuickPatientOpen, setIsQuickPatientOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
-  const [isWalkIn, setIsWalkIn] = useState(false)
+  // [WALK-IN-RECOVERY-LOGIC] Robustly resolve walk-in status from initial invoice data
+  const resolvedWalkInData = useMemo(() => {
+    try {
+        const inv = JSON.parse(JSON.stringify(initialInvoice || activeInvoice || {}));
+        if (!inv || Object.keys(inv).length === 0) return { isWalkIn: false, name: '', phone: '' };
+        
+        // [NUCLEAR-RESOLUTION] Handle 'null' strings and empty UUIDs
+        const pid = inv.patient_id;
+        const hasPatientLink = pid && pid !== 'null' && pid !== 'undefined' && String(pid).trim().length > 5;
+        
+        if (hasPatientLink) return { isWalkIn: false, name: '', phone: '' };
+
+        const bMeta = (() => {
+            const m = inv.billing_metadata;
+            if (!m) return {};
+            if (typeof m === 'string') {
+                try { return JSON.parse(m); } catch (e) { return {}; }
+            }
+            return m;
+        })();
+        
+        // Deep search for identity
+        const name = bMeta.patient_name || bMeta.name || bMeta.customer_name || inv.patient_name || '';
+        const phone = bMeta.patient_phone || bMeta.phone || bMeta.mobile || bMeta.contact || inv.patient_phone || '';
+        
+        const isWalkIn = Boolean(bMeta.is_walk_in || name || phone || !hasPatientLink);
+        return { isWalkIn, name, phone };
+    } catch (e) {
+        return { isWalkIn: false, name: '', phone: '' };
+    }
+  }, [initialInvoice, activeInvoice]);
+
+  const [isWalkIn, setIsWalkIn] = useState(resolvedWalkInData.isWalkIn)
   const [isSuccess, setIsSuccess] = useState(false)
   const [lastSavedId, setLastSavedId] = useState<string | null>(null)
+  const [invoiceNote, setInvoiceNote] = useState(initialInvoice?.notes || '')
   const [patientBalance, setPatientBalance] = useState(0)
+  const [balanceType, setBalanceType] = useState<'due' | 'advance'>('due')
   const [includePrevBalance, setIncludePrevBalance] = useState(false)
   const [isLedgerOpen, setIsLedgerOpen] = useState(false)
   const [ledgerData, setLedgerData] = useState<any[]>([])
   const [isFetchingLedger, setIsFetchingLedger] = useState(false)
-  const [provisionalNo, setProvisionalNo] = useState<string>("...")
+  const [provisionalNo, setProvisionalNo] = useState<string>(externalProvisionalNo || "...")
+  const [referenceInvoiceNo, setReferenceInvoiceNo] = useState(initialInvoice?.invoice_number || '')
+  const [referenceInvoiceId, setReferenceInvoiceId] = useState(initialInvoice?.id || '')
   const amountInputRef = useRef<HTMLInputElement>(null)
   const finalizeButtonRef = useRef<HTMLButtonElement>(null)
   const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false)
@@ -273,34 +372,62 @@ export function CompactInvoiceEditor({
   const [quickPatientName, setQuickPatientName] = useState('')
   const [quickPatientPhone, setQuickPatientPhone] = useState('')
   const [isCreatingPatient, setIsCreatingPatient] = useState(false)
-  const [walkInName, setWalkInName] = useState('')
-  const [walkInPhone, setWalkInPhone] = useState('')
+  const [walkInName, setWalkInName] = useState(resolvedWalkInData.name)
+  const [walkInPhone, setWalkInPhone] = useState(resolvedWalkInData.phone)
   const [selectedPatientId, setSelectedPatientId] = useState(activeInvoice?.patient_id || initialPatientId || '')
+  const [patientBalanceData, setPatientBalanceData] = useState<any>(null)
 
-  const patientOptions = useMemo(() => safePatients.filter(Boolean).map(p => ({
-    id: p.id,
-    label: p.label || p.name || `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unnamed Patient',
-    subLabel: `${p.phone || p.contact || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`
-  })), [safePatients]);
+  // [UNIFIED-IDENTITY-SYNC] Single source of truth for patient/walk-in state resolution
+  useEffect(() => {
+    if (!initialInvoice && !initialPatientId) return; // Skip for fresh new bills
+    
+    // Recovery path for Edit mode or Deep Link
+    if (resolvedWalkInData.isWalkIn) {
+      console.log("[SYNC-WALK-IN] Applying Identity Node:", resolvedWalkInData.name);
+      setIsWalkIn(true);
+      setWalkInName(resolvedWalkInData.name);
+      setWalkInPhone(resolvedWalkInData.phone);
+      setSelectedPatientId('');
+    } else if (initialPatientId || activeInvoice?.patient_id) {
+      const pId = initialPatientId || activeInvoice?.patient_id;
+      if (pId && pId.length > 5) {
+          setIsWalkIn(false);
+          setSelectedPatientId(pId);
+      }
+    }
+  }, [initialInvoice, initialPatientId, activeInvoice, resolvedWalkInData]); // Unified dependency array
 
-  const itemOptions = useMemo(() => safeBillableItems.filter(Boolean).map(i => ({
+  const patientOptions = useMemo(() => safePatients.filter(Boolean).map(p => {
+    const rawName = (typeof p.name === 'string' ? p.name : (typeof p.label === 'string' ? p.label : `${p.first_name || ''} ${p.last_name || ''}`.trim())) || 'Unnamed Patient';
+    return {
+      id: p.id,
+      label: rawName,
+      subLabel: `${p.phone || p.contact?.phone || p.contact?.mobile || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`.trim()
+    };
+  }), [safePatients]);
+
+  const itemOptions = useMemo(() => localBillableItems.filter(Boolean).map(i => ({
     id: i.id,
     label: i.label || i.name,
-    subLabel: `${i.sku ? `SKU: ${i.sku}` : ''} • ${currency}${i.price || 0}`
-  })), [safeBillableItems, currency]);
+    subLabel: `${i.sku ? `SKU: ${i.sku} • ` : ''}${safeCurrency}${i.price || 0}${i.type !== 'service' ? ` • Stock: ${Number(i.totalStock || 0).toLocaleString()}` : ''}`
+  })), [localBillableItems, safeCurrency]);
 
   // Auto-select patient from URL if coming back from registration
+  const [hasAutoSelectedPatient, setHasAutoSelectedPatient] = useState(false);
   useEffect(() => {
+    if (hasAutoSelectedPatient) return;
     const pId = searchParams?.get?.('patientId');
     if (pId) {
       setSelectedPatientId(pId);
       setIsWalkIn(false);
-    } else if (initialPatientId && !selectedPatientId) {
-      // [FIX] Sync with prop if state is empty (handles late-bind mapping)
+      setHasAutoSelectedPatient(true);
+    } else if (initialPatientId && !selectedPatientId && !isWalkIn) {
+      // Initialize gently once
       setSelectedPatientId(initialPatientId);
       setIsWalkIn(false);
+      setHasAutoSelectedPatient(true);
     }
-  }, [searchParams, initialPatientId, selectedPatientId]);
+  }, [searchParams, initialPatientId, selectedPatientId, isWalkIn, hasAutoSelectedPatient]);
 
   const displayedPatientOptions = useMemo(() => patientOptions.slice(0, 20), [patientOptions]);
   const displayedBillableOptions = useMemo(() => itemOptions.slice(0, 20), [itemOptions]);
@@ -327,8 +454,11 @@ export function CompactInvoiceEditor({
 
   const [date, setDate] = useState(getSafeDate(activeInvoice?.invoice_date))
 
-  // Fetch provisional number on mount and date change
+  // [VOUCHER-SEQUENCER] Mode-Aware Numbering
   useEffect(() => {
+    // Return Mode Isolation: Do NOT overwrite the SRT sequence with Sale data
+    if (mode === 'return') return;
+
     let isMounted = true;
     if (!activeInvoice?.invoice_number) {
       getNextVoucherNumber(date).then(res => {
@@ -338,14 +468,14 @@ export function CompactInvoiceEditor({
       setProvisionalNo(activeInvoice.invoice_number);
     }
     return () => { isMounted = false; };
-  }, [date, activeInvoice]);
+  }, [date, activeInvoice, mode]);
 
     // AUTO-LOAD INITIAL DATA FROM APPOINTMENT (Registration Fee, etc)
     useEffect(() => {
         let isMounted = true;
         try {
             if (appointmentId && (!activeInvoice && (!initialMedicines || initialMedicines.length === 0))) {
-                import('@/app/actions/billing').then(mod => {
+                import('@/app/actions/clinical').then(mod => {
                     mod.getInitialInvoiceData(appointmentId).then(res => {
                         if (!isMounted) return;
                         if (res?.success && res.data) {
@@ -383,9 +513,39 @@ export function CompactInvoiceEditor({
                                 return;
                             }
 
-                            // [CLEAN-UI] Removed auto-population from initialItems.
-                            // The "Clinical Intelligence Hub" (Sidebar) handles all clinical data now.
-                            // Cashiers must use "Import Hub" to pull these into the bill.
+                            // [WORLD CLASS] Selective Auto-Population
+                            // Confirmed clinical items (Nursing Consumption, Lab, etc.) now auto-load.
+                            // Pending items remain in the Sidebar Hub for manual review.
+                            if (initialItems && initialItems.length > 0) {
+                                const confirmedItems = initialItems.filter((i: any) => !i.isPending);
+                                if (confirmedItems.length > 0) {
+                                    const mapped = confirmedItems.map((i: any, idx: number) => ({
+                                        id: `auto-${idx}-${Date.now()}`,
+                                        product_id: i.id || '',
+                                        description: i.name || '',
+                                        quantity: i.quantity || 1,
+                                        unit_price: Number(i.price || i.unit_price || 0),
+                                        uom: i.uom || 'PCS',
+                                        tax_rate_id: i.tax_rate_id || defaultTaxId,
+                                        tax_amount: 0,
+                                        discount_amount: 0,
+                                        item_type: i.type || 'item',
+                                        fromSource: true,
+                                        source: i.source,
+                                        sourceId: i.sourceId
+                                    }));
+                                    
+                                    setLines(prev => {
+                                        // If the grid only has one empty line, replace it. Otherwise append.
+                                        if (prev.length === 1 && !prev[0].product_id && !prev[0].description) {
+                                          return mapped;
+                                        }
+                                        // Filter out duplicates before appending
+                                        const uniqueMapped = mapped.filter((mi: any) => !prev.some(p => p.sourceId === mi.sourceId));
+                                        return [...prev, ...uniqueMapped];
+                                    });
+                                }
+                            }
                         }
                     }).catch(err => console.log("[BILLING-EDITOR] Fetch Appt Data Failed:", err));
                 });
@@ -480,9 +640,26 @@ export function CompactInvoiceEditor({
   }, [safeTaxRates, safeBillableItems]);
 
 
+  // [WORLD CLASS] Patient Balance Fetcher
+  useEffect(() => {
+    let isMounted = true;
+    if (selectedPatientId) {
+      getPatientBalance(selectedPatientId).then(res => {
+        if (isMounted && res.success) {
+          setPatientBalanceData(res);
+        }
+      });
+    } else {
+      setPatientBalanceData(null);
+    }
+    return () => { isMounted = false; };
+  }, [selectedPatientId]);
+
   // [CLEAN-UI] Filtered sync for initial props
   useEffect(() => {
     if (initialInvoice?.hms_invoice_lines && !activeInvoice) {
+
+      // [WORLD CLASS] Load PDF config on mount
       // [WORLD CLASS] Lock on to the invoice if it arrived asynchronously
       console.log("[INVOICE-SYNC] Locking on to asynchronously arrived invoice:", initialInvoice.invoice_number);
       setActiveInvoice(initialInvoice);
@@ -512,26 +689,30 @@ export function CompactInvoiceEditor({
     }
   }, [initialInvoice, activeInvoice, safeBillableItems]);
 
-  // Sync Tax Amounts on Mount for initial items
+  // Sync Tax Amounts when lines change (e.g. after auto-loading or importing)
   useEffect(() => {
     if (lines.length > 0) {
       const updatedLines = lines.map(line => {
-        const taxRateObj = safeTaxRates.find((t: any) => t.id === line.tax_rate_id)
+        const taxRateObj = extendedTaxRates.find((t: any) => t.id === line.tax_rate_id)
         const rate = taxRateObj ? Number(taxRateObj.rate) : 0
         const lineNet = (line.quantity * line.unit_price) - (line.discount_amount || 0)
+        const calculatedTax = (Math.max(0, lineNet) * rate) / 100
+        
+        // Return original line if tax is already correct to avoid unnecessary updates
+        if (Math.abs((line.tax_amount || 0) - calculatedTax) < 0.01) return line;
+        
         return {
           ...line,
-          tax_amount: (Math.max(0, lineNet) * rate) / 100
+          tax_amount: calculatedTax
         }
       })
 
-      // Only update if changes detected to avoid infinite loop
-      const hasChanges = updatedLines.some((l, idx) => l.tax_amount !== lines[idx].tax_amount);
+      const hasChanges = updatedLines.some((l, idx) => l !== lines[idx]);
       if (hasChanges) {
         setLines(updatedLines);
       }
     }
-  }, []);
+  }, [lines.length, extendedTaxRates, taxMode]);
 
   // WORLD CLASS FEFO: Auto-resolve batches for initial medicines
   useEffect(() => {
@@ -563,6 +744,15 @@ export function CompactInvoiceEditor({
   const [isBatchSelectorOpen, setIsBatchSelectorOpen] = useState(false);
   const [batchProductName, setBatchProductName] = useState('');
 
+  // Quick-Create Product State (world-standard on-the-fly creation from billing)
+  const [isQuickProductOpen, setIsQuickProductOpen] = useState(false);
+  const [quickProductName, setQuickProductName] = useState('');
+  const [quickProductPrice, setQuickProductPrice] = useState('');
+  const [quickProductType, setQuickProductType] = useState<'item' | 'service'>('item');
+  const [isCreatingProduct, setIsCreatingProduct] = useState(false);
+  const [quickProductLineId, setQuickProductLineId] = useState<number | null>(null);
+  const [quickProductResolver, setQuickProductResolver] = useState<((val: any) => void) | null>(null);
+
   // Totals
   const subtotal = Number(lines.reduce((sum, line) => sum + ((line.quantity * line.unit_price) - (line.discount_amount || 0)), 0).toFixed(2))
   
@@ -589,12 +779,31 @@ export function CompactInvoiceEditor({
   const isDeficit = (settlementTarget - totalPaid) > 0.005
   const isBalanced = !isSurplus && !isDeficit
 
+  // [SYNC-PAYMENT-AMOUNT] Auto-snap the payment input to the net total when discount or balance changes
+  useEffect(() => {
+    if (payments.length === 0 && isPaymentModalOpen) {
+      const target = grandTotal + (includePrevBalance ? patientBalance : 0);
+      setActivePaymentAmount(target.toFixed(2));
+    }
+  }, [grandTotal, patientBalance, includePrevBalance, payments.length, isPaymentModalOpen]);
+
   // World Class Debt Awareness & Autofocus Node
   useEffect(() => {
     if (selectedPatientId) {
       setIsWalkIn(false);
-      getPatientOutstandingBalance(selectedPatientId).then(res => {
-        if (res.success) setPatientBalance(res.balance || 0);
+      getPatientBalance(selectedPatientId).then(res => {
+        if (res.success) {
+          setPatientBalance(res.balance || 0);
+          setBalanceType((res.type as "due" | "advance") || 'due');
+          
+          if (res.type === 'advance' && (res.balance || 0) > 0) {
+            toast({
+              title: "Credit Available",
+              description: `Patient has a credit balance of ${safeCurrency}${res.balance.toFixed(2)}. You can apply this during settlement.`,
+              duration: 5000
+            });
+          }
+        }
       });
 
       // AUTO FOCUS TO PRODUCT SEARCH
@@ -622,35 +831,108 @@ export function CompactInvoiceEditor({
   const [clinicalHubs, setClinicalHubs] = useState<any[]>([])
   const [isHubOpen, setIsHubOpen] = useState(false)
   const [hubLoading, setHubLoading] = useState(false)
+  const [syncingHub, setSyncingHub] = useState<string | null>(null)
   const [internalPendingCount, setInternalPendingCount] = useState(0)
   const [isSettling, setIsSettling] = useState(false)
 
-  const checkContext = async () => {
-    if (selectedPatientId || appointmentId) {
-      setHubLoading(true);
-      const targetId = appointmentId || (initialInvoice?.appointment_id as string || '');
-      if (targetId) {
-        import('@/app/actions/billing').then(async (mod) => {
-          const res = await mod.getInitialInvoiceData(targetId);
+    const checkContext = async () => {
+      if (selectedPatientId || appointmentId) {
+        setHubLoading(true);
+        const targetId = appointmentId || (activeInvoice?.appointment_id as string || '');
+        
+        try {
+          const mod = await import('@/app/actions/clinical');
+          const res = await (mod as any).getInitialInvoiceData(targetId || undefined, selectedPatientId || undefined);
+          
           if (res.success && res.data) {
-            setClinicalHubs((res.data as any).hubs || []);
+            const hubs = (res.data as any).hubs || [];
+            setClinicalHubs(hubs);
             setInternalPendingCount((res.data as any).pendingConsumablesCount || 0);
-            if (!isHubOpen && ((res.data as any).hubs || []).length > 0) {
+            
+            // Auto-open hub if new items are found and it's not a fresh blank bill
+            if (!isHubOpen && hubs.length > 0 && selectedPatientId) {
               setIsHubOpen(true);
             }
+            return hubs; // Return the fresh data for sequential use
           }
-        });
+        } catch (err) {
+          console.error("[BILLING-HUB] Sync Failed:", err);
+        } finally {
+          setHubLoading(false);
+        }
       }
-      setHubLoading(false);
+      return [];
     }
-  }
 
-  const addItemToBill = (item: any) => {
-    // Check if item with same sourceId or product already exists to prevent duplicates
-    const exists = lines.some(l => 
-      (l.sourceId === item.sourceId && l.product_id === item.id) || 
-      (l.product_id === 'REG-FEE' && item.id === 'reg-fee')
-    );
+    const importHubById = async (hubId: string) => {
+        // [SERIOUS-SYNC] Force a live refresh from the server before importing
+        setSyncingHub(hubId);
+        const freshHubs = await checkContext();
+        setSyncingHub(null);
+        const hub = freshHubs.find((h: any) => h.id === hubId);
+        if (!hub) {
+            toast({ title: "Hub Empty", description: "No clinical items found in this section.", variant: "destructive" });
+            return;
+        }
+        
+        let imported = 0;
+        hub.items.forEach((item: any) => {
+            const isAdded = lines.some(l => (l.sourceId === item.sourceId && l.product_id === item.id));
+            if (!isAdded) {
+                addItemToBill(item);
+                imported++;
+            }
+        });
+        
+        if (imported > 0) {
+            toast({ title: `${hub.label} Synced`, description: `Imported ${imported} items.` });
+        }
+    };
+
+    const importAllFromHubs = async () => {
+        // [SERIOUS-SYNC] Force a live refresh of all clinical departments
+        const freshHubs = await checkContext();
+        if (!freshHubs || freshHubs.length === 0) {
+            toast({ title: "Sync Result", description: "No new clinical items found for this patient.", variant: "destructive" });
+            return;
+        }
+
+        let totalImported = 0;
+        freshHubs.forEach((hub: any) => {
+            hub.items.forEach((item: any) => {
+                const isAdded = lines.some(l => (l.sourceId === item.sourceId && l.product_id === item.id) || (l.product_id === 'REG-FEE' && item.id === 'reg-fee'));
+                if (!isAdded) {
+                    addItemToBill(item);
+                    totalImported++;
+                }
+            });
+        });
+        
+        if (totalImported > 0) {
+            toast({ 
+                title: "Unified Sync Complete", 
+                description: `Successfully imported ${totalImported} orders from clinical hubs.`,
+                variant: "default" 
+            });
+        } else {
+            toast({ 
+                title: "Nothing to Import", 
+                description: "All detected items are already in the billing grid.",
+                variant: "destructive" 
+            });
+        }
+    };
+
+    const addItemToBill = (item: any) => {
+    // [RCM-DUPLICATE-GUARD] Stop double-billing of registration fees at the edge
+    const descLower = (item.name || item.description || '').toLowerCase();
+    const isNewReg = item.id === REG_FEE_SKU || descLower.includes('registration') || descLower.includes('identity') || descLower.includes('regn');
+
+    const exists = lines.some(l => {
+      const isExistingReg = l.product_id === REG_FEE_SKU || l.description?.toLowerCase().includes('registration') || l.description?.toLowerCase().includes('identity') || l.description?.toLowerCase().includes('regn');
+      if (isNewReg && isExistingReg) return true;
+      return (l.sourceId === item.sourceId && l.product_id === item.id);
+    });
     
     if (exists) {
       toast({ 
@@ -673,7 +955,9 @@ export function CompactInvoiceEditor({
       item_type: (item.type === 'medicine' || item.type === 'item') ? 'item' : 'service',
       fromClinicalHub: true,
       source: item.source,
-      sourceId: item.sourceId
+      sourceId: item.sourceId,
+      batch_id: item.batch_id,
+      batch_no: item.batch_no
     };
 
     // Smart Injection: Replace first empty line or append
@@ -726,7 +1010,19 @@ export function CompactInvoiceEditor({
 
         // Logic for Product/Service Selection
         if (field === 'product_id') {
-          const item = safeBillableItems.find(bi => bi && bi.id === value)
+          const item = localBillableItems.find(bi => bi && bi.id === value)
+
+          
+          // [DUPLICATE GUARD] - Check if item already exists in other lines
+          const isDuplicate = lines.some(l => l.id !== id && l.product_id === value);
+          if (isDuplicate && value) {
+            toast({
+              title: "Duplicate Item Detected",
+              description: `${item?.name || 'Item'} is already in the list. You can adjust its quantity instead.`,
+              variant: "destructive"
+            });
+          }
+
           if (item) {
             // Description Polish: Override generic auto-created labels
             const rawDescription = item.description || item.label || item.name;
@@ -758,16 +1054,36 @@ export function CompactInvoiceEditor({
             // Metadata for complex items
             updated.metadata = item.metadata
 
-            // WORLD CLASS FEFO: Auto-select best batch
+            // WORLD CLASS HYBRID SELECTION: Auto-show dialog if multiple batches exist, otherwise auto-select FEFO.
             if (item.type === 'item' || !item.type) {
-              getBestBatch(item.id).then(batch => {
-                if (batch) {
+              getProductBatches(item.id).then(batches => {
+                const availableBatches = Array.isArray(batches) ? batches.filter((b: any) => Number(b.qty_on_hand) > 0) : [];
+                
+                if (availableBatches.length > 1) {
+                  // [CLINICAL SAFETY] Multi-batch detected: Force selection to ensure accuracy
+                  setBatchProductName(item.label || item.name || '');
+                  setActiveBatches(availableBatches);
+                  setSelectedLineForBatch(id);
+                  setIsBatchSelectorOpen(true);
+                  
+                  // Still pick the best one as a fallback in case they close the dialog
+                  const best = availableBatches[0];
+                  setLines(current => current.map(l =>
+                    l.id === id ? {
+                      ...l,
+                      batch_id: best.id,
+                      batch_no: best.batch_no,
+                      unit_price: pricingMode === 'mrp' ? Number(best.mrp || l.unit_price) : l.unit_price
+                    } : l
+                  ));
+                } else if (availableBatches.length === 1) {
+                  // [SPEED] Only one batch: Auto-select it and move on
+                  const batch = availableBatches[0];
                   setLines(current => current.map(l =>
                     l.id === id ? {
                       ...l,
                       batch_id: batch.id,
                       batch_no: batch.batch_no,
-                      // If MRP mode or if batch has MRP, use it
                       unit_price: pricingMode === 'mrp' ? Number(batch.mrp || l.unit_price) : l.unit_price
                     } : l
                   ));
@@ -779,7 +1095,10 @@ export function CompactInvoiceEditor({
             setTimeout(() => {
               const lineIndex = lines.findIndex(l => l.id === id);
               const qtyInput = document.getElementById(`qty-input-${lineIndex}`);
-              if (qtyInput) (qtyInput as HTMLInputElement).focus();
+              if (qtyInput) {
+                (qtyInput as HTMLInputElement).focus();
+                (qtyInput as HTMLInputElement).select();
+              }
             }, 100);
           } else {
             // If item not found (e.g. cleared), reset basics
@@ -790,14 +1109,21 @@ export function CompactInvoiceEditor({
           }
         }
 
-        // Logic for UOM Changes (strips vs pieces)
-        if (field === 'uom' && updated.metadata) {
-          const selectedUom = (value || '').toUpperCase()
-          const meta = updated.metadata
-          if (selectedUom === (meta.packUom || 'STRIP').toUpperCase() && meta.packPrice) {
-            updated.unit_price = meta.packPrice
-          } else if (selectedUom === (meta.baseUom || 'PCS').toUpperCase()) {
-            updated.unit_price = updated.base_price
+        // [SERIOUS-UOM] Logic for UOM Changes with automatic price scaling
+        if (field === 'uom') {
+          const product = safeBillableItems.find(bi => bi.id === line.product_id);
+          const safeUomsList = Array.isArray(uoms) ? uoms : [];
+          
+          if (product && product.uom_id) {
+            const baseUom = safeUomsList.find(u => u.id === product.uom_id);
+            const newUom = safeUomsList.find(u => u.name.toUpperCase() === (value || '').toUpperCase() && u.category_id === baseUom?.category_id);
+            
+            if (baseUom && newUom && baseUom.ratio && newUom.ratio) {
+              // Scale price: New Price = Base Price * (New Ratio / Base Ratio)
+              // Note: This assumes ratio is "units per reference". Adjust if your schema uses "reference per unit".
+              const scaleFactor = Number(newUom.ratio) / Number(baseUom.ratio);
+              updated.unit_price = (updated.base_price || product.price || 0) * scaleFactor;
+            }
           }
         }
 
@@ -819,8 +1145,9 @@ export function CompactInvoiceEditor({
 
     // Auto-paid if fully settled
     const effectiveStatus = (status === 'paid' && totalPaid < grandTotal) ? 'posted' : status;
+    const isReturn = mode === 'return';
 
-    if (effectiveStatus === 'paid' && finalPayments.length === 0) {
+    if (!isReturn && effectiveStatus === 'paid' && finalPayments.length === 0) {
       return toast({ title: "Payment Required", description: "Apply at least one payment method to mark as paid.", variant: "destructive" });
     }
 
@@ -854,7 +1181,10 @@ export function CompactInvoiceEditor({
       }),
       status: effectiveStatus,
       total_discount: globalDiscount,
+      notes: invoiceNote,
       payments: finalPayments,
+      patient_name: isWalkIn ? walkInName : undefined,
+      patient_phone: isWalkIn ? walkInPhone : undefined,
       billing_metadata: {
           ...(isWalkIn ? { is_walk_in: true, patient_name: walkInName, patient_phone: walkInPhone } : {}),
           tax_mode: taxMode
@@ -862,22 +1192,83 @@ export function CompactInvoiceEditor({
     }
 
     try {
-      // Create or update based on activeInvoice state (which handles post-initial-fetch resolution)
-      const res = await (activeInvoice?.id ? updateInvoice(activeInvoice.id, payload) : createInvoice(payload))
+      let res;
+      if (isReturn) {
+        // WORLD CLASS: Execute Sales Return Sequence
+        if (activeReturn?.id) {
+          res = await updateSalesReturn(activeReturn.id, {
+            patientId: selectedPatientId,
+            invoiceId: referenceInvoiceId || initialInvoice?.id || activeInvoice?.id,
+            reason: invoiceNote || `Update Return ${activeReturn.return_number}`,
+            refundMethod: totalPaid > 0 ? 'cash' : 'credit_note',
+            items: lines.filter(l => l.product_id).map(l => ({
+              invoiceLineId: l.isFromInvoice ? l.id : (l.invoice_line_id || ''),
+              productId: l.product_id,
+              qtyToReturn: l.quantity,
+              unitPrice: l.unit_price,
+              batchId: l.batch_id
+            }))
+          });
+        } else {
+          res = await createSalesReturn({
+            patientId: selectedPatientId,
+            invoiceId: referenceInvoiceId || initialInvoice?.id || activeInvoice?.id,
+            reason: invoiceNote || `Return against ${referenceInvoiceNo || 'Ad-Hoc Sale'}`,
+            refundMethod: totalPaid > 0 ? 'cash' : 'credit_note',
+            locationId: 'PHARMACY-MAIN', // Default location
+            items: lines.filter(l => l.product_id).map(l => ({
+              invoiceLineId: l.isFromInvoice ? l.id : '',
+              productId: l.product_id,
+              qtyToReturn: l.quantity,
+              unitPrice: l.unit_price,
+              batchId: l.batch_id
+            }))
+          });
+        }
+      } else {
+        // Create or update based on activeInvoice state (which handles post-initial-fetch resolution)
+        let supervisorPin: string | undefined = undefined;
+        if (activeInvoice?.id && !isAdmin && activeInvoice.status !== 'draft' && !isRegistrationFee) {
+          const pin = window.prompt("🔒 SUPERVISOR AUTHORIZATION REQUIRED:\nYou are logged in as a Receptionist/Cashier. To EDIT and save changes to this finalized transaction, please enter your authorized 4-digit Supervisor Security PIN:");
+          if (!pin || pin.trim().length < 4) {
+            setLoading(false);
+            return toast({ title: "Access Denied", description: "A valid Supervisor PIN is required to save edits to finalized bills.", variant: "destructive" });
+          }
+          supervisorPin = pin.trim();
+        }
+
+        res = await (activeInvoice?.id ? updateInvoice(activeInvoice.id, payload, supervisorPin) : createInvoice(payload))
+      }
 
       if (res.success) {
         let tallyMsg = `Transaction serialized as ${effectiveStatus}.`;
         if (totalPaid > 0) {
           if (totalPaid < grandTotal) {
-            tallyMsg = `Partial settlement of ${currency}${totalPaid.toFixed(2)} recorded. Balance ${currency}${balanceDue.toFixed(2)} posted to Patient Credit ledger.`;
+            tallyMsg = `Partial settlement of ${safeCurrency}${totalPaid.toFixed(2)} recorded. Balance ${safeCurrency}${balanceDue.toFixed(2)} posted to Patient Credit ledger.`;
           } else if (totalPaid > grandTotal) {
-            tallyMsg = `Full settlement recorded with ${currency}${(totalPaid - grandTotal).toFixed(2)} advance deposit detected.`;
+            tallyMsg = `Full settlement recorded with ${safeCurrency}${(totalPaid - grandTotal).toFixed(2)} advance deposit detected.`;
           } else {
-            tallyMsg = `Invoice fully settled for ${currency}${grandTotal.toFixed(2)}. Connection closed.`;
+            tallyMsg = `Invoice fully settled for ${safeCurrency}${grandTotal.toFixed(2)}. Connection closed.`;
           }
         }
 
-        toast({ title: "Sync Successful", description: tallyMsg });
+        let successTitle = "Sync Successful";
+        if (mode === 'return') {
+          successTitle = status === 'draft' ? "Return Draft Saved" : "Credit Note Issued";
+        } else {
+          successTitle = status === 'draft' ? "Draft Invoice Saved" : "Invoice Posted";
+        }
+
+        toast({ 
+          title: successTitle, 
+          description: tallyMsg,
+          className: mode === 'return' ? "bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800" : ""
+        });
+
+        if (mode === 'return') {
+          router.push(`/hms/billing/returns/${(res as any).data?.id || (res as any).id || (activeReturn?.id)}`);
+          return;
+        }
 
         // WhatsApp Failure Notification (if auto-send was triggered)
         if ((res as any)?.whatsapp_sent) {
@@ -897,11 +1288,14 @@ export function CompactInvoiceEditor({
 
         // WORLD CLASS: Auto-Print Trigger (Trigger on Paid or Posted settlement)
         if ((effectiveStatus === 'paid' || effectiveStatus === 'posted') && pdfConfig?.autoPrint && invoiceId) {
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          iframe.src = `/api/billing/${invoiceId}/pdf?autoPrint=true`;
-          document.body.appendChild(iframe);
-          setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 10000);
+          window.open(`/api/invoice-printer/${invoiceId}?autoPrint=true`, '_blank');
+        }
+
+        // [WORLD CLASS] Live Refresh: Re-validate patient standing immediately after save
+        if (selectedPatientId) {
+          getPatientBalance(selectedPatientId).then(balanceRes => {
+            if (balanceRes.success) setPatientBalanceData(balanceRes);
+          });
         }
 
         setLoading(false);
@@ -911,7 +1305,15 @@ export function CompactInvoiceEditor({
         // so the user is instantly dropped back into the OP Clinical Terminal
         if (isRegistrationFee) {
           if (onPaymentSuccess) onPaymentSuccess((res as any).data);
-          if (onClose) onClose();
+          if (onClose) {
+            onClose();
+            return;
+          }
+        }
+
+        // [USER REQUEST] Bypass popup and redirect to billing dashboard directly
+        if (!onClose) {
+          window.location.href = '/hms/billing';
           return;
         }
 
@@ -956,20 +1358,63 @@ export function CompactInvoiceEditor({
 
   const handleCancelBill = async () => {
     if (!initialInvoice?.id || loading) return
-    if (!isAdmin) return toast({ title: "Access Denied", description: "Only financial administrators can void saved transactions.", variant: "destructive" })
 
-    const confirmed = window.confirm("WORLD CLASS SECURITY ALERT: Are you sure you want to VOID this transaction? This will invalidate the ledger node and cannot be undone.")
+    let supervisorPin: string | undefined = undefined;
+    if (!isAdmin) {
+      const pin = window.prompt("🔒 SUPERVISOR AUTHORIZATION REQUIRED:\nYou are logged in as a Receptionist/Cashier. To VOID this finalized transaction, please enter your authorized 4-digit Supervisor Security PIN:");
+      if (!pin || pin.trim().length < 4) {
+        return toast({ title: "Access Denied", description: "A valid Supervisor PIN is required to authorize voiding.", variant: "destructive" });
+      }
+      supervisorPin = pin.trim();
+    }
+
+    const reason = window.prompt("AUDIT COMPLIANCE: Please enter the reason for VOIDING this transaction:")
+    if (!reason) return
+    if (reason.length < 5) return toast({ title: "Compliance Error", description: "Please provide a more detailed reason (min 5 chars).", variant: "destructive" })
+
+    const confirmed = window.confirm("WORLD CLASS SECURITY ALERT: Are you sure you want to VOID this transaction? This will invalidate the ledger node and reverse all financials.")
     if (!confirmed) return
 
     setLoading(true)
     try {
-      const res = await cancelInvoice(initialInvoice.id)
+      const res = await (cancelInvoice as any)(initialInvoice.id, reason, supervisorPin)
       if (res.success) {
         toast({ title: "Node Invalidated", description: res.message })
         router.push('/hms/billing')
         router.refresh()
       } else {
         toast({ title: "Validation Failed", description: res.error, variant: "destructive" })
+      }
+    } catch (error) {
+      toast({ title: "System Error", description: "Failed to communicate with settlement engine.", variant: "destructive" })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRestoreBill = async () => {
+    if (!initialInvoice?.id || loading) return
+
+    let supervisorPin: string | undefined = undefined;
+    if (!isAdmin) {
+      const pin = window.prompt("🔒 SUPERVISOR AUTHORIZATION REQUIRED:\nYou are logged in as a Receptionist/Cashier. To RESTORE this voided transaction, please enter your authorized 4-digit Supervisor Security PIN:");
+      if (!pin || pin.trim().length < 4) {
+        return toast({ title: "Access Denied", description: "A valid Supervisor PIN is required to authorize restoration.", variant: "destructive" });
+      }
+      supervisorPin = pin.trim();
+    }
+
+    const confirmed = window.confirm("WORLD CLASS SECURITY: Are you sure you want to RESTORE this voided transaction? This will re-deduct stock and reactivate the ledger node.")
+    if (!confirmed) return
+
+    setLoading(true)
+    try {
+      const res = await (restoreInvoice as any)(initialInvoice.id, supervisorPin)
+      if (res.success) {
+        toast({ title: "Node Reactivated", description: res.message })
+        router.refresh()
+      } else {
+        toast({ title: "Restoration Failed", description: res.error, variant: "destructive" })
       }
     } catch (error) {
       toast({ title: "System Error", description: "Failed to communicate with settlement engine.", variant: "destructive" })
@@ -988,7 +1433,7 @@ export function CompactInvoiceEditor({
       });
 
       if (res.success) {
-        toast({ title: "Payment Successful", description: `Received ${currency}${amount} via Device` });
+        toast({ title: "Payment Successful", description: `Received ${safeCurrency}${amount} via Device` });
         setPayments(prev => {
           const newPayments: Payment[] = [...prev, { method: method.toLowerCase() as any, amount, reference: res.reference } as Payment];
           const currentTotalPaid = newPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -999,8 +1444,8 @@ export function CompactInvoiceEditor({
       } else {
         toast({ title: "Device Error", description: res.error || "Transaction failed on machine", variant: "destructive" });
         if (method === 'UPI') {
-          // Fallback to static QR
-          setShowUPIQR({ amount, vpa: 'hospital@upi' });
+          // Fallback to static QR (Not implemented yet in UI state)
+          // setShowUPIQR({ amount, vpa: 'hospital@upi' });
         }
       }
     } catch (err: any) {
@@ -1056,7 +1501,7 @@ export function CompactInvoiceEditor({
     setPayments(prev => [...prev, { method: 'upi', amount: amt, reference: razorpayOrderId || 'RAZORPAY' }]);
     setIsRazorpayQROpen(false);
     setActivePaymentAmount('');
-    toast({ title: '✅ Payment Recorded', description: `₹${amt.toFixed(2)} via Razorpay recorded. Click Save to finalize.` });
+    toast({ title: '✅ Payment Recorded', description: `\u20B9${amt.toFixed(2)} via Razorpay recorded. Click Save to finalize.` });
   };
 
   const handleSendPaymentLink = async (amount: number) => {
@@ -1226,27 +1671,29 @@ export function CompactInvoiceEditor({
             <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/20 mb-8 animate-bounce">
               <Check className="h-12 w-12 text-white stroke-[3px]" />
             </div>
-            <h1 className="text-5xl font-black italic tracking-tighter text-slate-900 dark:text-white mb-4">TRANSACTION FINALIZED</h1>
-            <p className="text-xs font-black uppercase tracking-[0.6em] text-slate-500 mb-12">Serial: {initialInvoice?.invoice_number || 'NEW_ENTRY'} | Ledger Node Synced</p>
+            <h1 className="text-5xl font-black italic tracking-tighter text-slate-900 dark:text-white mb-4">
+              {isReturn ? "RETURN FINALIZED" : "TRANSACTION FINALIZED"}
+            </h1>
+            <p className="text-xs font-black uppercase tracking-[0.6em] text-slate-500 mb-12">
+              {isReturn ? "Credit Note Node Synced" : `Serial: ${initialInvoice?.invoice_number || 'NEW_ENTRY'} | Ledger Node Synced`}
+            </p>
 
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 w-full mb-12">
               {/* PRINT RECEIPT */}
-              <button
-                onClick={() => {
-                  const iframe = document.createElement('iframe');
-                  iframe.style.display = 'none';
-                  iframe.src = `/api/billing/${lastSavedId}/pdf?autoPrint=true`;
-                  document.body.appendChild(iframe);
-                  setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 10000);
-                }}
+              <a
+                href={`/api/invoice-printer/${lastSavedId}?autoPrint=true`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="group p-6 bg-slate-50 dark:bg-slate-800/50 rounded-[2.5rem] border border-slate-100 dark:border-white/5 hover:border-indigo-500 transition-all text-center"
               >
                 <div className="bg-indigo-600 w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white shadow-xl shadow-indigo-600/20 group-hover:scale-110 transition-transform">
                   <Receipt className="h-6 w-6" />
                 </div>
                 <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Print node</p>
-                <p className="text-[11px] font-black text-slate-900 dark:text-white mt-1">RECEIPT</p>
-              </button>
+                <p className="text-[11px] font-black text-slate-900 dark:text-white mt-1">
+                  {isReturn ? "CREDIT NOTE" : "RECEIPT"}
+                </p>
+              </a>
 
               {/* WHATSAPP RECEIPT */}
               <button
@@ -1340,9 +1787,9 @@ export function CompactInvoiceEditor({
         onClose={() => setIsBatchSelectorOpen(false)}
         productName={batchProductName}
         batches={activeBatches}
-        currency={currency}
+        currency={'\u20B9'}
         onSelect={(batch: any) => {
-          if (selectedLineForBatch) {
+          if (selectedLineForBatch !== null) {
             setLines(current => current.map(l =>
               l.id === selectedLineForBatch ? {
                 ...l,
@@ -1352,6 +1799,18 @@ export function CompactInvoiceEditor({
                 unit_price: (pricingMode === 'mrp' || l.unit_price === 0) && batch.mrp ? Number(batch.mrp) : l.unit_price
               } : l
             ));
+
+            // World Class UX: Focus Qty with Select All after batch selection
+            setTimeout(() => {
+              const lineIndex = lines.findIndex(l => l.id === selectedLineForBatch);
+              if (lineIndex !== -1) {
+                const qtyInput = document.getElementById(`qty-input-${lineIndex}`);
+                if (qtyInput) {
+                  (qtyInput as HTMLInputElement).focus();
+                  (qtyInput as HTMLInputElement).select();
+                }
+              }
+            }, 150);
           }
         }}
       />
@@ -1369,43 +1828,39 @@ export function CompactInvoiceEditor({
       {/* FIXED MODAL OVERLAY */}
       <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 animate-in fade-in duration-300 no-print" onClick={() => onClose ? onClose() : router.back()}>
         <div className={`relative flex flex-col bg-white dark:bg-slate-900 shadow-[2xl] overflow-hidden border border-slate-200 dark:border-slate-800 transition-all duration-500 ease-out ${isMaximized ? 'w-full h-full' : 'w-full max-w-[98vw] h-[95vh] rounded-[2.5rem]'}`} onClick={e => e.stopPropagation()}>
-
-
-        {/* ... Rest of header content ... */}
-        <div className="flex items-center justify-between px-6 py-2 border-b border-[#006666] bg-[#004d4d] z-[200] no-print">
-          <div className="flex items-center gap-4">
+          {isReturn && (
+            <div className="bg-emerald-600 py-1.5 flex items-center justify-center gap-3 animate-in slide-in-from-top duration-500 z-[200]">
+              <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+              <span className="text-[9px] font-black text-white uppercase tracking-[0.4em] italic">
+                CREDIT NOTE TERMINAL ACTIVE • INVENTORY RECOVERY MODE
+              </span>
+              <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+            </div>
+          )}
+          <div className={cn(
+            "flex flex-col h-full font-sans transition-all duration-300",
+            "bg-white dark:bg-[#0a0f1e] text-slate-900 dark:text-white"
+          )}>
+            {/* 1. Header Hub */}
+            <div className="flex items-center justify-between px-8 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 no-print">
+              <div className="flex items-center gap-5">
+                <div className="h-12 w-12 bg-indigo-600 dark:bg-[#64ffff] rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 dark:shadow-none">
+                  <Receipt className="h-6 w-6 text-white dark:text-[#003333]" />
+                </div>
             <div>
-              <h2 className="text-[12px] font-black text-[#ffffcc] tracking-tight truncate">FINANCIAL BILLING TERMINAL - Ziona HMS v4.5</h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[#64ffff]">GATEWAY OF BILLING</span>
-                <div className="h-1 w-1 rounded-full bg-[#006666]" />
-                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#ffffcc]/60">Transaction Mode: Standard Ledger Node</p>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white uppercase italic">
+                  Clinical <span className="text-indigo-600 dark:text-[#64ffff]">Terminal</span>
+                </h1>
+                <Badge className="bg-emerald-500 text-white border-none text-[8px] animate-pulse">ELITE POS</Badge>
               </div>
+              <p className="text-[10px] font-black text-slate-400 dark:text-[#ffffcc]/60 uppercase tracking-[0.2em] mt-0.5">High-Speed Billing Protocol V6.0</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
-            {/* Clinical Loaders */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsHubOpen(!isHubOpen)}
-                disabled={!selectedPatientId || hubLoading}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg",
-                  isHubOpen
-                    ? "bg-[#64ffff] text-[#003333] shadow-[#64ffff]/20"
-                    : "bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20"
-                )}
-              >
-                {isHubOpen ? <SidebarClose className="h-4 w-4" /> : <SidebarOpen className="h-4 w-4" />}
-                {isHubOpen ? 'HIDE CLINICAL HUB' : 'OPEN CLINICAL HUB'}
-                {(clinicalHubs || []).length > 0 && !isHubOpen && (
-                  <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping ml-1" />
-                )}
-              </button>
-
-              <div className="h-4 w-[1px] bg-white/10 mx-1" />
+            {/* Action Bar Isolation: Clinical Sync moves to the bottom command bar for ergonomic efficiency */}
+            <div className="flex items-center gap-6">
+              <div className="flex items-center h-10 bg-slate-900/50 p-1 rounded-lg border border-white/10">
 
               <div className="flex items-center h-10 bg-slate-900/50 p-1 rounded-lg border border-white/10">
                 <button
@@ -1438,30 +1893,52 @@ export function CompactInvoiceEditor({
                     <Input value={walkInName} onChange={e => setWalkInName(e.target.value)} disabled={isPaymentModalOpen || loading} placeholder="NAME..." className="h-10 bg-white dark:bg-slate-950 border-transparent focus:border-pink-500 rounded-xl text-[10px] font-black tracking-widest uppercase" />
                   </div>
                 ) : (
-                  <SearchableSelect
-                    value={selectedPatientId}
-                    valueLabel={selectedPatientLabel}
-                    options={patientOptions}
-                    onChange={id => setSelectedPatientId(id || '')}
-                    onCreate={q => { setQuickPatientName(q); setIsQuickPatientOpen(true); return Promise.resolve(null); }}
-                    onSearch={async (q) => {
-                      if (!q) return patientOptions;
-                      try {
-                        const results = await searchPatients(q);
-                        if (!results || results.length === 0) return [];
-                        return results.map(p => ({
-                          id: p.id,
-                          label: `${p.first_name} ${p.last_name || ''}`.trim(),
-                          subLabel: `${p.phone || (p.contact as any)?.phone || (p.contact as any)?.mobile || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`
-                        }));
-                      } catch (err) {
-                        console.error("Search failed:", err);
-                        return [];
-                      }
-                    }}
-                    placeholder="IDENTIFY PATIENT..."
-                    disabled={isPaymentModalOpen || loading}
-                  />
+                  <div className="flex-1 flex items-center gap-4">
+                    <div className="flex-1 max-w-md">
+                      <SearchableSelect
+                        options={patientOptions}
+                        value={selectedPatientId}
+                        valueLabel={selectedPatientLabel}
+                        onChange={id => setSelectedPatientId(id || '')}
+                        onCreate={q => { setQuickPatientName(q); setIsQuickPatientOpen(true); return Promise.resolve(null); }}
+                        onSearch={async (q) => {
+                          if (!q) return patientOptions;
+                          try {
+                            const results = await searchPatients(q);
+                            if (!results || results.length === 0) return [];
+                            
+                            return results.map(p => ({
+                              id: p.id,
+                              label: `${p.first_name} ${p.last_name || ''}`.trim(),
+                              subLabel: `${p.phone || (p.contact as any)?.phone || (p.contact as any)?.mobile || ''} ${p.patient_number ? `• UID: ${p.patient_number}` : ''}`
+                            }));
+                          } catch (err) {
+                            console.error("Search failed:", err);
+                            return [];
+                          }
+                        }}
+                        placeholder="Identify Patient..."
+                        className="bg-transparent border-none text-xs font-black placeholder:text-slate-400 focus:ring-0"
+                        disabled={isPaymentModalOpen || loading}
+                      />
+                    </div>
+                    {patientBalanceData && Math.abs(Number(patientBalanceData.balance)) > 0.1 && (
+                      <div className={`flex items-center gap-2 px-3 py-1 border rounded-full animate-in fade-in slide-in-from-left-2 duration-500 ${
+                        patientBalanceData.type === 'advance' 
+                        ? 'bg-emerald-500/10 border-emerald-500/20' 
+                        : 'bg-amber-500/10 border-amber-500/20'
+                      }`}>
+                        <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                          patientBalanceData.type === 'advance' ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`} />
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${
+                          patientBalanceData.type === 'advance' ? 'text-emerald-600' : 'text-amber-600'
+                        }`}>
+                          {patientBalanceData.type === 'advance' ? 'Available Credit' : 'Balance Due'}: {safeCurrency}{Number(patientBalanceData.balance).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               {!isWalkIn && (
@@ -1484,46 +1961,53 @@ export function CompactInvoiceEditor({
         </div>
 
         {/* 2. Tally-Style Ribbon Area */}
-        <div className="flex items-center justify-between px-6 py-2 bg-[#003333] border-b border-[#006666] z-10 transition-all no-print">
+        <div className="flex items-center justify-between px-6 py-2 bg-slate-100/50 dark:bg-[#003333] border-b border-slate-200 dark:border-[#006666] z-10 transition-all no-print">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
-              <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">VOUCHER NO:</span>
-              <span className="text-[10px] font-mono font-black text-[#ffffcc] bg-[#002b2b] border border-[#006666] px-2 py-0.5 rounded">
-                {provisionalNo}
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-[#64ffff]">{mode === 'return' ? 'SR-VOUCHER NO:' : 'VOUCHER NO:'}</span>
+              <span className="text-[10px] font-mono font-black text-slate-900 dark:text-[#ffffcc] bg-white dark:bg-[#002b2b] border border-slate-200 dark:border-[#006666] px-2 py-0.5 rounded">
+                {mode === 'return' ? (provisionalNo || 'NEW-RET') : provisionalNo}
               </span>
             </div>
-            <div className="h-3 w-[1px] bg-[#006666]" />
+            <div className="h-3 w-[1px] bg-slate-200 dark:bg-[#006666]" />
             <div className="flex items-center gap-2 group">
-              <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">DATE:</span>
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="bg-transparent border-none text-[10px] font-black text-[#ffffcc] focus:ring-0 cursor-pointer p-0"
-              />
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-[#64ffff]">{mode === 'return' ? 'RETURN DATE:' : 'DATE:'}</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="bg-transparent border-none text-[10px] font-black text-slate-900 dark:text-[#ffffcc] focus:ring-0 cursor-pointer p-0"
+                />
+                <div className="w-[1px] h-3 bg-slate-200 dark:bg-[#006666]" />
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="bg-transparent border-none text-[10px] font-black text-slate-900 dark:text-[#ffffcc] focus:ring-0 cursor-pointer p-0 w-16"
+                />
+              </div>
             </div>
-            <div className="h-3 w-[1px] bg-[#006666]" />
-            <div className="flex items-center gap-2 group">
-              <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">TIME:</span>
-              <input
-                type="time"
-                value={time}
-                onChange={e => setTime(e.target.value)}
-                className="bg-transparent border-none text-[10px] font-black text-[#ffffcc] focus:ring-0 cursor-pointer p-0 w-16"
-              />
-            </div>
-            <div className="h-3 w-[1px] bg-[#006666]" />
             <div className="flex items-center gap-2">
-              <span className="text-[9px] font-black uppercase tracking-widest text-[#64ffff]">PARTICULARS:</span>
-              <span className="text-[10px] font-black text-[#ffffcc]">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-[#64ffff]">PARTICULARS:</span>
+              <span className="text-[10px] font-black text-slate-900 dark:text-[#ffffcc]">
                 {(isWalkIn ? (walkInName || 'WALK-IN PATIENT') : (selectedPatientLabel || 'WALK-IN PATIENT')).toUpperCase()}
               </span>
             </div>
+            {mode === 'return' && referenceInvoiceNo && (
+              <>
+                <div className="h-3 w-[1px] bg-slate-200 dark:bg-[#006666]" />
+                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-lg animate-in slide-in-from-top-2">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400 italic">Against Bill:</span>
+                  <span className="text-[10px] font-mono font-black text-emerald-700 dark:text-emerald-300 underline decoration-emerald-500/30 underline-offset-2">{referenceInvoiceNo}</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-6 animate-in slide-in-from-right-4">
-            <div className="bg-[#002b2b] p-1 rounded-xl flex items-center gap-2 border border-[#006666]">
-                <span className="text-[8px] font-black uppercase tracking-widest text-[#64ffff] px-2 italic">GST Mode:</span>
+            <div className="bg-slate-200/50 dark:bg-[#002b2b] p-1 rounded-xl flex items-center gap-2 border border-slate-200 dark:border-[#006666]">
+                <span className="text-[8px] font-black uppercase tracking-widest text-slate-500 dark:text-[#64ffff] px-2 italic">GST Mode:</span>
                 <div className="flex gap-1">
                     {[
                         { m: 'exempt', l: 'Unregistered' },
@@ -1534,7 +2018,9 @@ export function CompactInvoiceEditor({
                             key={opt.m}
                             type="button"
                             onClick={() => setTaxMode(opt.m)}
-                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${taxMode === opt.m ? 'bg-[#64ffff] text-[#003333] shadow-lg scale-105' : 'text-[#64ffff]/50 hover:text-[#64ffff] hover:bg-[#004d4d]'}`}
+                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${taxMode === opt.m 
+                              ? 'bg-indigo-600 dark:bg-[#64ffff] text-white dark:text-[#003333] shadow-lg scale-105' 
+                              : 'text-slate-500 dark:text-[#64ffff]/50 hover:text-indigo-600 dark:hover:text-[#64ffff] hover:bg-slate-200 dark:hover:bg-[#004d4d]'}`}
                         >
                             {opt.l}
                         </button>
@@ -1552,7 +2038,7 @@ export function CompactInvoiceEditor({
                   </span>
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-amber-600">Previous Balance Detected:</span>
                 </div>
-                <span className="text-[10px] font-black text-amber-700 bg-amber-500/20 px-2 rounded-md">{currency}{(patientBalance || 0).toFixed(2)}</span>
+                <span className="text-[10px] font-black text-amber-700 bg-amber-500/20 px-2 rounded-md">{safeCurrency}{(patientBalance || 0).toFixed(2)}</span>
                 <button
                   onClick={() => {
                     setIsFetchingLedger(true);
@@ -1583,30 +2069,35 @@ export function CompactInvoiceEditor({
           <div className="flex-1 overflow-auto p-6 space-y-6">
           <div className="max-w-[1400px] mx-auto">
             <div className="bg-white dark:bg-slate-950 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-[#006666] text-[9px] font-black uppercase tracking-[0.3em] text-[#64ffff] border-b border-[#008080]">
-                  <tr>
-                    <th className="px-8 py-2">Item Description</th>
-                    <th className="px-4 py-2 w-24">Type</th>
-                    <th className="px-4 py-2 w-28 text-center">Qty</th>
-                    <th className="px-4 py-2 w-32">UOM</th>
-                    <th className="px-4 py-2 w-32 border-x border-[#008080] bg-[#008080] animate-pulse">Rate (F2)</th>
-                    <th className="px-4 py-2 w-36">Tax %</th>
-                    <th className="px-8 py-2 w-36 text-right">Total</th>
-                    <th className="px-4 py-2 w-12"></th>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-[#003333] border-b border-slate-200 dark:border-[#006666]">
+                    <th className="px-6 py-4 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-12 italic">SR.</th>
+                    <th className="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] min-w-[450px] italic">Particulars / Service Node</th>
+                    <th className="px-4 py-4 text-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-24 italic">Qty</th>
+                    <th className="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-32 italic">UOM</th>
+                    <th className="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-32 italic">Rate ({safeCurrency})</th>
+                    <th className="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-40 italic">Taxation</th>
+                    <th className="px-8 py-4 text-right text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-[#64ffff] w-48 italic">Total ({safeCurrency})</th>
+                    <th className="px-4 py-4 w-12 italic"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#003333] border-b border-[#006666] bg-[#004d4d] text-[#ffffcc] [&_input]:text-[#ffffcc] [&_select]:text-[#ffffcc]">
+                <tbody className="divide-y divide-slate-100 dark:divide-[#006666]">
                   {lines.map((line, index) => {
-                    const lineTotal = (line.quantity * line.unit_price);
-                    const isZeroLine = (line.product_id || line.description) && lineTotal === 0;
+                    const lineNet = (line.quantity * line.unit_price) - (line.discount_amount || 0);
+                    const lineTotal = (taxMode === 'inclusive' || taxMode === 'exempt') ? lineNet : lineNet + (line.tax_amount || 0);
+                    const isZeroLine = (line.product_id || line.description) && (line.quantity * line.unit_price) === 0 && line.product_id !== 'REG-FEE';
 
                     return (
                       <tr
                         key={line.id}
-                        className={`group transition-all relative ${isZeroLine ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.05]' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/50'}`}
+                        className={cn(
+                          "group transition-all hover:bg-slate-50/50 dark:hover:bg-[#002b2b]",
+                          isZeroLine ? "bg-rose-500/5" : ""
+                        )}
                       >
-                        <td className="px-8 py-3 relative">
+                        <td className="px-6 py-3 text-[10px] font-black text-slate-600 dark:text-[#64ffff]/40">{index + 1}</td>
+                        <td className="px-4 py-3 relative">
                           {isZeroLine && (
                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500 animate-pulse z-10" />
                           )}
@@ -1625,6 +2116,17 @@ export function CompactInvoiceEditor({
                                 (i.label || "").toLowerCase().includes(query) || 
                                 (i.subLabel || "").toLowerCase().includes(query)
                               );
+                            }}
+                            onCreate={async (q) => {
+                              // World Standard: Quick-create product inline from billing
+                              return new Promise((resolve) => {
+                                setQuickProductName(q);
+                                setQuickProductPrice('');
+                                setQuickProductType('item');
+                                setQuickProductLineId(line.id);
+                                setQuickProductResolver(() => resolve);
+                                setIsQuickProductOpen(true);
+                              });
                             }}
                             placeholder="SEARCH..."
                             onKeyDown={(e) => {
@@ -1650,11 +2152,13 @@ export function CompactInvoiceEditor({
                                 setLines(prev => prev.map(l => l.id === line.id ? {
                                   ...l,
                                   item_type: newType
-                                  // FIX: Do not auto-clear tax when toggling to service.
-                                  // Tax is now decoupled and preserved.
                                 } : l));
                               }}
-                              className={`text-[8px] font-black px-2 py-1 rounded-md transition-all active:scale-95 border ${line.item_type === 'service' ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border-emerald-500/30'}`}
+                              className={`text-[8px] font-black px-2 py-1 rounded-md transition-all active:scale-95 border ${
+                                line.item_type === 'service' 
+                                  ? 'bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30' 
+                                  : 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30'
+                              }`}
                             >
                               {(line.item_type || 'ITEM').toUpperCase()}
                             </button>
@@ -1699,12 +2203,12 @@ export function CompactInvoiceEditor({
                             }}
                             onChange={e => updateLine(line.id, 'quantity', parseFloat(e.target.value) || 0)}
                             disabled={isPaymentModalOpen || loading}
-                            className="h-10 bg-transparent border-none text-center font-black text-base focus:ring-0 text-[#ffffcc] placeholder:text-[#ffffcc]/40"
+                            className="h-10 bg-transparent border-none text-center font-black text-base focus:ring-0 text-slate-900 dark:text-[#ffffcc] placeholder:text-slate-300 dark:placeholder:text-[#ffffcc]/40"
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <select className="w-full h-10 bg-[#003333] text-[#ffffcc] border border-[#006666] rounded-lg px-2 text-[9px] font-black tracking-widest outline-none focus:ring-1 focus:ring-[#64ffff]" value={line.uom || ''} onChange={e => updateLine(line.id, 'uom', e.target.value)} disabled={isPaymentModalOpen || loading}>
-                            {getUomOptions(line.item_type, line.uom, line.metadata).map(u => (
+                          <select className="w-full h-10 bg-white dark:bg-[#003333] text-slate-900 dark:text-[#ffffcc] border border-slate-200 dark:border-[#006666] rounded-lg px-2 text-[9px] font-black tracking-widest outline-none focus:ring-1 focus:ring-indigo-600 dark:focus:ring-[#64ffff]" value={line.uom || ''} onChange={e => updateLine(line.id, 'uom', e.target.value)} disabled={isPaymentModalOpen || loading}>
+                            {getUomOptions(line.item_type, line.uom, line.product_id).map(u => (
                               <option key={u} value={u}>{u}</option>
                             ))}
                           </select>
@@ -1727,13 +2231,13 @@ export function CompactInvoiceEditor({
                               }
                             }}
                             disabled={isPaymentModalOpen || loading || (hmsConfig && !hmsConfig.allowRateEdit)} 
-                            className={`h-10 bg-transparent border-none font-mono font-black text-sm focus:ring-0 ${hmsConfig && !hmsConfig.allowRateEdit ? 'text-slate-400 cursor-not-allowed' : 'text-[#ffffcc]'}`} 
+                            className={`h-10 bg-transparent border-none font-mono font-black text-sm focus:ring-0 ${hmsConfig && !hmsConfig.allowRateEdit ? 'text-slate-400 cursor-not-allowed' : 'text-slate-900 dark:text-[#ffffcc]'}`} 
                           />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
                             <select 
-                              className="w-full h-8 bg-[#003333] text-[#ffffcc] border border-[#006666] rounded-lg px-2 text-[8px] font-black outline-none focus:ring-1 focus:ring-[#64ffff] disabled:opacity-50" 
+                              className="w-full h-8 bg-white dark:bg-[#003333] text-slate-900 dark:text-[#ffffcc] border border-slate-200 dark:border-[#006666] rounded-lg px-2 text-[8px] font-black outline-none focus:ring-1 focus:ring-indigo-600 dark:focus:ring-[#64ffff] disabled:opacity-50" 
                               value={taxMode === 'exempt' ? '' : (line.tax_rate_id || '')} 
                               onChange={e => updateLine(line.id, 'tax_rate_id', e.target.value)} 
                               disabled={isPaymentModalOpen || loading || taxMode === 'exempt'}
@@ -1746,15 +2250,15 @@ export function CompactInvoiceEditor({
                               ))}
                             </select>
                             {line.tax_amount > 0 && taxMode !== 'exempt' && (
-                              <span className="text-[9px] font-bold text-emerald-600 text-right pr-1 italic">
-                                {taxMode === 'inclusive' ? '(Incl)' : `+ ${currency}${line.tax_amount.toFixed(2)} Tax`}
+                              <span className="text-[9px] font-bold text-emerald-700 dark:text-emerald-500 text-right pr-1 italic">
+                                {taxMode === 'inclusive' ? '(Incl)' : `+ ${safeCurrency}${line.tax_amount.toFixed(2)} Tax`}
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="px-8 py-3 text-right font-black text-lg italic tracking-tighter text-[#ffffcc]">
+                        <td className="px-8 py-3 text-right font-black text-lg italic tracking-tighter text-slate-900 dark:text-[#ffffcc]">
                           <span className={isZeroLine ? 'text-rose-500 animate-pulse' : ''}>
-                            {currency}{(taxMode === 'inclusive' || taxMode === 'exempt' ? lineTotal : lineTotal + (line.tax_amount || 0)).toFixed(2)}
+                            {safeCurrency}{lineTotal.toFixed(2)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -1777,29 +2281,68 @@ export function CompactInvoiceEditor({
 
           {/* Clinical Hub Sidebar - The World Standard Implementation */}
           <div className={cn(
-            "w-96 border-l border-white/10 bg-[#002b2b] backdrop-blur-3xl transition-all duration-500 overflow-y-auto no-print flex flex-col z-10 shadow-[-20px_0_50px_rgba(0,0,0,0.2)]",
+            "w-96 border-l border-slate-200 dark:border-white/10 bg-white/95 dark:bg-[#002b2b] backdrop-blur-3xl transition-all duration-500 overflow-y-auto no-print flex flex-col z-10 shadow-[-20px_0_50px_rgba(0,0,0,0.2)]",
             isHubOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 pointer-events-none hidden"
           )}>
-            <div className="p-8 border-b border-[#006666] flex items-center justify-between bg-[#004d4d]/50">
+            <div className="p-8 border-b border-slate-200 dark:border-[#006666] flex items-center justify-between bg-slate-50 dark:bg-[#004d4d]/50">
               <div className="flex items-center gap-4">
-                <div className="p-3 bg-[#64ffff]/10 rounded-2xl border border-[#64ffff]/20">
-                  <Activity className="h-6 w-6 text-[#64ffff] animate-pulse" />
+                <div className={cn(
+                  "p-3 rounded-2xl shadow-lg transition-all",
+                  mode === 'return' 
+                    ? "bg-emerald-500 shadow-emerald-500/40 ring-4 ring-emerald-500/20" 
+                    : "bg-indigo-600 shadow-indigo-600/20"
+                )}>
+                  {mode === 'return' ? <RotateCcw className="h-6 w-6 text-white" /> : <Activity className="h-6 w-6 text-white" />}
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-[#ffffcc] italic tracking-tighter uppercase">Clinical Intelligence</h3>
-                  <p className="text-[8px] font-black text-[#64ffff] uppercase tracking-[0.2em] opacity-60">Live Hub Bridge Active</p>
+                  <div className="flex items-center gap-3">
+                    <h1 className={cn(
+                      "text-sm font-black italic tracking-tighter uppercase leading-none",
+                      mode === 'return' ? "text-emerald-600 dark:text-emerald-400" : "text-slate-900 dark:text-white"
+                    )}>
+                      {mode === 'return' ? "CREDIT NOTE TERMINAL" : "MASTER BILLING TERMINAL"}
+                    </h1>
+                    {mode === 'return' && (
+                      <span className="bg-emerald-600 text-white px-2 py-0.5 rounded font-black italic tracking-[0.2em] text-[8px] uppercase animate-pulse">
+                        RETURN ACTIVE
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[8px] font-black text-slate-400 dark:text-[#64ffff] uppercase tracking-[0.2em] opacity-60">Live Hub Bridge Active</p>
                 </div>
               </div>
               <button 
                 type="button"
                 onClick={() => setIsHubOpen(false)} 
-                className="p-3 hover:bg-white/10 rounded-2xl transition-all text-[#64ffff] border border-[#64ffff]/10"
+                className="p-3 hover:bg-slate-100 dark:hover:bg-white/10 rounded-2xl transition-all text-slate-400 dark:text-[#64ffff] border border-slate-200 dark:border-[#64ffff]/10"
               >
                 <SidebarClose className="h-5 w-5" />
               </button>
             </div>
 
             <div className="flex-1 p-8 space-y-10 custom-scrollbar overflow-y-auto">
+              {mode === 'return' && (
+                <div className="p-5 bg-emerald-500/5 rounded-3xl border-2 border-emerald-500/20 mb-8 animate-in zoom-in-95 duration-500">
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em]">Source Bill Reference</label>
+                    {referenceInvoiceId && (
+                      <span className="text-[8px] font-black bg-emerald-500 text-white px-2 py-0.5 rounded-full uppercase tracking-widest">Linked</span>
+                    )}
+                  </div>
+                  <div className="relative group">
+                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-500/40 group-focus-within:text-emerald-500 transition-colors" />
+                    <input 
+                      value={referenceInvoiceNo}
+                      onChange={(e) => setReferenceInvoiceNo(e.target.value.toUpperCase())}
+                      className="w-full bg-white dark:bg-slate-900 border-2 border-emerald-500/10 focus:border-emerald-500 rounded-2xl pl-12 pr-4 py-4 text-sm font-black text-emerald-900 dark:text-emerald-400 placeholder:text-emerald-500/20 outline-none transition-all shadow-lg shadow-emerald-500/5"
+                      placeholder="ENTER BILL NO (e.g. INV-001)..."
+                    />
+                  </div>
+                  <p className="text-[8px] font-bold text-emerald-600/40 mt-3 uppercase tracking-tighter">
+                    {referenceInvoiceNo ? "Reference will be saved in audit log." : "Leave blank for Ad-Hoc / Non-Receipt Return."}
+                  </p>
+                </div>
+              )}
               {hubLoading ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-6">
                   <Loader2 className="h-10 w-10 text-[#64ffff] animate-spin" />
@@ -1818,21 +2361,21 @@ export function CompactInvoiceEditor({
               ) : (
                 (clinicalHubs || []).map(hub => (
                   <div key={hub.id} className="space-y-6 animate-in slide-in-from-right-4 duration-500">
-                    <div className="flex items-center justify-between border-b border-[#006666] pb-4">
+                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#006666] pb-4">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 bg-[#004d4d] rounded-xl border border-[#006666] text-[#64ffff] shadow-lg">
+                        <div className="p-2 bg-slate-100 dark:bg-[#004d4d] rounded-xl border border-slate-200 dark:border-[#006666] text-slate-600 dark:text-[#64ffff] shadow-lg">
                           {hub.id === 'doctor' && <Package className="h-4 w-4" />}
                           {hub.id === 'lab' && <FlaskConical className="h-4 w-4" />}
                           {hub.id === 'nurse' && <Zap className="h-4 w-4" />}
                           {hub.id === 'consult' && <User className="h-4 w-4" />}
                           {hub.id === 'reg' && <ShieldCheck className="h-4 w-4" />}
                         </div>
-                        <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-[#ffffcc] italic underline decoration-[#64ffff]/30 underline-offset-4">{hub.label}</h4>
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-900 dark:text-[#ffffcc] italic underline decoration-indigo-500/30 dark:decoration-[#64ffff]/30 underline-offset-4">{hub.label}</h4>
                       </div>
                       <button 
                         type="button"
                         onClick={() => hub.items.forEach((i: any) => addItemToBill(i))}
-                        className="text-[8px] font-black text-[#64ffff] hover:text-white uppercase tracking-[0.2em] bg-[#004d4d] px-3 py-1.5 rounded-lg border border-[#006666] hover:border-[#64ffff] transition-all active:scale-95"
+                        className="text-[8px] font-black text-indigo-600 dark:text-[#64ffff] hover:text-indigo-800 dark:hover:text-white uppercase tracking-[0.2em] bg-white dark:bg-[#004d4d] px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-[#006666] hover:border-indigo-600 dark:hover:border-[#64ffff] transition-all active:scale-95"
                       >
                         Import Hub
                       </button>
@@ -1844,17 +2387,17 @@ export function CompactInvoiceEditor({
                         return (
                           <div key={idx} className={cn(
                             "group p-4 rounded-2xl border transition-all flex items-center justify-between gap-4",
-                            isAdded ? "bg-emerald-500/10 border-emerald-500/20 opacity-80" : "bg-white/5 border-white/5 hover:border-[#64ffff]/30 hover:bg-[#004d4d]"
+                            isAdded ? "bg-emerald-500/10 border-emerald-500/20 opacity-80" : "bg-slate-50 dark:bg-white/5 border-slate-100 dark:border-white/5 hover:border-indigo-600/30 dark:hover:border-[#64ffff]/30 hover:bg-slate-100 dark:hover:bg-[#004d4d]"
                           )}>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <p className="text-[11px] font-black text-[#ffffcc] italic truncate tracking-tight">{item.name}</p>
+                                <p className="text-[11px] font-black text-slate-900 dark:text-[#ffffcc] italic truncate tracking-tight">{item.name}</p>
                                 {isAdded && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
                               </div>
                               <div className="flex items-center gap-3">
-                                <span className="text-[10px] font-black text-[#64ffff] tracking-tighter">{currency}{Number(item.price || item.unit_price || 0).toFixed(2)}</span>
-                                <div className="h-1 w-1 rounded-full bg-white/20" />
-                                <span className="text-[9px] font-black text-[#ffffcc]/40 uppercase tracking-widest">{item.quantity} QTV</span>
+                                <span className="text-[10px] font-black text-indigo-600 dark:text-[#64ffff] tracking-tighter">{safeCurrency}{Number(item.price || item.unit_price || 0).toFixed(2)}</span>
+                                <div className="h-1 w-1 rounded-full bg-slate-200 dark:bg-white/20" />
+                                <span className="text-[9px] font-black text-slate-400 dark:text-[#ffffcc]/40 uppercase tracking-widest">{item.quantity} QTV</span>
                               </div>
                             </div>
                             <button
@@ -1865,7 +2408,7 @@ export function CompactInvoiceEditor({
                                 "h-11 w-11 rounded-xl flex items-center justify-center transition-all shrink-0 shadow-lg",
                                 isAdded 
                                   ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 opacity-50 cursor-not-allowed" 
-                                  : "bg-[#64ffff]/5 text-[#64ffff] border border-[#64ffff]/20 hover:bg-[#64ffff] hover:text-[#003333] hover:shadow-[0_0_20px_rgba(100,255,255,0.4)] active:scale-90"
+                                  : "bg-indigo-50 dark:bg-[#64ffff]/5 text-indigo-600 dark:text-[#64ffff] border border-indigo-100 dark:border-[#64ffff]/20 hover:bg-indigo-600 dark:hover:bg-[#64ffff] hover:text-white dark:hover:text-[#003333] hover:shadow-xl dark:hover:shadow-[0_0_20px_rgba(100,255,255,0.4)] active:scale-90"
                               )}
                             >
                               {isAdded ? <CheckCircle2 className="h-5 w-5" /> : <PlusCircle className="h-5 w-5" />}
@@ -1894,9 +2437,9 @@ export function CompactInvoiceEditor({
 
         </div>
 
-        {/* 3. Global Control Bar */}
-        <div className="bg-white dark:bg-[#0c1222] border-t border-slate-100 dark:border-slate-800 px-10 py-6 z-[200]">
-          <div className="max-w-[1400px] mx-auto flex flex-col xl:flex-row justify-between items-center gap-8">
+        {/* 3. Global Control Bar (Compact World-Standard Layout) */}
+        <div className="bg-white dark:bg-[#0c1222] border-t border-slate-100 dark:border-slate-800 px-8 py-4 z-[200]">
+          <div className="max-w-[1400px] mx-auto flex flex-col xl:flex-row justify-between items-center gap-6">
 
               <div className="flex gap-10">
                 <div className="flex gap-4 items-center">
@@ -1909,28 +2452,65 @@ export function CompactInvoiceEditor({
                 <div className="flex gap-4 items-center">
                   <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20"><DollarSign className="h-6 w-6 text-emerald-600" /></div>
                   <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Settlement Total</p>
-                    <p className="text-4xl font-black text-emerald-600 tracking-tighter italic drop-shadow-[0_0_20px_rgba(5,150,105,0.1)]">{currency}{grandTotal.toFixed(2)}</p>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{mode === 'return' ? 'Return Total' : 'Settlement Total'}</p>
+                    <div className="flex items-baseline gap-3">
+                      <p className="text-4xl font-black text-emerald-700 dark:text-emerald-500 tracking-tighter italic drop-shadow-[0_0_20px_rgba(5,150,105,0.1)]">{safeCurrency}{grandTotal.toFixed(2)}</p>
+                      {mode === 'return' && referenceInvoiceNo && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full flex items-center gap-2">
+                          <span className="text-[8px] font-black text-emerald-600 uppercase tracking-widest">REF: {referenceInvoiceNo}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
 
             {/* Action Nodes */}
-            <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto">
+            <div className="flex flex-col sm:flex-row items-center gap-4 w-full xl:w-auto">
+              
+              <div className="flex items-center gap-1.5 p-1.5 bg-slate-100 dark:bg-white/5 rounded-2xl border border-slate-200 dark:border-white/10 mr-4">
+                {/* UNIFIED CLINICAL HUB SYNC */}
+                <button 
+                  onClick={importAllFromHubs} 
+                  disabled={loading || hubLoading}
+                  className={cn(
+                    "px-6 py-2.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-3 shadow-lg",
+                    clinicalHubs.length > 0
+                      ? "bg-indigo-600 text-white shadow-indigo-600/20 hover:bg-indigo-700 animate-pulse"
+                      : "bg-slate-200 dark:bg-white/5 text-slate-400 dark:text-white/20 border border-slate-300 dark:border-white/10"
+                  )}
+                >
+                  <Activity className={cn("h-4 w-4", hubLoading && "animate-spin")} /> 
+                  SYNC CLINICAL HUB {clinicalHubs.length > 0 && `(${clinicalHubs.reduce((sum, h) => sum + h.items.length, 0)})`}
+                </button>
+              </div>
+
               {initialInvoice?.status === 'cancelled' ? (
-                <div className="px-10 py-4 bg-rose-500/10 border-2 border-rose-500/20 rounded-2xl flex items-center gap-3">
-                  <X className="h-6 w-6 text-rose-600" />
-                  <p className="text-rose-600 font-black italic tracking-wider uppercase">VOIDED TRANSACTION • NO EDITS PERMITTED</p>
+                <div className="flex items-center gap-4">
+                  <div className="px-6 py-3 bg-rose-500/10 border-2 border-rose-500/20 rounded-2xl flex items-center gap-3">
+                    <X className="h-4 w-4 text-rose-600" />
+                    <p className="text-rose-600 text-[10px] font-black italic tracking-wider uppercase">VOIDED TRANSACTION</p>
+                  </div>
+                  {initialInvoice?.id && (
+                    <button
+                      onClick={handleRestoreBill}
+                      disabled={loading}
+                      className="px-5 py-3 text-[9px] font-black text-emerald-600 uppercase tracking-widest hover:bg-emerald-500/10 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-2"
+                    >
+                      <RefreshCcw className={cn("h-3 w-3", loading && "animate-spin")} />
+                      RESTORE BILL
+                    </button>
+                  )}
                 </div>
               ) : (
                 <>
-                  {isAdmin && initialInvoice?.id && (
+                  {initialInvoice?.id && (
                     <button
                       onClick={handleCancelBill}
                       disabled={loading}
-                      className="px-6 py-4 text-[10px] font-black text-rose-500 uppercase tracking-widest hover:bg-rose-500/10 border border-rose-500/20 rounded-2xl transition-all mr-2"
+                      className="px-5 py-3 text-[9px] font-black text-rose-500 uppercase tracking-widest hover:bg-rose-500/10 border border-rose-500/20 rounded-xl transition-all"
                     >
-                      Void / Cancel Node
+                      VOID BILL
                     </button>
                   )}
 
@@ -1959,8 +2539,10 @@ export function CompactInvoiceEditor({
                     }}
                     disabled={loading || (internalPendingCount > 0) || lines.filter(l => l.description || l.product_id).length === 0}
                     className={cn(
-                      "group relative px-10 py-5 focus:ring-4 focus:ring-white/20 outline-none text-white rounded-3xl shadow-xl flex flex-col items-center justify-center transition-all hover:scale-[1.02] active:scale-95 text-lg font-black italic uppercase tracking-tighter overflow-hidden focus:translate-y-[-2px] border-2 border-transparent focus:border-white/50 min-w-[320px]",
-                      internalPendingCount > 0 ? 'bg-slate-300 dark:bg-slate-800 cursor-not-allowed grayscale shadow-none border-dashed border-rose-500/20' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                      "group relative px-8 py-3.5 focus:ring-4 focus:ring-white/20 outline-none text-white rounded-2xl shadow-lg flex flex-col items-center justify-center transition-all hover:scale-[1.02] active:scale-95 text-base font-black italic uppercase tracking-tighter overflow-hidden focus:translate-y-[-2px] border border-transparent focus:border-white/50 min-w-[240px]",
+                      internalPendingCount > 0 
+                        ? 'bg-slate-300 dark:bg-slate-800 cursor-not-allowed grayscale shadow-none border-dashed border-rose-500/20' 
+                        : (mode === 'return' ? 'bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 dark:hover:bg-emerald-600' : 'bg-indigo-600 dark:bg-indigo-500 hover:bg-indigo-700 dark:hover:bg-indigo-600')
                     )}
                   >
                     <div className="absolute inset-x-0 bottom-0 h-0.5 bg-white/20 animate-pulse" />
@@ -1975,8 +2557,8 @@ export function CompactInvoiceEditor({
                     ) : (
                       <div className="flex items-center gap-4">
                         <div className="flex flex-col items-end leading-none gap-1">
-                          <span className="text-[10px] text-white opacity-40 font-black tracking-[0.2em] uppercase">READY FOR SETTLEMENT</span>
-                          <span>COLLECT PAYMENT [F5]</span>
+                          <span className="text-[10px] text-white opacity-40 font-black tracking-[0.2em] uppercase">{mode === 'return' ? (activeReturn?.id ? 'CORRECTING REFUND' : 'READY FOR REFUND') : 'READY FOR SETTLEMENT'}</span>
+                          <span>{mode === 'return' ? (activeReturn?.id ? 'UPDATE REFUND [F5]' : 'PROCESS REFUND [F5]') : 'COLLECT PAYMENT [F5]'}</span>
                         </div>
                         <ArrowRight className="h-8 w-8 group-hover:translate-x-2 transition-transform" />
                       </div>
@@ -1990,7 +2572,7 @@ export function CompactInvoiceEditor({
                         disabled={loading || lines.filter(l => l.product_id || l.description).length === 0}
                         className="px-6 py-4 bg-slate-100 dark:bg-slate-800 border border-transparent hover:border-slate-300 dark:hover:border-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-500 transition-all"
                       >
-                        Save Draft
+                        {mode === 'return' ? 'Save Draft Return' : 'Save Draft'}
                       </button>
                       <button
                         type="button"
@@ -2001,7 +2583,7 @@ export function CompactInvoiceEditor({
                           internalPendingCount > 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white hover:opacity-90'
                         )}
                       >
-                        {internalPendingCount > 0 ? 'Post Blocked' : 'Post Credit'}
+                        {internalPendingCount > 0 ? 'Post Blocked' : (mode === 'return' ? (totalPaid > 0 ? 'Finalize Cash Refund' : 'Issue Credit Note') : 'Post Credit')}
                       </button>
                     </div>
                   )}
@@ -2029,31 +2611,112 @@ export function CompactInvoiceEditor({
                 <div>
                   <h3 className="text-slate-400 font-black tracking-[0.4em] text-[8px] uppercase mb-6">Financial Audit Node</h3>
                   <div className="space-y-6">
+                    {/* 1. GROSS TOTAL (Before Discount) */}
                     <div className="flex justify-between items-center">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bill Total</p>
-                      <p className="text-xl font-black text-slate-900 dark:text-white italic">{currency}{grandTotal.toFixed(2)}</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Gross Bill Total</p>
+                      <p className="text-xl font-black text-slate-500 line-through decoration-rose-500/30 opacity-60">{safeCurrency}{(subtotal + (taxMode === 'inclusive' ? 0 : totalTax)).toFixed(2)}</p>
                     </div>
-                    {patientBalance > 0 && (
-                      <div className="flex justify-between items-center bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10">
+
+                    {/* 2. OVERALL DISCOUNT */}
+                    <div className={cn(
+                      "flex justify-between items-center p-4 rounded-2xl border transition-all",
+                      payments.length > 0 ? "bg-slate-100 dark:bg-slate-800 opacity-60 border-slate-200" : "bg-rose-500/5 border-rose-500/10"
+                    )}>
+                      <div>
+                        <p className="text-[9px] font-black text-rose-600 uppercase tracking-widest">Overall Discount</p>
+                        <p className="text-xs font-black text-rose-400">{payments.length > 0 ? "Locked during settlement" : "Total discount from bill"}</p>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white dark:bg-slate-800 rounded-xl px-3 border border-rose-100 dark:border-rose-900/30">
+                        <span className="text-xs font-black text-rose-600">{safeCurrency}</span>
+                        <input 
+                          type="number"
+                          className="w-24 h-10 bg-transparent border-none text-right font-black text-rose-700 dark:text-rose-400 focus:ring-0 text-sm disabled:cursor-not-allowed"
+                          value={globalDiscount || ''}
+                          onChange={e => setGlobalDiscount(parseFloat(e.target.value) || 0)}
+                          disabled={payments.length > 0 || loading}
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 3. TOTAL PAYABLE (Dynamic Result) */}
+                    <div className="flex justify-between items-center bg-indigo-600 p-6 rounded-[2rem] shadow-xl shadow-indigo-600/10 border border-indigo-400/20 animate-in fade-in zoom-in-95 duration-300">
+                      <div>
+                        <p className="text-[10px] font-black text-white/50 uppercase tracking-[0.2em] mb-1">Total Payable</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-3xl font-black text-white italic tracking-tighter">
+                            {safeCurrency}{(grandTotal + (includePrevBalance ? patientBalance : 0)).toFixed(2)}
+                          </p>
+                          {includePrevBalance && (
+                            <span className="text-[9px] font-bold bg-white/10 text-white/80 px-2 py-0.5 rounded-full border border-white/10">
+                              Incl. Debt
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                         <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Final Settlement</p>
+                      </div>
+                    </div>
+
+                    <div className="h-px bg-slate-200 dark:bg-slate-800 w-full" />
+
+                    {/* 4. PREVIOUS DEBT CONTROL (Only if debt exists) */}
+                    {patientBalanceData && patientBalanceData.type === 'due' && patientBalanceData.balance > 0.1 && (
+                      <div className="flex justify-between items-center bg-amber-500/5 p-4 rounded-2xl border border-amber-500/10 transition-all hover:bg-amber-500/10">
                         <div>
-                          <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Previous Debt</p>
-                          <p className="text-sm font-black text-amber-700">{currency}{patientBalance.toFixed(2)}</p>
+                          <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Previous Debt Awareness</p>
+                          <p className="text-sm font-black text-amber-700">{safeCurrency}{patientBalanceData.balance.toFixed(2)}</p>
                         </div>
                         <button
+                          type="button"
                           onClick={() => setIncludePrevBalance(!includePrevBalance)}
-                          className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all ${includePrevBalance ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'bg-white dark:bg-slate-800 text-amber-600 border border-amber-200 dark:border-amber-900'}`}
+                          className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all ${includePrevBalance ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20 scale-105' : 'bg-white dark:bg-slate-800 text-amber-600 border border-amber-200 dark:border-amber-900'}`}
                         >
-                          {includePrevBalance ? 'INCLUDED' : 'ADD TO TALLY'}
+                          {includePrevBalance ? 'DEBT INCLUDED' : 'ADD DEBT TO BILL'}
                         </button>
                       </div>
                     )}
-                    <div className="h-px bg-slate-200 dark:bg-slate-800 w-full" />
-                    <div className="flex justify-between items-center">
-                      <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Settlement Target</p>
-                      <p className="text-3xl font-black text-slate-900 dark:text-white italic tracking-tighter">
-                        {currency}{(grandTotal + (includePrevBalance ? patientBalance : 0)).toFixed(2)}
-                      </p>
-                    </div>
+
+                    {/* 5. AVAILABLE CREDIT CONTROL (If advance exists) */}
+                    {patientBalanceData && patientBalanceData.type === 'advance' && patientBalanceData.balance > 0.1 && (
+                      <div className="flex justify-between items-center bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/10 transition-all hover:bg-emerald-500/10">
+                        <div>
+                          <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Available Patient Credit</p>
+                          <p className="text-sm font-black text-emerald-700">{safeCurrency}{patientBalanceData.balance.toFixed(2)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Automatically add an adjustment payment for the available credit
+                            const currentTarget = (grandTotal + (includePrevBalance ? patientBalanceData.balance : 0));
+                            const amountToApply = Math.min(patientBalanceData.balance, (currentTarget - totalPaid));
+                            
+                            if (amountToApply > 0) {
+                              setPayments(prev => {
+                                const newPayments = [...prev, { 
+                                  method: 'adjustment', 
+                                  amount: amountToApply, 
+                                  reference: `CREDIT_APPLIED: ${patientBalanceData.balance}` 
+                                } as any];
+                                
+                                // Update the active input to show remaining balance
+                                const newTotalPaid = newPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+                                const remaining = Math.max(0, currentTarget - newTotalPaid);
+                                setTimeout(() => setActivePaymentAmount(remaining > 0 ? remaining.toFixed(2) : ''), 0);
+                                
+                                return newPayments;
+                              });
+                              
+                              toast({ title: "Credit Applied", description: `${safeCurrency}${amountToApply.toFixed(2)} deducted from bill.` });
+                            }
+                          }}
+                          className="px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95"
+                        >
+                          APPLY CREDIT
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2069,11 +2732,12 @@ export function CompactInvoiceEditor({
                             {p.method === 'upi' && <QrCode className="h-3 w-3 text-indigo-500" />}
                             {p.method === 'card' && <CreditCard className="h-3 w-3 text-blue-500" />}
                             {p.method === 'bank_transfer' && <Clock className="h-3 w-3 text-amber-500" />}
+                            {(p.method as any) === 'adjustment' && <Zap className="h-3 w-3 text-pink-500" />}
                           </div>
                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{p.method}</span>
                         </div>
                         <div className="flex items-center gap-4">
-                          <span className="text-xs font-black text-slate-900 dark:text-white">{currency}{p.amount.toFixed(2)}</span>
+                          <span className="text-xs font-black text-slate-900 dark:text-white">{safeCurrency}{p.amount.toFixed(2)}</span>
                           <button onClick={() => setPayments(payments.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="h-3 w-3" /></button>
                         </div>
                       </div>
@@ -2088,24 +2752,46 @@ export function CompactInvoiceEditor({
                   </span>
                   <p className="text-[10px] font-bold text-slate-600 dark:text-slate-400 mt-4 leading-relaxed tracking-tight underline-offset-4 decoration-dotted decoration-slate-300">
                     {isDeficit ?
-                      `Deficit: ${currency}${(Math.max(0, settlementTarget - totalPaid)).toFixed(2)} to be carried as debt.` :
+                      `Deficit: ${safeCurrency}${(Math.max(0, settlementTarget - totalPaid)).toFixed(2)} to be carried as debt.` :
                       isSurplus ?
-                        `Surplus: ${currency}${(totalPaid - settlementTarget).toFixed(2)} will be credited.` :
+                        `Surplus: ${safeCurrency}${(totalPaid - settlementTarget).toFixed(2)} will be credited.` :
                         `Transaction perfectly tallied. Ready for sync.`
                     }
                   </p>
+                  {mode === 'return' && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-white/5">
+                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Refund Node</p>
+                        <p className={`text-xs font-black uppercase tracking-widest ${totalPaid > 0 ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                            {totalPaid > 0 ? 'Method: Cash / Payout' : 'Method: Credit Note / Advance'}
+                        </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* COLUMN 2: Matrix Input (Right) */}
               <div className="flex-[1.2] p-10 flex flex-col gap-10 bg-white dark:bg-[#0a0f1e]">
 
+                <div className="space-y-4">
+                  <Label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 ml-1">
+                    {mode === 'return' ? "Return Context / Reason" : "Global Ledger Notes"}
+                  </Label>
+                  <div className="relative group">
+                    <MessageSquare className="absolute left-6 top-6 h-5 w-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                    <textarea
+                      value={invoiceNote}
+                      onChange={(e) => setInvoiceNote(e.target.value)}
+                      placeholder={mode === 'return' ? "Why is the patient returning these items?" : "Add reconciliation notes or references..."}
+                      className="w-full min-h-[160px] bg-slate-50 dark:bg-slate-900 border-2 border-slate-100 dark:border-white/5 rounded-[2.5rem] pl-16 pr-8 py-6 text-sm font-bold text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-indigo-500 outline-none transition-all resize-none shadow-inner"
+                    />
+                  </div>
+                </div>
 
                 {/* Manual Split / Adjustment Input */}
                 <div className="group/input relative">
                   <div className="flex items-center gap-4">
                     <div className="flex-1 relative">
-                      <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-700 font-black text-xl italic">{currency}</span>
+                      <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-700 font-black text-xl italic">{safeCurrency}</span>
                       <input
                         ref={amountInputRef}
                         type="number"
@@ -2151,7 +2837,8 @@ export function CompactInvoiceEditor({
                     { id: 'cash', label: 'CASH', icon: Banknote, color: 'text-emerald-500 dark:text-emerald-400' },
                     { id: 'upi', label: 'UPI / QR', icon: QrCode, color: 'text-indigo-600 dark:text-indigo-400' },
                     { id: 'card', label: 'CARD', icon: CreditCard, color: 'text-blue-600 dark:text-blue-400' },
-                    { id: 'bank_transfer', label: 'BANK TRANSFER', icon: Landmark, color: 'text-amber-600 dark:text-amber-400' }
+                    { id: 'bank_transfer', label: 'BANK TRANSFER', icon: Landmark, color: 'text-amber-600 dark:text-amber-400' },
+                    ...(balanceType === 'advance' && patientBalance > 0 ? [{ id: 'advance', label: 'USE CREDIT', icon: Zap, color: 'text-pink-600 dark:text-pink-400' }] : [])
                   ].map(m => (
                     <button
                       key={m.id}
@@ -2169,7 +2856,8 @@ export function CompactInvoiceEditor({
                           }
 
                           setPayments(prev => {
-                            const newPayments: Payment[] = [...prev, { method: m.id as any, amount: amt } as Payment];
+                            const actualMethod = m.id === 'advance' ? 'adjustment' : m.id;
+                            const newPayments: Payment[] = [...prev, { method: actualMethod as any, amount: amt, reference: m.id === 'advance' ? 'PATIENT_CREDIT_APPLIED' : undefined } as Payment];
                             const currentTotalPaid = newPayments.reduce((sum, p) => sum + p.amount, 0);
                             const remaining = Math.max(0, (grandTotal + (includePrevBalance ? patientBalance : 0)) - currentTotalPaid);
                             setTimeout(() => setActivePaymentAmount(remaining > 0 ? remaining.toFixed(2) : ''), 0);
@@ -2252,6 +2940,36 @@ export function CompactInvoiceEditor({
                   </button>
                 )}
 
+                      {patientBalanceData && patientBalanceData.type === 'advance' && Number(patientBalanceData.balance) > 0 && (
+                        <div 
+                          onClick={() => {
+                            const creditAmt = Math.min(Number(patientBalanceData.balance), grandTotal + (includePrevBalance ? patientBalance : 0) - totalPaid);
+                            if (creditAmt > 0) {
+                              setPayments(prev => [...prev, { method: 'advance', amount: creditAmt, reference: 'CREDIT_NOTE_RECONCILIATION' } as Payment]);
+                              toast({ title: "Credit Applied", description: `Reconciled ${safeCurrency}${creditAmt.toFixed(2)} from available credit notes.` });
+                            }
+                          }}
+                          className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl cursor-pointer hover:bg-indigo-100 transition-all group relative overflow-hidden"
+                        >
+                          <div className="flex items-center justify-between relative z-10">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 bg-indigo-600 text-white rounded-lg group-hover:scale-110 transition-transform shadow-md">
+                                <CreditCard className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Apply Credit Application</p>
+                                <p className="text-[10px] font-bold text-indigo-600/70">{safeCurrency}{Number(patientBalanceData.balance).toFixed(2)} Available</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px] font-black text-indigo-600">
+                                RECONCILE <ArrowRight className="h-3 w-3" />
+                            </div>
+                          </div>
+                          <div className="absolute top-0 right-0 p-1 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <RotateCcw className="h-12 w-12 -mr-4 -mt-4 rotate-12" />
+                          </div>
+                        </div>
+                      )}
 
                 {/* Final Conclusion Action */}
                 <div className="grid grid-cols-3 gap-4">
@@ -2296,12 +3014,20 @@ export function CompactInvoiceEditor({
                   >
                     {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
                       <>
-                        {isDeficit ? (
-                          <>POST AS CREDIT <ArrowRight className="h-4 w-4" /></>
-                        ) : isSurplus ? (
-                          <>RECEIVE ADVANCE <Plus className="h-4 w-4" /></>
+                        {mode === 'return' ? (
+                          isDeficit ? (
+                            <>ISSUE CREDIT NOTE <ArrowRight className="h-4 w-4" /></>
+                          ) : (
+                            <>FINALIZE REFUND <Check className="h-5 w-5" /></>
+                          )
                         ) : (
-                          <>FINALIZE SETTLEMENT <Check className="h-5 w-5" /></>
+                          isDeficit ? (
+                            <>POST AS CREDIT <ArrowRight className="h-4 w-4" /></>
+                          ) : isSurplus ? (
+                            <>RECEIVE ADVANCE <Plus className="h-4 w-4" /></>
+                          ) : (
+                            <>FINALIZE SETTLEMENT <Check className="h-5 w-5" /></>
+                          )
                         )}
                       </>
                     )}
@@ -2327,7 +3053,7 @@ export function CompactInvoiceEditor({
               </div>
 
               <h2 className="text-2xl font-black text-slate-900 dark:text-white italic mb-2">SCAN TO PAY</h2>
-              <p className="text-xs font-medium text-slate-500 mb-8">Pay precisely {currency}{(razorpayQRAmount || 0).toFixed(2)} to avoid payment failure</p>
+              <p className="text-xs font-medium text-slate-500 mb-8">Pay precisely {safeCurrency}{(razorpayQRAmount || 0).toFixed(2)} to avoid payment failure</p>
 
               <div className="relative mb-8 flex justify-center">
                 <div className={`transition-all duration-300 ${razorpayStatus === 'loading' ? 'blur-md opacity-50' : ''}`}>
@@ -2433,7 +3159,7 @@ export function CompactInvoiceEditor({
                 </div>
                 <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2 rounded-2xl text-right">
                   <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest">Total Liability</p>
-                  <p className="text-2xl font-black text-amber-700">{currency}{patientBalance.toFixed(2)}</p>
+                  <p className="text-2xl font-black text-amber-700">{safeCurrency}{patientBalance.toFixed(2)}</p>
                 </div>
               </div>
 
@@ -2472,10 +3198,10 @@ export function CompactInvoiceEditor({
                             <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 rounded uppercase">{line.accounts?.name}</span>
                           </td>
                           <td className="py-4 text-right font-mono text-xs font-black text-rose-500">
-                            {line.debit > 0 ? `${currency}${Number(line.debit).toFixed(2)}` : '-'}
+                            {line.debit > 0 ? `${safeCurrency}${Number(line.debit).toFixed(2)}` : '-'}
                           </td>
                           <td className="py-4 text-right font-mono text-xs font-black text-emerald-500">
-                            {line.credit > 0 ? `${currency}${Number(line.credit).toFixed(2)}` : '-'}
+                            {line.credit > 0 ? `${safeCurrency}${Number(line.credit).toFixed(2)}` : '-'}
                           </td>
                         </tr>
                       ))}
@@ -2536,9 +3262,171 @@ export function CompactInvoiceEditor({
             </div>
           </DialogContent>
         </Dialog>
+      </div>
+    </div>
+  </div>
+
+  {/* ============================================================
+      QUICK CREATE PRODUCT MODAL (World Standard)
+      Allows cashiers to create a product on-the-fly during billing.
+  ============================================================ */}
+  {isQuickProductOpen && (
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm p-7 m-4 animate-in zoom-in-95 duration-200 border border-slate-200 dark:border-slate-700">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Package className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter">Quick Add Product</h3>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Creates & adds to bill instantly</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setIsQuickProductOpen(false);
+              if (quickProductResolver) quickProductResolver(null);
+            }}
+            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+          >
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+
+        {/* Form */}
+        <div className="space-y-4">
+          {/* Name */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Product / Service Name *</label>
+            <input
+              autoFocus
+              value={quickProductName}
+              onChange={e => setQuickProductName(e.target.value)}
+              placeholder="e.g. Paracetamol 500mg"
+              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+            />
+          </div>
+
+          {/* Price */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sale Price ({safeCurrency})</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={quickProductPrice}
+              onChange={e => setQuickProductPrice(e.target.value)}
+              placeholder="0.00"
+              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+            />
+          </div>
+
+          {/* Type Toggle */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Type</label>
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl gap-1">
+              {(['item', 'service'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setQuickProductType(t)}
+                  className={`flex-1 py-2 text-[10px] font-black rounded-lg transition-all uppercase tracking-widest ${
+                    quickProductType === t
+                      ? t === 'item'
+                        ? 'bg-white dark:bg-slate-700 text-emerald-600 shadow-sm'
+                        : 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {t === 'item' ? '📦 Goods/Stock' : '⚡ Service'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+            💡 You can set full details (UOM, batch, tax) later in Inventory → Products.
+          </p>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsQuickProductOpen(false);
+                if (quickProductResolver) quickProductResolver(null);
+              }}
+              className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!quickProductName.trim() || isCreatingProduct}
+              onClick={async () => {
+                if (!quickProductName.trim()) return;
+                setIsCreatingProduct(true);
+                try {
+                  const price = parseFloat(quickProductPrice) || 0;
+                  const isService = quickProductType === 'service';
+                  // Pass price & type so it saves correctly to DB
+                  const result = await createProductQuick(quickProductName.trim(), price, isService);
+                    if (result) {
+                      // 1. Immediately inject into Local Registry so it shows up in future searches
+                      const newItem = {
+                          id: result.id,
+                          sku: result.sku || '',
+                          label: result.label,
+                          name: result.label,
+                          description: '',
+                          uom: isService ? 'SVC' : 'PCS',
+                          price: price,
+                          type: quickProductType,
+                          totalStock: 0,
+                          categoryTaxId: null,
+                          categoryTaxRate: 0,
+                          metadata: {}
+                      };
+                      setLocalBillableItems(prev => [newItem, ...prev]);
+
+                      // 2. Directly populate the billing line
+                      setLines(prev => prev.map(l =>
+                        l.id === quickProductLineId ? {
+                          ...l,
+                          product_id: result.id,
+                          description: result.label,
+                          unit_price: price,
+                          base_price: price,
+                          item_type: quickProductType,
+                          uom: isService ? 'SVC' : 'PCS',
+                        } : l
+                      ));
+
+                      if (quickProductResolver) quickProductResolver(newItem);
+                      setIsQuickProductOpen(false);
+                      toast({ title: '✅ Product Created', description: `"${result.label}" added and available in registry.` });
+
+                    } else {
+                    toast({ title: 'Failed', description: 'Could not create product. Try again.', variant: 'destructive' });
+                  }
+                } finally {
+                  setIsCreatingProduct(false);
+                }
+              }}
+              className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
+            >
+              {isCreatingProduct ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 fill-current" />}
+              {isCreatingProduct ? 'Creating...' : 'Create & Add to Bill'}
+            </button>
+          </div>
         </div>
       </div>
-    </>
+    </div>
+  )}
+
+</>
   );
 }
 

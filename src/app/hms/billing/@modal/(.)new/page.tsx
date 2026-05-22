@@ -20,7 +20,7 @@ export default async function InterceptedNewInvoicePage({
     const tenantId = session.user.tenantId;
 
     // Parallel data fetching
-    const [patients, itemsRes, taxRes] = await Promise.all([
+    const [patients, itemsRes, taxRes, companySettings] = await Promise.all([
         prisma.hms_patient.findMany({
             where: {
                 tenant_id: tenantId
@@ -38,7 +38,10 @@ export default async function InterceptedNewInvoicePage({
             take: 50
         }),
         getBillableItems(),
-        getTaxConfiguration()
+        getTaxConfiguration(),
+        prisma.company_settings.findUnique({
+            where: { company_id: session.user.companyId || session.user.tenantId }
+        })
     ]);
 
     const billableItems = itemsRes.success ? itemsRes.data : [];
@@ -54,6 +57,8 @@ export default async function InterceptedNewInvoicePage({
             initialPatientId={patientId}
             initialMedicines={initialItems}
             appointmentId={appointmentId}
+            defaultTaxMode={(companySettings?.hms_billing_mode as any) || 'exclusive'}
+            currentUser={session?.user}
         />
     )
 }

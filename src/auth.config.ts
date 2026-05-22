@@ -6,17 +6,6 @@ const isVercel = !!process.env.VERCEL;
 
 export const authConfig = {
     trustHost: true,
-    cookies: {
-        sessionToken: {
-            name: 'auth.session-token',
-            options: {
-                httpOnly: true,
-                sameSite: 'lax',
-                path: '/',
-                secure: isVercel, 
-            }
-        }
-    },
     pages: {
         signIn: '/login',
     },

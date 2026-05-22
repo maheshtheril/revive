@@ -18,6 +18,8 @@ export default async function AppointmentsPage() {
     const tomorrow = new Date(today)
     tomorrow.setDate(tomorrow.getDate() + 1)
 
+    const isAdmin = session?.user?.isAdmin || (session?.user as any)?.isTenantAdmin;
+
     const [
         todayCount,
         inProgressCount,
@@ -30,6 +32,7 @@ export default async function AppointmentsPage() {
         prisma.hms_appointments.count({
             where: {
                 tenant_id: tenantId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 starts_at: {
                     gte: today,
                     lt: tomorrow
@@ -39,6 +42,7 @@ export default async function AppointmentsPage() {
         prisma.hms_appointments.count({
             where: {
                 tenant_id: tenantId,
+                ...(!isAdmin && { created_by: session.user.id }),
                 status: 'in_progress'
             }
         }),
@@ -65,7 +69,10 @@ export default async function AppointmentsPage() {
     // Fetch Patients and Doctors for the Modal
     const [patients, doctors] = await Promise.all([
         prisma.hms_patient.findMany({
-            where: tenantId ? { tenant_id: tenantId } : undefined,
+            where: tenantId ? { 
+                tenant_id: tenantId,
+                ...(!isAdmin && { created_by: session.user.id })
+            } : undefined,
             take: 100,
             orderBy: { updated_at: 'desc' },
             select: {
@@ -98,6 +105,7 @@ export default async function AppointmentsPage() {
     const weekCount = await prisma.hms_appointments.count({
         where: {
             tenant_id: tenantId,
+            ...(!isAdmin && { created_by: session.user.id }),
             starts_at: {
                 gte: weekStart
             }

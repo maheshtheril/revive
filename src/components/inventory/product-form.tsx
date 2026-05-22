@@ -1,13 +1,13 @@
 'use client'
 
-import { createProduct, updateProduct, createUOM, updateProductBatch, getBatchHistory, adjustStock } from "@/app/actions/inventory"
+import { createProduct, updateProduct, createUOM, updateProductBatch, getBatchHistory, adjustStock, deleteProduct } from "@/app/actions/inventory"
 import { uploadProductImage } from "@/app/actions/upload-image"
 import { useState, useRef, useEffect, useActionState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { QuickCategoryForm, QuickManufacturerForm } from "@/components/inventory/quick-create-wrappers"
 import {
-    Box, Tag, DollarSign, Layers, Image as ImageIcon, Barcode, Factory, Check, Zap, Info, Plus, X, Cpu, History, ArrowUpDown, TrendingUp, TrendingDown
+    Box, Tag, DollarSign, Layers, Image as ImageIcon, Barcode, Factory, Check, Zap, Info, Plus, X, Cpu, History, ArrowUpDown, TrendingUp, TrendingDown, Trash2
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -20,7 +20,7 @@ interface ProductFormProps {
     uomCategories: any[];
     initialData?: any;
     batches?: any[];
-    onSuccess?: () => void;
+    onSuccess?: (createdId?: string, createdName?: string) => void;
     onCancel?: () => void;
 }
 
@@ -41,6 +41,13 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
     const [selectedCategoryId, setSelectedCategoryId] = useState(initialData?.categoryId || generalCategory?.id || "");
     const [selectedTaxId, setSelectedTaxId] = useState(initialData?.taxRateId || "");
     const [trackingType, setTrackingType] = useState(initialData?.tracking || "none");
+
+    // UOM: Controlled state — pre-select product's UOM on edit, first UOM on create
+    const defaultUomId = initialData?.uom_id
+        || uoms.find(u => u.name === initialData?.uom)?.id
+        || uoms[0]?.id
+        || "";
+    const [selectedUomId, setSelectedUomId] = useState(defaultUomId);
     const [batches, setBatches] = useState(initialBatches);
     const [editingBatch, setEditingBatch] = useState<any>(null);
     const [adjustingBatch, setAdjustingBatch] = useState<any>(null);
@@ -49,6 +56,16 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
 
     const isEditing = !!initialData;
     const category = categories.find(c => c.id === selectedCategoryId);
+
+    // Sync UOM selection when uoms list or initialData changes
+    useEffect(() => {
+        if (!selectedUomId && uoms.length > 0) {
+            const defaultId = initialData?.uom_id
+                || uoms.find(u => u.name?.toLowerCase() === initialData?.uom?.toLowerCase())?.id
+                || uoms[0]?.id;
+            if (defaultId) setSelectedUomId(defaultId);
+        }
+    }, [uoms, initialData, selectedUomId]);
 
     // Auto-select Tax Rate when Category changes
     useEffect(() => {
@@ -101,7 +118,7 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
         } else {
             toast.success(isEditing ? "Product updated successfully" : "Product created successfully");
             if (onSuccess) {
-                onSuccess();
+                onSuccess((res as any)?.productId, (res as any)?.name);
             } else {
                 router.push('/hms/inventory/products');
                 router.refresh();
@@ -125,6 +142,31 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
                             <p className="text-xs font-medium text-gray-500">
                                 {isEditing ? `Ref: ${initialData?.sku}` : 'Configure your new inventory item'}
                             </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            {isEditing && (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (confirm(`Are you sure you want to PERMANENTLY delete "${initialData.name}"?`)) {
+                                            setIsSubmitting(true);
+                                            const res = await deleteProduct(initialData.id);
+                                            setIsSubmitting(false);
+                                            if (res.success) {
+                                                toast.success("Product deleted successfully");
+                                                if (onSuccess) onSuccess();
+                                            } else {
+                                                toast.error("Deletion Failed", { description: res.error });
+                                            }
+                                        }
+                                    }}
+                                    className="px-4 py-2 border-2 border-rose-100 text-rose-500 hover:bg-rose-50 hover:border-rose-200 rounded-lg text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2"
+                                >
+                                    <Trash2 className="h-3 w-3" />
+                                    Delete Product
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -182,6 +224,49 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
                             />
                         </div>
 
+                        {/* UOM - Serious Mandatory Node */}
+                        <div className="space-y-1 p-2 bg-indigo-50/30 rounded-xl border border-indigo-100/50">
+                            <label className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] flex items-center gap-1">
+                                UOM <span className="text-rose-500">*</span>
+                                {uoms.length === 0 && <span className="text-[8px] font-bold text-rose-400 normal-case">(No units configured)</span>}
+                            </label>
+                            <div className="flex gap-1">
+                                <select
+                                    name="uomId"
+                                    required
+                                    value={selectedUomId}
+                                    onChange={(e) => setSelectedUomId(e.target.value)}
+                                    className="flex-1 px-3 py-2 bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm font-bold text-slate-700 shadow-sm"
+                                >
+                                    <option value="">Select UOM...</option>
+                                    {uoms.length > 0 ? (
+                                        Object.entries(uoms.reduce((acc: any, u: any) => {
+                                            const cat = uomCategories.find(c => c.id === u.category_id)?.name || 'General';
+                                            if (!acc[cat]) acc[cat] = [];
+                                            acc[cat].push(u);
+                                            return acc;
+                                        }, {})).map(([cat, items]: [string, any]) => (
+                                            <optgroup key={cat} label={cat}>
+                                                {items.map((u: any) => (
+                                                    <option key={u.id} value={u.id}>{u.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        ))
+                                    ) : (
+                                        <option disabled>Please add a UOM first</option>
+                                    )}
+                                </select>
+                                <button 
+                                    type="button" 
+                                    onClick={() => setModalOpen('uom')} 
+                                    className="p-2 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50 text-indigo-600 shadow-sm transition-colors"
+                                    title="Add New Unit of Measure"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Category */}
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Category</label>
@@ -219,44 +304,28 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
                             </div>
                         </div>
 
-                        {/* UOM */}
-                        <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-gray-500 uppercase">UOM</label>
-                            <div className="flex gap-1">
-                                <select
-                                    name="uomId"
-                                    defaultValue={initialData?.uom_id || uoms.find(u => u.name === initialData?.uom)?.id}
-                                    className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-black outline-none transition-all text-sm"
-                                >
-                                    <option value="">Select UOM...</option>
-                                    {uoms.map(u => (
-                                        <option key={u.id} value={u.id}>{u.name}</option>
-                                    ))}
-                                </select>
-                                <button type="button" onClick={() => setModalOpen('uom')} className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50"><Plus className="h-4 w-4" /></button>
-                            </div>
-                        </div>
+
 
                         {/* Pricing Row - Master Defaults */}
                         <div className="md:col-span-3 grid grid-cols-4 gap-4 bg-gray-50/50 p-3 rounded-xl border border-gray-100">
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Std Sale Price</label>
                                 <div className="relative">
-                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">₹</span>
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{'₹'}</span>
                                     <input name="price" type="number" step="0.01" required defaultValue={initialData?.price} className="w-full pl-5 pr-2 py-2 bg-white border border-gray-200 rounded-lg font-bold text-sm" />
                                 </div>
                             </div>
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Std Cost Price</label>
                                 <div className="relative">
-                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">₹</span>
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{'₹'}</span>
                                     <input name="costPrice" type="number" step="0.01" defaultValue={initialData?.default_cost} className="w-full pl-5 pr-2 py-2 bg-white border border-gray-200 rounded-lg text-sm" />
                                 </div>
                             </div>
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Std MRP</label>
                                 <div className="relative">
-                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">₹</span>
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{'₹'}</span>
                                     <input name="mrp" type="number" step="0.01" defaultValue={initialData?.mrp} className="w-full pl-5 pr-2 py-2 bg-white border border-gray-200 rounded-lg text-sm" />
                                 </div>
                             </div>
@@ -339,9 +408,38 @@ export function ProductForm({ suppliers, taxRates, uoms, categories, manufacture
                                 <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-2">Active Batches</h4>
                                 <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
                                     {batches.map((batch: any) => (
-                                        <div key={batch.id} className="text-[10px] border-b border-gray-50 py-1 flex justify-between items-center">
-                                            <span className="font-mono">{batch.batch_no}</span>
-                                            <span className="font-bold text-green-600">{Number(batch.qty_on_hand)}</span>
+                                        <div key={batch.id} className="group border-b border-gray-50 py-2">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="text-[10px] font-mono font-bold text-gray-700">{batch.batch_no}</span>
+                                                <span className="text-[11px] font-black text-emerald-600">{Number(batch.qty_on_hand)} {initialData?.uom}</span>
+                                            </div>
+                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingBatch(batch)}
+                                                    className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-black uppercase tracking-tighter hover:bg-blue-600 hover:text-white transition-all"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAdjustingBatch(batch)}
+                                                    className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[9px] font-black uppercase tracking-tighter hover:bg-amber-600 hover:text-white transition-all"
+                                                >
+                                                    Adjust
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                        setHistoryBatch(batch);
+                                                        const res = await getBatchHistory(batch.id);
+                                                        if (res.success) setBatchLedger(res.data);
+                                                    }}
+                                                    className="px-2 py-0.5 bg-slate-50 text-slate-500 rounded text-[9px] font-black uppercase tracking-tighter hover:bg-slate-900 hover:text-white transition-all"
+                                                >
+                                                    Ledger
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -618,7 +716,7 @@ function BatchEditForm({ batch, onSuccess }: { batch: any, onSuccess: () => void
             <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Market Retail Price (MRP)</label>
                 <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">₹</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">\u20B9</span>
                     <input
                         name="mrp"
                         type="number"

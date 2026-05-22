@@ -93,14 +93,16 @@ async function CreateProductActions() {
         getUOMCategories()
     ]);
 
+    const { serialize } = await import("@/lib/utils");
+
     return (
         <CreateProductModal
-            suppliers={suppliers}
-            taxRates={taxRates}
-            uoms={uoms}
-            categories={categories}
-            manufacturers={manufacturers}
-            uomCategories={uomCategories}
+            suppliers={serialize(suppliers)}
+            taxRates={serialize(taxRates)}
+            uoms={serialize(uoms)}
+            categories={serialize(categories)}
+            manufacturers={serialize(manufacturers)}
+            uomCategories={serialize(uomCategories)}
         />
     )
 }
@@ -110,7 +112,16 @@ async function CreateProductActions() {
 // ----------------------------------------------------
 async function ProductTable({ query, currentPage }: { query?: string, currentPage: number }) {
     const session = await auth();
-    const { data: products, meta } = await getProductsPremium(query, currentPage);
+    const { data: products, meta, error } = await getProductsPremium(query, currentPage);
+
+    // If there is a fetch error, show a friendly message
+    if (error) {
+        return (
+            <div className="p-12 bg-white rounded-2xl border-2 border-dashed border-gray-100 text-center">
+                <p className="text-sm text-gray-500 font-medium">Unable to load products: {error}</p>
+            </div>
+        );
+    }
 
     const [
         suppliers,
@@ -128,17 +139,19 @@ async function ProductTable({ query, currentPage }: { query?: string, currentPag
         getUOMCategories()
     ]);
 
+    const { serialize } = await import("@/lib/utils");
+
     return (
         <ProductTableClient
-            products={products || []}
-            meta={meta}
-            session={session}
-            suppliers={suppliers}
-            taxRates={taxRates}
-            uoms={uoms}
-            categories={categories}
-            manufacturers={manufacturers}
-            uomCategories={uomCategories}
+            products={serialize(products || [])}
+            meta={serialize(meta || { total: 0, page: 1, totalPages: 1 })}
+            session={serialize(session)}
+            suppliers={serialize(suppliers)}
+            taxRates={serialize(taxRates)}
+            uoms={serialize(uoms)}
+            categories={serialize(categories)}
+            manufacturers={serialize(manufacturers)}
+            uomCategories={serialize(uomCategories)}
             query={query}
             currentPage={currentPage}
         />
@@ -149,7 +162,8 @@ async function ProductTable({ query, currentPage }: { query?: string, currentPag
 // Server Component: Fetches Stats independently
 // ----------------------------------------------------
 async function ProductStatsSummary({ query }: { query?: string }) {
-    const { meta } = await getProductsPremium(query, 1);
+    const res = await getProductsPremium(query, 1);
+    const meta = res?.meta || { total: 0, page: 1, totalPages: 1 };
     
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -159,7 +173,7 @@ async function ProductStatsSummary({ query }: { query?: string }) {
                 </div>
                 <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Products</p>
-                    <h3 className="text-2xl font-black text-slate-900">{meta.total?.toLocaleString() || 0} Nodes</h3>
+                    <h3 className="text-2xl font-black text-slate-900">{meta?.total?.toLocaleString() || 0} Nodes</h3>
                 </div>
             </div>
             

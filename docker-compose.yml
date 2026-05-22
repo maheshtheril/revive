@@ -60,7 +60,7 @@ services:
     container_name: evolution-api
     restart: always
     environment:
-      - SERVER_URL=http://localhost:8080
+      - SERVER_URL=http://192.168.1.33:8080
       - AUTH_KEY=${EVOLUTION_API_KEY:-4296k-7v8m4-y2x1n-5p3z1}
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://hms_admin:${DB_PASSWORD}@db:5432/hms_prod?schema=public

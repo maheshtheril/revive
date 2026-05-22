@@ -1,9 +1,8 @@
-'use server';
-
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { getHMSSettings, getPaymentGatewaySettings } from "@/app/actions/settings"
-import { getInitialInvoiceData, getTaxConfiguration, getBillableItems } from "@/app/actions/billing"
+import { getTaxConfiguration, getBillableItems } from "@/app/actions/billing"
+import { getInitialInvoiceData, getPatientActiveAppointmentForBilling, getOpenRegistrationInvoice } from "@/app/actions/clinical"
 import { getUOMs } from "@/app/actions/inventory"
 import BillingClientEntry from "./client-entry"
 
@@ -19,12 +18,15 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
     const { patientId, appointmentId, medicines, items } = sp;
 
     // 1. Parallel Data Fetching for Maximum Speed
-    const [taxRes, uomsRes, gatewayRes, hmsSettingsRes, itemsRes] = await Promise.all([
+    const [taxRes, uomsRes, gatewayRes, hmsSettingsRes, itemsRes, companySettings] = await Promise.all([
         getTaxConfiguration(),
         getUOMs(),
         getPaymentGatewaySettings(),
         getHMSSettings(),
-        getBillableItems()
+        getBillableItems(),
+        prisma.company_settings.findUnique({
+            where: { company_id: session.user.companyId || session.user.tenantId }
+        })
     ]);
 
     // 2. Resolve Incoming Intent (Prescriptions, Items, etc)
@@ -60,7 +62,6 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
         }
     } else if (patientId) {
         // [RCM-FIX] If we only have a patientId, check for existing registration invoices
-        const { getOpenRegistrationInvoice } = await import("@/app/actions/billing");
         const regData = await getOpenRegistrationInvoice(patientId as string);
         if (regData.success && regData.data) {
             draftInvoice = regData.data;
@@ -106,9 +107,12 @@ export default async function NewInvoicePage({ searchParams }: PageProps) {
         appointmentId: (appointmentId as string) || '',
         initialInvoice: JSON.parse(JSON.stringify((draftInvoice as any)?.initialInvoice || null)),
         pendingConsumablesCount: (draftInvoice as any)?.pendingConsumablesCount || 0,
-        currency: (session.user as any).currencySymbol || '₹',
+        currency: (session.user as any).currencySymbol || '\u20B9',
         allowRateEdit: hmsSettingsRes?.success ? hmsSettingsRes.settings.allowRateEdit : true,
-        isRegistrationFee: Boolean(effectivePatientId && !appointmentId && consolidatedMedicines.some(i => i.isRegistration || i.name?.includes('Registration')))
+        isRegistrationFee: Boolean(effectivePatientId && !appointmentId && consolidatedMedicines.some(i => i.isRegistration || i.name?.includes('Registration'))),
+        externalProvisionalNo: `INV-${new Date().getFullYear()}-${String((await prisma.hms_invoice.count({ where: { company_id: session.user.companyId } })) + 1).padStart(4, '0')}`,
+        defaultTaxMode: (companySettings?.hms_billing_mode as any) || 'exclusive',
+        currentUser: session?.user
     };
 
     return (

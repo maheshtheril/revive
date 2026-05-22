@@ -13,7 +13,7 @@ export default async function DaybookPage() {
         <DetailedLedgerReport
             type="daybook"
             currencyCode={session?.user?.currencyCode || 'INR'}
-            currencySymbol={session?.user?.currencySymbol || '₹'}
+            currencySymbol={session?.user?.currencySymbol || '\u20B9'}
         />
     )
 }

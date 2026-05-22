@@ -42,6 +42,7 @@ export function SalesReturnDialog({
     const { toast } = useToast();
     const [items, setItems] = useState<SalesReturnItem[]>([]);
     const [reason, setReason] = useState('Patient Return / Change of mind');
+    const [refundMethod, setRefundMethod] = useState<'credit_note' | 'cash'>('credit_note');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
@@ -65,6 +66,7 @@ export function SalesReturnDialog({
                 invoiceId,
                 patientId,
                 reason,
+                refundMethod,
                 items: itemsToReturn.map(i => ({
                     invoiceLineId: i.invoiceLineId,
                     productId: i.productId,
@@ -104,51 +106,78 @@ export function SalesReturnDialog({
                     </div>
                 </DialogHeader>
 
-                <div className="p-8 space-y-8 flex-1 overflow-hidden flex flex-col">
-                    <div className="space-y-4">
-                        <Label className="text-xs font-black uppercase tracking-widest text-muted-foreground">Return Reason</Label>
-                        <Input
-                            value={reason}
-                            onChange={e => setReason(e.target.value)}
-                            placeholder="e.g., Wrong medication, patient requested refund..."
-                            className="h-12 bg-background border-border text-foreground font-medium rounded-xl focus:ring-emerald-500/20 focus:border-emerald-500/50"
-                        />
+                <div className="p-6 space-y-6 flex-1 overflow-hidden flex flex-col">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Return Reason</Label>
+                            <Input
+                                value={reason}
+                                onChange={e => setReason(e.target.value)}
+                                placeholder="e.g., Patient Return / Wrong Item"
+                                className="h-10 bg-background border-border text-foreground font-medium rounded-xl focus:ring-emerald-500/20"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Refund Strategy</Label>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setRefundMethod('credit_note')}
+                                    className={`flex-1 px-3 py-2 rounded-xl border-2 transition-all flex items-center gap-2 ${refundMethod === 'credit_note' ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-background hover:bg-muted/50'}`}
+                                >
+                                    <AlertCircle className={`h-4 w-4 ${refundMethod === 'credit_note' ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                                    <span className={`text-[10px] font-black uppercase tracking-widest ${refundMethod === 'credit_note' ? 'text-emerald-700' : 'text-foreground'}`}>Credit Note</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setRefundMethod('cash')}
+                                    className={`flex-1 px-3 py-2 rounded-xl border-2 transition-all flex items-center gap-2 ${refundMethod === 'cash' ? 'border-rose-500 bg-rose-500/10' : 'border-border bg-background hover:bg-muted/50'}`}
+                                >
+                                    <RotateCcw className={`h-4 w-4 ${refundMethod === 'cash' ? 'text-rose-600' : 'text-muted-foreground'}`} />
+                                    <span className={`text-[10px] font-black uppercase tracking-widest ${refundMethod === 'cash' ? 'text-rose-700' : 'text-foreground'}`}>Cash Refund</span>
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="flex-1 flex flex-col min-h-0 bg-muted/20 border border-border rounded-2xl overflow-hidden">
-                        <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-border bg-muted/30 text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                    <div className="flex-1 flex flex-col min-h-[300px] bg-muted/20 border border-border rounded-2xl overflow-hidden">
+                        <div className="grid grid-cols-12 gap-4 px-6 py-3 border-b border-border bg-muted/30 text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                             <div className="col-span-6">Item Description</div>
                             <div className="col-span-2 text-right">Sold</div>
                             <div className="col-span-2 text-center">Return Qty</div>
                             <div className="col-span-2 text-right">Refund</div>
                         </div>
                         <ScrollArea className="flex-1">
-                            <div className="divide-y divide-border/50">
-                                {items.map((item, idx) => (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={{ delay: idx * 0.05 }}
-                                        key={item.invoiceLineId}
-                                        className="grid grid-cols-12 gap-4 px-6 py-5 items-center hover:bg-muted/30 transition-colors group"
-                                    >
-                                        <div className="col-span-6 flex items-center gap-3">
-                                            <div className="h-10 w-10 rounded-lg bg-background border border-border flex items-center justify-center shrink-0">
-                                                <ShoppingBag className="h-5 w-5 text-muted-foreground group-hover:text-emerald-500 transition-colors" />
+                            {items.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center p-12 text-center space-y-2">
+                                    <ShoppingBag className="h-12 w-12 text-muted-foreground/20" />
+                                    <p className="text-sm font-medium text-muted-foreground">No items found on this bill.</p>
+                                </div>
+                            ) : (
+                                <div className="divide-y divide-border/50">
+                                    {items.map((item, idx) => (
+                                        <motion.div
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            key={item.invoiceLineId}
+                                            className={`grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-white/50 transition-colors group ${item.returnQty > 0 ? 'bg-emerald-50/50' : ''}`}
+                                        >
+                                            <div className="col-span-6 flex items-center gap-3">
+                                                <div className="h-8 w-8 rounded-lg bg-background border border-border flex items-center justify-center shrink-0">
+                                                    <ShoppingBag className="h-4 w-4 text-muted-foreground" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-bold text-foreground truncate">{item.description}</p>
+                                                    <p className="text-[10px] text-muted-foreground">₹{item.unitPrice.toFixed(2)} / unit</p>
+                                                </div>
                                             </div>
-                                            <div className="min-w-0">
-                                                <p className="text-sm font-bold text-foreground truncate">{item.description}</p>
-                                                <p className="text-[10px] text-muted-foreground">₹{item.unitPrice.toFixed(2)} / unit</p>
+
+                                            <div className="col-span-2 text-right">
+                                                <p className="text-sm font-bold text-foreground">{item.soldQty}</p>
                                             </div>
-                                        </div>
 
-                                        <div className="col-span-2 text-right">
-                                            <p className="text-sm font-bold text-foreground">{item.soldQty}</p>
-                                            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-tighter">Billed</p>
-                                        </div>
-
-                                        <div className="col-span-2 flex justify-center px-2">
-                                            <div className="relative group/input w-24">
+                                            <div className="col-span-2 flex justify-center">
                                                 <Input
                                                     type="number"
                                                     value={item.returnQty || ''}
@@ -158,34 +187,31 @@ export function SalesReturnDialog({
                                                         n[idx].returnQty = val;
                                                         setItems(n);
                                                     }}
-                                                    className="h-10 text-center font-bold bg-background border-border group-hover/input:border-emerald-500/50 transition-all rounded-lg"
+                                                    className="h-9 w-20 text-center font-bold bg-background border-border focus:border-emerald-500 focus:ring-emerald-500/10 rounded-lg"
+                                                    placeholder="0"
                                                 />
-                                                <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-emerald-500 scale-x-0 group-hover/input:scale-x-100 transition-transform duration-300 rounded-full" />
                                             </div>
-                                        </div>
 
-                                        <div className="col-span-2 text-right">
-                                            <p className="text-sm font-bold text-foreground">₹{(item.returnQty * item.unitPrice).toFixed(2)}</p>
-                                            <p className="text-[10px] text-emerald-500/70 font-black uppercase tracking-tighter">Refund</p>
-                                        </div>
-                                    </motion.div>
-                                ))}
-                            </div>
+                                            <div className="col-span-2 text-right">
+                                                <p className="text-sm font-bold text-foreground">₹{(item.returnQty * item.unitPrice).toFixed(2)}</p>
+                                            </div>
+                                        </motion.div>
+                                    ))}
+                                </div>
+                            )}
                         </ScrollArea>
                     </div>
 
-                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-6 flex items-center justify-between">
+                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                            <div className="bg-emerald-500/10 p-2 rounded-lg">
-                                <AlertCircle className="h-5 w-5 text-emerald-600" />
-                            </div>
-                            <p className="text-sm font-medium text-emerald-700/80 max-w-sm">
-                                Recording this return will restock items and generate a Credit Note for the patient.
+                            <AlertCircle className="h-5 w-5 text-emerald-600" />
+                            <p className="text-xs font-medium text-emerald-700/80">
+                                Restocks items and generates a Credit Note for the patient.
                             </p>
                         </div>
                         <div className="text-right">
-                            <p className="text-xs font-black text-emerald-600 uppercase tracking-widest mb-1">Total Refund Value</p>
-                            <p className="text-2xl font-black text-emerald-600">₹{totalReturnAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Total Refund</p>
+                            <p className="text-xl font-black text-emerald-600">₹{totalReturnAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
                         </div>
                     </div>
                 </div>

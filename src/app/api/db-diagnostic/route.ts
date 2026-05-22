@@ -1,68 +1,68 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
 
-export async function GET() {
-  try {
-    // Test basic database connectivity
-    const testQuery = await prisma.$queryRaw`SELECT 1 as test`;
+export async function GET(request: NextRequest) {
+    try {
+        const searchParams = request.nextUrl.searchParams;
+        const patientNo = searchParams.get('no') || 'PAT-655339';
+        
+        console.log(`[DIAGNOSTIC] Probing for Patient Number: ${patientNo}`);
 
-    // Check for triggers on appointments table
-    const triggers: any = await prisma.$queryRaw`
-      SELECT 
-        trigger_name,
-        event_manipulation,
-        event_object_table,
-        action_statement
-      FROM information_schema.triggers
-      WHERE event_object_table IN ('hms_appointments', 'hms_clinicians')
-      ORDER BY event_object_table, trigger_name
-    `;
+        // 1. Find Patient
+        const patient = await prisma.hms_patient.findFirst({
+            where: { patient_number: patientNo }
+        });
 
-    // Check column types for problematic tables
-    const clinicianCols: any = await prisma.$queryRaw`
-      SELECT column_name, data_type, udt_name, column_default
-      FROM information_schema.columns
-      WHERE table_name = 'hms_clinicians'
-      AND column_name IN ('working_days', 'document_urls')
-    `;
+        if (!patient) {
+            return NextResponse.json({ error: "Patient not found by number" });
+        }
 
-    const appointmentCols: any = await prisma.$queryRaw`
-      SELECT column_name, data_type, udt_name, column_default
-      FROM information_schema.columns
-      WHERE table_name = 'hms_appointments'
-      AND data_type = 'ARRAY'
-    `;
+        const pid = patient.id;
+        console.log(`[DIAGNOSTIC] Found Patient ID: ${pid}`);
 
-    const invoiceCols: any = await prisma.$queryRaw`
-      SELECT column_name, data_type, udt_name, column_default
-      FROM information_schema.columns
-      WHERE table_name = 'hms_invoice'
-      AND column_name = 'status'
-    `;
+        // 2. Check Nursing Moves
+        const moves = await prisma.$queryRaw`
+            SELECT id, patient_id::text, source, source_reference::text, product_id::text, qty, created_at 
+            FROM hms_stock_move 
+            WHERE patient_id::text = CAST(${pid} AS text)
+            OR source_reference IN (
+                SELECT id::text FROM hms_appointments WHERE patient_id::text = CAST(${pid} AS text)
+            )
+            LIMIT 50
+        `;
 
-    const countriesCount: any = await prisma.$queryRaw`SELECT count(*) FROM countries`;
-    const currenciesCount: any = await prisma.$queryRaw`SELECT count(*) FROM currencies`;
-    const modulesCount: any = await prisma.$queryRaw`SELECT count(*) FROM modules`;
+        // 3. Check Prescriptions
+        const rxs = await prisma.$queryRaw`
+            SELECT id, patient_id::text, appointment_id::text, created_at 
+            FROM prescription 
+            WHERE patient_id::text = CAST(${pid} AS text)
+            OR appointment_id IN (
+                SELECT id::text FROM hms_appointments WHERE patient_id::text = CAST(${pid} AS text)
+            )
+            LIMIT 10
+        `;
 
-    return NextResponse.json({
-      success: true,
-      db_url: process.env.DATABASE_URL?.split('@')[1] || 'URL NOT SET', 
-      connectivity: testQuery,
-      counts: {
-        countries: Number(countriesCount[0]?.count || 0),
-        currencies: Number(currenciesCount[0]?.count || 0),
-        modules: Number(modulesCount[0]?.count || 0)
-      },
-      triggers: triggers,
-      clinician_columns: clinicianCols,
-      invoice_status_column: invoiceCols
-    });
+        // 4. Check Lab Orders
+        const labs = await prisma.$queryRaw`
+            SELECT id, patient_id::text, encounter_id::text, status, created_at 
+            FROM hms_lab_order 
+            WHERE patient_id::text = CAST(${pid} AS text)
+            OR encounter_id IN (
+                SELECT id::text FROM hms_appointments WHERE patient_id::text = CAST(${pid} AS text)
+            )
+            LIMIT 10
+        `;
 
-  } catch (error: any) {
-    return NextResponse.json({
-      success: false,
-      error: error.message,
-      code: error.code
-    }, { status: 500 });
-  }
+        return NextResponse.json({
+            success: true,
+            patient: { id: patient.id, name: patient.name, number: patient.patient_number },
+            movesCount: (moves as any[]).length,
+            rxsCount: (rxs as any[]).length,
+            labsCount: (labs as any[]).length,
+            sampleMoves: (moves as any[]).slice(0, 3),
+            sampleRxs: (rxs as any[]).slice(0, 3)
+        });
+    } catch (error: any) {
+        return NextResponse.json({ error: error.message });
+    }
 }

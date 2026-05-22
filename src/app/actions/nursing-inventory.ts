@@ -192,6 +192,7 @@ export async function consumeStock(data: ConsumeStockData) {
 export type ConsumptionItem = {
     productId: string
     quantity: number
+    batchId?: string
     uom?: string
     notes?: string
     price?: number // [NEW] Support manual rate entry for clinical items
@@ -304,7 +305,7 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         id, tenant_id, company_id, product_id, 
                         location_from, location_to, qty, uom, 
                         move_type, source, source_reference, created_by,
-                        cost
+                        cost, batch_id
                     ) VALUES (
                         gen_random_uuid(),
                         CAST(${tenantId} AS uuid),
@@ -318,7 +319,8 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         'Nursing Consumption (Pending)',
                         CAST(${data.encounterId || null} AS uuid),
                         CAST(${userId || null} AS uuid),
-                        ${Number(item.price) || Number(product.price || 0)}
+                        ${Number(item.price) || Number(product.price || 0)},
+                        CAST(${item.batchId || null} AS uuid)
                     )
                 `;
 
@@ -327,7 +329,8 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                     INSERT INTO hms_stock_ledger (
                         id, tenant_id, company_id, product_id,
                         related_type, related_id, movement_type,
-                        qty, uom, from_location_id, reference, metadata
+                        qty, uom, from_location_id, reference, metadata,
+                        batch_id
                     ) VALUES (
                         gen_random_uuid(),
                         CAST(${tenantId} AS uuid),
@@ -344,18 +347,19 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                             notes: item.notes || '', 
                             patient_id: data.patientId,
                             custom_price: item.price // [WORLD CLASS] Preserve manual rate entry for billing
-                        })}::jsonb
+                        })}::jsonb,
+                        CAST(${item.batchId || null} AS uuid)
                     )
                 `;
 
                 // Update/Create Stock Levels (Manual Raw UPSERT logic)
                 const levels: any[] = await tx.$queryRaw`
                     SELECT id::text as id FROM hms_stock_levels 
-                    WHERE tenant_id::text = CAST(${tenantId} AS text)
-                    AND company_id::text = CAST(${companyId} AS text)
-                    AND product_id::text = CAST(${item.productId} AS text)
-                    AND location_id::text = CAST(${locationId} AS text)
-                    AND batch_id IS NULL
+                    WHERE tenant_id = CAST(${tenantId} AS uuid)
+                    AND company_id = CAST(${companyId} AS uuid)
+                    AND product_id = CAST(${item.productId} AS uuid)
+                    AND location_id = CAST(${locationId} AS uuid)
+                    AND batch_id IS NOT DISTINCT FROM CAST(${item.batchId || null} AS uuid)
                     LIMIT 1
                 `;
 
@@ -364,12 +368,12 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                         UPDATE hms_stock_levels 
                         SET quantity = quantity - CAST(${finalQty} AS numeric),
                             updated_at = NOW()
-                        WHERE id::text = CAST(${levels[0].id} AS text)
+                        WHERE id = CAST(${levels[0].id} AS uuid)
                     `;
                 } else {
                     await tx.$executeRaw`
                         INSERT INTO hms_stock_levels (
-                            id, tenant_id, company_id, product_id, location_id, quantity, updated_at, reserved
+                            id, tenant_id, company_id, product_id, location_id, quantity, updated_at, reserved, batch_id
                         ) VALUES (
                             gen_random_uuid(),
                             CAST(${tenantId} AS uuid),
@@ -378,7 +382,8 @@ export async function consumeStockBulk(data: ConsumeBulkData) {
                             CAST(${locationId} AS uuid),
                             CAST(${-finalQty} AS numeric),
                             NOW(),
-                            0
+                            0,
+                            CAST(${item.batchId || null} AS uuid)
                         )
                     `;
                 }
@@ -410,13 +415,15 @@ export async function confirmNursingConsumption(encounterId: string, moveId?: st
             const moveIds = Array.isArray(moveId) ? moveId : (moveId ? [moveId] : []);
             const moves = await tx.hms_stock_move.findMany({
                 where: {
-                    source_reference: encounterId,
+                    source_reference: encounterId as any,
                     source: 'Nursing Consumption (Pending)',
                     ...(moveIds.length > 0 ? { id: { in: moveIds } } : {})
                 }
             })
 
-            if (moves.length === 0) return { success: true, message: "No pending items found for this context." }
+            if (moves.length === 0) {
+                throw new Error("No pending items found. They may have already been confirmed.");
+            }
 
             // 2. Update Source to confirmed
             await tx.hms_stock_move.updateMany({

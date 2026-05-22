@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 // Version 1.0.6 - Hardened Against DB Failures
-import { Inter, Roboto_Mono } from "next/font/google";
+// OFFLINE COMPATIBLE: Disabled Google Fonts to bypass fetch errors during restricted builds
+// import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { Toaster as SonnerToaster } from "sonner";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { AuthProvider } from "@/components/auth-provider";
 import { LocalizationProvider } from "@/contexts/localization-context";
@@ -11,15 +13,8 @@ import { auth } from "@/auth";
 // Force dynamic rendering for all pages to prevent build-time database access
 export const dynamic = 'force-dynamic'
 
-const inter = Inter({
-  variable: "--font-geist-sans", // Keeping variable name consistent with existing CSS
-  subsets: ["latin"],
-});
-
-const robotoMono = Roboto_Mono({
-  variable: "--font-geist-mono", // Keeping variable name consistent with existing CSS
-  subsets: ["latin"],
-});
+const inter = { variable: "font-sans" };
+const robotoMono = { variable: "font-mono" };
 
 import { getTenantBrandingByHost } from "./actions/branding";
 import { auditAndFixMenuPermissions } from "./actions/navigation";
@@ -28,6 +23,7 @@ export const viewport = {
   themeColor: "#4f46e5",
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
   maximumScale: 1,
 };
 
@@ -40,19 +36,19 @@ export async function generateMetadata(): Promise<Metadata> {
     console.error('[layout] generateMetadata branding fetch failed:', e);
   }
 
-  const appName = branding?.app_name || branding?.name || "Enterprise";
-  const logoUrl = branding?.logo_url || "/logo-ziona.svg";
+  const appName = branding?.app_name || branding?.name || "Enterprise Management";
+  const logoUrl = branding?.logo_url || "/logo.svg";
 
   return {
-    title: `${appName} | Antigravity OS`,
-    description: `The unified Antigravity-speed Operating System for ${appName} & Enterprise Management.`,
+    title: appName,
+    description: `Professional Enterprise Management System for ${appName}.`,
     icons: {
       icon: [
-        { url: "/ziona.png", type: "image/png" },
+        { url: logoUrl, type: "image/png" },
       ],
-      shortcut: ["/ziona.png"],
+      shortcut: [logoUrl],
       apple: [
-        { url: "/ziona.png", sizes: "180x180", type: "image/png" },
+        { url: logoUrl, sizes: "180x180", type: "image/png" },
       ],
     },
     manifest: '/manifest.webmanifest?v=1.0.6',
@@ -72,13 +68,13 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // ASYNC SELF-HEALING: We fire this in the background so it doesn't block the UI render.
-  // This prevents the 'Blank Screen' issue caused by Prisma pool exhaustion during startup.
-  auditAndFixMenuPermissions().catch(e => console.error('[layout] background audit failed:', e));
+  // [CRITICAL] DISABLED SELF-HEALING AUDIT - This was causing pool exhaustion and 'Skeleton' hangs on LAN
+  // auditAndFixMenuPermissions().catch(e => console.error('[layout] background audit failed:', e));
+  
   const session = await auth();
 
   return (
-    <html lang="en" suppressHydrationWarning className="dark">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${robotoMono.variable} antialiased`}
       >
@@ -87,6 +83,7 @@ export default async function RootLayout({
             <LocalizationProvider>
               {children}
               <Toaster />
+              <SonnerToaster position="top-center" richColors />
             </LocalizationProvider>
           </AuthProvider>
         </ThemeProvider>

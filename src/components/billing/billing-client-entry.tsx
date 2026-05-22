@@ -14,22 +14,22 @@ const InvoiceEditor = dynamic(
         loading: () => (
             <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white gap-4">
                 <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
-                <p className="font-black text-xl animate-pulse">Initializing Ziona Billing Terminal...</p>
+                <p className="font-black text-xl animate-pulse">Initializing Billing Registry...</p>
                 <p className="text-slate-400 text-sm">Please wait while we hydrate the high-speed interface...</p>
             </div>
         )
     }
 )
 
-export function BillingClientEntry(props: any) {
+export function BillingClientEntry({ currentUser, ...props }: any) {
     return (
         <Suspense fallback={
             <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white gap-4">
                 <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
-                <p className="font-black text-xl animate-pulse">Loading High-Speed Engine...</p>
+                <p className="font-black text-xl animate-pulse">Preparing Billing Terminal...</p>
             </div>
         }>
-            <InvoiceEditor {...props} />
+            <InvoiceEditor currentUser={currentUser} {...props} />
         </Suspense>
     )
 }

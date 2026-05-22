@@ -20,10 +20,8 @@ async function getGenAIClient(companyId: string, tenantId: string) {
 
 async function getGenerativeModelWithFallback(genAI: GoogleGenerativeAI) {
     const models = [
-        { name: "gemini-1.5-flash", version: "v1" as const },
-        { name: "models/gemini-1.5-flash", version: "v1" as const },
-        { name: "gemini-1.5-flash", version: "v1beta" as const },
-        { name: "models/gemini-1.5-flash", version: "v1beta" as const },
+        { name: "gemini-2.5-flash", version: "v1beta" as const },
+        { name: "models/gemini-2.5-flash", version: "v1beta" as const },
         { name: "gemini-2.0-flash", version: "v1beta" as const },
         { name: "models/gemini-2.0-flash", version: "v1beta" as const },
         { name: "gemini-pro", version: "v1" as const }

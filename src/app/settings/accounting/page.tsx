@@ -77,16 +77,23 @@ export default async function AccountingSettingsPage() {
     // Check Company Settings for overrides
     const companySettings = await prisma.company_settings.findUnique({
         where: { company_id: companyId },
-        include: { tax_types: true, company: { include: { countries: true } } }
+        include: { tax_types: true, company: true }
     });
+
+    let countryName = '';
+    if (companySettings?.company?.country_id) {
+        const countryRow = await prisma.countries.findUnique({
+            where: { id: companySettings.company.country_id }
+        });
+        if (countryRow?.name) countryName = countryRow.name;
+    }
 
     if (companySettings?.tax_types?.name) {
         taxLabel = companySettings.tax_types.name;
-    } else if (companySettings?.company?.countries?.name) {
-        const country = companySettings.company.countries.name;
-        if (['India', 'Canada', 'Australia', 'New Zealand'].includes(country)) taxLabel = "GST";
-        else if (['United Kingdom', 'United Arab Emirates', 'Saudi Arabia', 'Germany', 'France', 'Italy', 'Netherlands'].includes(country)) taxLabel = "VAT";
-        else if (country === 'United States') taxLabel = "Sales Tax";
+    } else if (countryName) {
+        if (['India', 'Canada', 'Australia', 'New Zealand'].includes(countryName)) taxLabel = "GST";
+        else if (['United Kingdom', 'United Arab Emirates', 'Saudi Arabia', 'Germany', 'France', 'Italy', 'Netherlands'].includes(countryName)) taxLabel = "VAT";
+        else if (countryName === 'United States') taxLabel = "Sales Tax";
     }
 
     // 6. Fetch Payment Method Mappings

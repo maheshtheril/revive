@@ -17,7 +17,6 @@ export default async function DoctorDashboardPage({
 }) {
     const params = await searchParams
     const dateStr = params.date as string
-    const targetDate = dateStr ? new Date(dateStr) : new Date()
 
     await ensureHmsMenus()
     const session = await auth()
@@ -72,11 +71,11 @@ export default async function DoctorDashboardPage({
         )
     }
 
-    // 2. [ELITE DATE DYNAMIC RANGE] Adjusted to target specific date from URL
-    const todayStart = new Date(targetDate)
-    todayStart.setHours(0, 0, 0, 0)
-    const todayEnd = new Date(targetDate)
-    todayEnd.setHours(23, 59, 59, 999)
+    // 2. [ELITE DATE DYNAMIC RANGE] Force Asia/Kolkata local boundaries
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+    const localDateStr = dateStr || formatter.format(new Date())
+    const todayStart = new Date(`${localDateStr}T00:00:00+05:30`)
+    const todayEnd = new Date(`${localDateStr}T23:59:59+05:30`)
 
     const appointments = await prisma.hms_appointments.findMany({
         where: {
