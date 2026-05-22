@@ -37,18 +37,24 @@ export async function getGeneralLedgerReport(filters: {
         const entries = await prisma.journal_entry_lines.findMany({
             where,
             include: {
-                account_chart: {
+                accounts: {
                     select: { name: true, code: true }
                 },
-                partner: {
-                    select: { name: true }
-                },
-                journal_entry: {
-                    select: { name: true, journal_id: true, date: true }
+                journal_entries: {
+                    select: { ref: true, journal_id: true, date: true }
                 }
             },
-            orderBy: [{ date: 'asc' }, { created_at: 'asc' }]
+            orderBy: [{ created_at: 'asc' }]
         });
+
+        // Gather all partner IDs to query them in one batch
+        const partnerIds = Array.from(new Set(entries.map(e => e.partner_id).filter((id): id is string => !!id)));
+        const partners = partnerIds.length > 0
+            ? await prisma.business_partners.findMany({
+                where: { id: { in: partnerIds } }
+            })
+            : [];
+        const partnerMap = new Map(partners.map(p => [p.id, p]));
 
         // Calculate Running Balance
         let runningBalance = 0;
@@ -56,8 +62,18 @@ export async function getGeneralLedgerReport(filters: {
             const debit = Number(e.debit || 0);
             const credit = Number(e.credit || 0);
             runningBalance += (debit - credit);
+            
+            const partner = e.partner_id ? partnerMap.get(e.partner_id) : null;
+            
             return {
                 ...e,
+                account_chart: e.accounts,
+                partner: partner ? { name: partner.name } : null,
+                journal_entry: e.journal_entries ? {
+                    name: e.journal_entries.ref || '',
+                    journal_id: e.journal_entries.journal_id || 'GENERAL',
+                    date: e.journal_entries.date
+                } : null,
                 runningBalance
             };
         });
