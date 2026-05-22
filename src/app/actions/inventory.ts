@@ -1106,7 +1106,8 @@ export async function getBestBatch(productId: string) {
 
 export async function deleteProduct(productId: string) {
     const session = await auth();
-    if (!session?.user?.companyId) return { error: "Unauthorized" };
+    const companyId = session?.user?.companyId;
+    if (!companyId) return { error: "Unauthorized" };
     
     try {
         // [SERIOUS-AUTH-VALIDATION]
@@ -1152,7 +1153,7 @@ export async function deleteProduct(productId: string) {
             await tx.hms_product_price_history.deleteMany({ where: { product_id: productId } });
             await tx.hms_stock_levels.deleteMany({ where: { product_id: productId } });
             await tx.hms_product_batch.deleteMany({ where: { product_id: productId } });
-            await tx.hms_product.delete({ where: { id: productId, company_id: session.user.companyId } });
+            await tx.hms_product.delete({ where: { id: productId, company_id: companyId } });
         });
 
         revalidatePath('/hms/inventory/products');
