@@ -130,7 +130,6 @@ export async function upsertAccount(data: {
                     }
                 });
             } else {
-                const company = await prisma.companies.findUnique({ where: { id: session.user.companyId } });
                 await prisma.accounts.create({
                     data: {
                         tenant_id: session.user.tenantId,
