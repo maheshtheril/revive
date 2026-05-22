@@ -301,18 +301,21 @@ export async function getPatientTimeline(patientId: string) {
             prisma.hms_stock_move.findMany({
                 where: { 
                     tenant_id: tenantId, 
-                    source: { in: ['Nursing Consumption', 'Nursing Consumption (Pending)'] as any[] },
-                    // In clinical context, source_reference is often the encounter/appointment ID
-                    // But we can also find moves for this patient by looking at the reference metadata if needed
-                    // For now, let's fetch based on the appointments we found
-                },
-                include: { hms_product: true }
+                    source: { in: ['Nursing Consumption', 'Nursing Consumption (Pending)'] as any[] }
+                }
             }),
             prisma.hms_invoice.findMany({
                 where: { patient_id: patientId, tenant_id: tenantId },
                 orderBy: { created_at: 'desc' }
             })
         ]);
+
+        // Map product details for consumables manually as hms_stock_move does not have a formal relation to hms_product in Prisma
+        const stockMoveProductIds = Array.from(new Set(stockMoves.map(m => m.product_id)));
+        const stockMoveProducts = await prisma.hms_product.findMany({
+            where: { id: { in: stockMoveProductIds } }
+        });
+        const stockMoveProdMap = new Map(stockMoveProducts.map(p => [p.id, p]));
 
         const events: TimelineEvent[] = [];
 
@@ -402,13 +405,14 @@ export async function getPatientTimeline(patientId: string) {
         const aptIds = new Set(appointments.map(a => a.id));
         stockMoves.forEach(move => {
             if (aptIds.has(move.source_reference || '')) {
+                const product = stockMoveProdMap.get(move.product_id);
                 events.push({
                     id: move.id,
                     type: 'CONSUMABLES',
                     title: 'Clinical Consumable',
-                    description: `${move.qty} ${move.uom_id || 'units'} of ${move.hms_product?.name || 'Item'} used.`,
+                    description: `${move.qty} ${move.uom || 'units'} of ${product?.name || 'Item'} used.`,
                     date: move.created_at,
-                    metadata: { product_name: move.hms_product?.name, notes: move.reference }
+                    metadata: { product_name: product?.name, notes: move.source }
                 });
             }
         });
