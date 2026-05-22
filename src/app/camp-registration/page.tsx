@@ -1,12 +1,14 @@
 import CampRegistrationForm from "@/components/camp/camp-registration-form"
-import { Heart } from "lucide-react"
+import { getTenantBrandingByHost } from "@/app/actions/branding"
 
 export const metadata = {
-    title: "Patient Camp Registration | Ziona Health",
+    title: "Patient Camp Registration",
     description: "Quick unauthenticated registration for patients at medical camps.",
 }
 
-export default function CampRegistrationPage() {
+export default async function CampRegistrationPage() {
+    const branding = await getTenantBrandingByHost()
+
     return (
         <main className="dark min-h-screen w-full relative flex flex-col items-center justify-center p-4 overflow-hidden bg-slate-950 text-slate-100">
             {/* Ambient Background Glows */}
@@ -18,12 +20,12 @@ export default function CampRegistrationPage() {
             <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40 pointer-events-none" />
 
             <div className="relative z-10 w-full flex flex-col items-center justify-center">
-                <CampRegistrationForm />
+                <CampRegistrationForm branding={branding} />
                 
                 {/* Branding footer */}
                 <div className="mt-8 text-center text-xs text-slate-500 flex items-center gap-1">
                     Powered by 
-                    <span className="font-semibold text-slate-400 tracking-wider">ZIONA HMS</span>
+                    <span className="font-semibold text-slate-400 tracking-wider">{(branding?.app_name || "ZIONA HMS").toUpperCase()}</span>
                     <span>•</span>
                     <span>Camp Portal</span>
                 </div>
@@ -31,3 +33,4 @@ export default function CampRegistrationPage() {
         </main>
     )
 }
+

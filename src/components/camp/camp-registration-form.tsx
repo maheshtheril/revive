@@ -6,7 +6,15 @@ import { registerCampPatient } from '@/app/actions/camp-registration'
 import { toast } from 'sonner'
 import { User, Phone, Mail, Calendar, Droplet, UserCheck, ArrowRight, ArrowLeft, Loader2, Heart, CheckCircle2 } from 'lucide-react'
 
-export default function CampRegistrationForm() {
+interface BrandingInfo {
+    app_name: string | null;
+    logo_url: string | null;
+    name: string | null;
+    isPublic: boolean;
+}
+
+export default function CampRegistrationForm({ branding }: { branding: BrandingInfo | null }) {
+
     const [step, setStep] = useState(1)
     const [loading, setLoading] = useState(false)
     const [completed, setCompleted] = useState(false)
@@ -242,18 +250,40 @@ export default function CampRegistrationForm() {
             <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-accent/5 to-transparent -z-10 pointer-events-none" />
             
             {/* Header */}
-            <div className="text-center mb-8">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-xs font-semibold text-primary mb-3">
-                    <Heart size={12} className="text-rose-500 fill-rose-500" />
-                    Medical Camp Portal
-                </div>
-                <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                    Patient Registration
+            <div className="text-center mb-8 flex flex-col items-center">
+                {branding?.logo_url ? (
+                    <div className="relative mb-3 group">
+                        {/* Soft ambient glow behind the logo */}
+                        <div className="absolute inset-0 bg-primary/25 blur-xl rounded-full opacity-60 group-hover:opacity-80 transition-opacity pointer-events-none" />
+                        <div className="relative w-20 h-20 bg-white rounded-2xl p-2 shadow-xl flex items-center justify-center border border-white/20 overflow-hidden">
+                            <img 
+                                src={branding.logo_url} 
+                                alt={branding.name || branding.app_name || "Hospital Logo"} 
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-xs font-semibold text-primary mb-3">
+                        <Heart size={12} className="text-rose-500 fill-rose-500" />
+                        Medical Camp Portal
+                    </div>
+                )}
+
+                <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+                    {branding?.name || "Ziona Health"}
                 </h2>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-                    Enter your details to register quickly.
+
+                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-primary/10 border border-primary/25 text-xs font-semibold text-primary">
+                    <Heart size={11} className="text-rose-500 fill-rose-500 animate-pulse" />
+                    Medical Camp Registration
+                </div>
+
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2.5 max-w-xs">
+                    Please fill out the form below to quickly register for the medical camp.
                 </p>
             </div>
+
 
             {/* Step indicator */}
             <div className="flex items-center justify-center gap-2 mb-8">
