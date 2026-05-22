@@ -286,7 +286,7 @@ export async function getPatientTimeline(patientId: string) {
             }),
             prisma.hms_admission.findMany({
                 where: { patient_id: patientId, tenant_id: tenantId },
-                orderBy: { admission_date: 'desc' }
+                orderBy: { admitted_at: 'desc' }
             }),
             prisma.hms_lab_order.findMany({
                 where: { patient_id: patientId, tenant_id: tenantId },
@@ -346,18 +346,18 @@ export async function getPatientTimeline(patientId: string) {
                 id: adm.id,
                 type: 'ADMISSION',
                 title: 'Hospital Admission',
-                description: `Admitted to ${adm.ward_id ? 'Ward' : 'Emergency'}. Status: ${adm.status}`,
-                date: adm.admission_date,
-                metadata: { bed: adm.bed_id, status: adm.status }
+                description: `Admitted to ${adm.ward || 'Ward/Emergency'}. Status: ${adm.status}`,
+                date: adm.admitted_at,
+                metadata: { bed: adm.bed, status: adm.status }
             });
-            if (adm.discharge_date) {
+            if (adm.discharged_at) {
                 events.push({
                     id: `dis-${adm.id}`,
                     type: 'DISCHARGE',
                     title: 'Patient Discharged',
-                    description: `Clinical care completed. Summary: ${adm.discharge_summary || 'Normal recovery'}`,
-                    date: adm.discharge_date,
-                    metadata: { reason: adm.discharge_reason }
+                    description: `Clinical care completed. Summary: ${(adm.metadata as any)?.discharge_summary || 'Normal recovery'}`,
+                    date: adm.discharged_at,
+                    metadata: { reason: (adm.metadata as any)?.discharge_reason }
                 });
             }
         });
