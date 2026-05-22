@@ -252,10 +252,8 @@ model attachment {
   @@ignore
 }
 
-/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model audit_log {
-  id         String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenant_id  String?   @db.Uuid
   actor_id   String?   @db.Uuid
   table_name String
@@ -265,8 +263,6 @@ model audit_log {
   created_at DateTime? @default(now()) @db.Timestamptz(6)
   row_id     String?   @db.Uuid
   event      String?
-
-  @@ignore
 }
 
 model business_partners {
