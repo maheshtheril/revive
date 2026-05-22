@@ -317,6 +317,19 @@ export async function getPatientTimeline(patientId: string) {
         });
         const stockMoveProdMap = new Map(stockMoveProducts.map(p => [p.id, p]));
 
+        // Gather all clinician IDs from appointments and prescriptions to query them in one batch
+        const clinicianIds = Array.from(new Set([
+            ...appointments.map(a => a.clinician_id),
+            ...prescriptions.map(p => p.doctor_id).filter((id): id is string => !!id)
+        ]));
+        
+        const clinicians = clinicianIds.length > 0 
+            ? await prisma.hms_clinicians.findMany({
+                where: { id: { in: clinicianIds } }
+            })
+            : [];
+        const clinicianMap = new Map(clinicians.map(c => [c.id, c]));
+
         const events: TimelineEvent[] = [];
 
         // 1. Patient Registration
@@ -333,11 +346,16 @@ export async function getPatientTimeline(patientId: string) {
 
         // 2. Appointments
         appointments.forEach(apt => {
+            const clinician = clinicianMap.get(apt.clinician_id);
+            const doctorName = clinician 
+                ? `${clinician.salutation || 'Dr.'} ${clinician.first_name} ${clinician.last_name}` 
+                : 'Medical Officer';
+
             events.push({
                 id: apt.id,
                 type: 'APPOINTMENT',
                 title: 'Clinical Encounter',
-                description: `Visited for ${apt.purpose || 'Check-up'} with ${apt.doctor_name || 'Medical Officer'}.`,
+                description: `Visited for ${apt.type || 'Check-up'} with ${doctorName}.`,
                 date: apt.starts_at,
                 metadata: { status: apt.status }
             });
@@ -379,13 +397,18 @@ export async function getPatientTimeline(patientId: string) {
 
         // 5. Prescriptions
         prescriptions.forEach(p => {
+            const clinician = p.doctor_id ? clinicianMap.get(p.doctor_id) : null;
+            const doctorName = clinician 
+                ? `${clinician.salutation || 'Dr.'} ${clinician.first_name} ${clinician.last_name}` 
+                : 'the physician';
+
             events.push({
                 id: p.id,
                 type: 'PRESCRIPTION',
                 title: 'Medical Prescription',
-                description: `${p.prescription_items.length} medicines advised by ${p.doctor_name || 'the physician'}.`,
+                description: `${p.prescription_items.length} medicines advised by ${doctorName}.`,
                 date: p.created_at,
-                metadata: { plan: p.clinical_notes }
+                metadata: { plan: p.plan }
             });
         });
 
