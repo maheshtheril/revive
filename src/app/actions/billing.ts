@@ -1667,8 +1667,7 @@ export async function updateInvoiceStatus(invoiceId: string, status: any) {
                                 total_cost: 0,
                                 from_location_id: location.id,
                                 reference: updated.invoice_number!,
-                                created_by: session.user.id,
-                                metadata: { source: 'Sales/StatusUpdate', invoice_id: invoiceId }
+                                metadata: { source: 'Sales/StatusUpdate', invoice_id: invoiceId, created_by: session.user.id }
                             }
                         });
                     }
@@ -1862,8 +1861,7 @@ export async function recordPayment(invoiceId: string, payment: { amount: number
                                 total_cost: 0,
                                 from_location_id: location.id,
                                 reference: invoice.invoice_number!,
-                                created_by: session.user.id,
-                                metadata: { source: 'Sales/PaymentUpdate', invoice_id: invoiceId }
+                                metadata: { source: 'Sales/PaymentUpdate', invoice_id: invoiceId, created_by: session.user.id }
                             }
                         });
                     }
