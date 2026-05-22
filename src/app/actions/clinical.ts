@@ -167,7 +167,7 @@ export async function getInitialInvoiceData(encounterId?: string, patientId?: st
                         sourceId: item.id,
                         batch_id: item.batch_id,
                         batch_no: item.batch_no,
-                        type: item.hms_product?.type || 'medicine'
+                        type: item.hms_product?.is_service ? 'service' : 'medicine'
                     });
                 }
             });
