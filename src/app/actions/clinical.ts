@@ -390,7 +390,7 @@ export async function getPatientTimeline(patientId: string) {
                 type: 'LAB_ORDER',
                 title: 'Lab Investigation',
                 description: `${order.hms_lab_order_line.length} tests requested. Status: ${order.status}`,
-                date: order.created_at,
+                date: order.created_at || new Date(),
                 metadata: { tests: order.hms_lab_order_line.map(l => l.hms_lab_test?.name) }
             });
         });
