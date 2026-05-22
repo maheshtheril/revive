@@ -8,12 +8,15 @@ export async function lockAccountingPeriod(dateStr: string | null, supervisorPin
     const session = await auth();
     if (!session?.user?.companyId) return { error: "Unauthorized" };
 
+    const companyId = session.user.companyId;
+    const tenantId = session.user.tenantId;
+
     try {
         const lockDate = dateStr ? new Date(dateStr) : null;
         const cleanPin = supervisorPin ? supervisorPin.trim() : null;
 
         const existing = await prisma.company_accounting_settings.findUnique({
-            where: { company_id: session.user.companyId }
+            where: { company_id: companyId }
         });
 
         if (existing) {
@@ -27,8 +30,8 @@ export async function lockAccountingPeriod(dateStr: string | null, supervisorPin
         } else {
             await prisma.company_accounting_settings.create({
                 data: {
-                    tenant_id: session.user.tenantId!,
-                    company_id: session.user.companyId!,
+                    tenant_id: tenantId!,
+                    company_id: companyId,
                     lock_date: lockDate,
                     localization: cleanPin || "2035",
                     fiscal_year_start: new Date(new Date().getFullYear(), 0, 1),
@@ -48,6 +51,9 @@ export async function lockAccountingPeriod(dateStr: string | null, supervisorPin
 export async function updateAccountingSettings(data: any) {
     const session = await auth();
     if (!session?.user?.companyId) return { error: "Unauthorized" };
+
+    const companyId = session.user.companyId;
+    const tenantId = session.user.tenantId;
 
     try {
         const {
@@ -92,12 +98,12 @@ export async function updateAccountingSettings(data: any) {
             // 1. Update Accounting Settings
             (async () => {
                 const existing = await prisma.company_accounting_settings.findUnique({
-                    where: { company_id: session.user.companyId }
+                    where: { company_id: companyId }
                 });
 
                 const payload = {
-                    tenant_id: session.user.tenantId!,
-                    company_id: session.user.companyId!,
+                    tenant_id: tenantId!,
+                    company_id: companyId,
                     fiscal_year_start: fiscal_year_start ? new Date(fiscal_year_start) : new Date(new Date().getFullYear(), 0, 1),
                     fiscal_year_end: fiscal_year_end ? new Date(fiscal_year_end) : new Date(new Date().getFullYear(), 11, 31),
                     currency_precision: currency_precision ? parseInt(currency_precision) : 2,
@@ -143,11 +149,11 @@ export async function updateAccountingSettings(data: any) {
             // 2. Sync with Company Settings for Billing Mode
             (async () => {
                 const compSettings = await prisma.company_settings.findUnique({
-                    where: { company_id: session.user.companyId }
+                    where: { company_id: companyId }
                 });
                 if (compSettings) {
                     await prisma.company_settings.update({
-                        where: { company_id: session.user.companyId },
+                        where: { company_id: companyId },
                         data: { hms_billing_mode: default_tax_mode || 'exclusive' }
                     });
                 } else {
@@ -155,8 +161,8 @@ export async function updateAccountingSettings(data: any) {
                     if (!firstCurr) return; // safety check
                     await prisma.company_settings.create({
                         data: {
-                            tenant: { connect: { id: session.user.tenantId! } },
-                            company: { connect: { id: session.user.companyId! } },
+                            tenant: { connect: { id: tenantId! } },
+                            company: { connect: { id: companyId } },
                             currencies: { connect: { id: firstCurr.id } },
                             hms_billing_mode: default_tax_mode || 'exclusive'
                         }
