@@ -1,40 +1,36 @@
 @echo off
-SETLOCAL EnableDelayedExpansion
-
 echo ===================================================
-echo          ZIONA HMS - CLOUD SYNC TOOL
+echo     ZIONA HMS - DUAL-STAGE SYNC PIPELINE
 echo ===================================================
 echo.
 
-:: 1. Check if Cloud is configured
-findstr "CLOUD_DATABASE_URL" .env >nul
-if %errorlevel% neq 0 (
-    echo [MISSING SETUP] You haven't configured the Cloud Database yet.
+echo [STAGE 1/2] Pulling cloud camp registrations to local...
+node scripts/pull_camp_registrations.js
+if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo Starting Cloud Setup Wizard...
-    node configure_cloud.js
-    if %errorlevel% neq 0 (
-        echo.
-        echo [ERROR] Setup failed. Please try again or check your Cloud URL.
-        pause
-        exit /b %errorlevel%
-    )
+    echo [CRITICAL ERROR] Failed to pull camp registrations from cloud.
+    echo Sync halted to prevent cloud data loss during overwrite.
     echo.
-    echo Setup complete! Now starting the first sync...
-    echo.
+    pause
+    exit /b %ERRORLEVEL%
 )
 
-:: 2. Run the Smart Sync
+echo [STAGE 1/2 SUCCESS] Cloud registrations pulled and merged.
+echo.
+
+echo [STAGE 2/2] Mirroring local database to Neon Cloud...
 node smart_sync.js
-
-if %errorlevel% equ 0 (
+if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo ===================================================
-    echo SUCCESS: Cloud Mirror is now 100%% up to date.
-    echo ===================================================
-) else (
+    echo [CRITICAL ERROR] Failed to push local data mirror to cloud.
     echo.
-    echo [ERROR] Sync failed. Check the messages above.
+    pause
+    exit /b %ERRORLEVEL%
 )
 
+echo.
+echo ===================================================
+echo     SYNCHRONIZATION COMPLETED SUCCESSFULLY!
+echo ===================================================
+echo.
 pause

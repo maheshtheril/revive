@@ -18,10 +18,14 @@ export default auth((req) => {
     // We allow POST/PUT/DELETE on Vercel if it's NOT explicitly in Read-Only mode
     // This allows the Signup/Login flow to work in the cloud.
     if (forceReadOnly && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
-        // Allow ONLY Auth routes
-        const isAuthRoute = url.pathname.startsWith('/api/auth') || url.pathname.startsWith('/login') || url.pathname === '/signup';
+        // Allow ONLY Auth and Camp registration routes
+        const isAllowedRoute = 
+            url.pathname.startsWith('/api/auth') || 
+            url.pathname.startsWith('/login') || 
+            url.pathname === '/signup' ||
+            url.pathname.startsWith('/camp-registration');
         
-        if (!isAuthRoute) {
+        if (!isAllowedRoute) {
             return new NextResponse(
                 JSON.stringify({ 
                     error: "This is a Mirror Site (View-Only). Please make changes on the Hospital Server." 
