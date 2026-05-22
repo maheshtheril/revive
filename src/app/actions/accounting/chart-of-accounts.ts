@@ -38,11 +38,11 @@ export async function getAccounts(search?: string, typeFilter?: string[]) {
         // If no accounts exist, try to seed them automatically
         if (accounts.length === 0 && !search) {
             console.log("No accounts found. Triggering auto-seed...");
-            await ensureDefaultAccounts(session.user.companyId, session.user.tenantId || session.user.companyId); // fallback
+            await ensureDefaultAccounts(companyId, session?.user?.tenantId || companyId); // fallback
 
             // Re-fetch
             const seededAccounts = await prisma.accounts.findMany({
-                where: { company_id: session.user.companyId, is_active: true },
+                where: { company_id: companyId, is_active: true },
                 orderBy: { code: 'asc' }
             });
             return { success: true, data: seededAccounts };
