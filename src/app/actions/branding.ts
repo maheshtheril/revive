@@ -42,6 +42,7 @@ export async function getTenantBrandingByHost(slugOverride?: string) {
                     app_name: true,
                     logo_url: true,
                     name: true,
+                    app_url: true,
                     metadata: true,
                     company_settings: {
                         select: {
