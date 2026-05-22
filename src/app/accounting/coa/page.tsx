@@ -27,7 +27,8 @@ export default async function ChartOfAccountsPage() {
         ...acc,
         is_reconcilable: acc.is_reconcilable ?? false,
         parent_id: acc.parent_id,
-        is_active: acc.is_active ?? true // Ensure boolean
+        is_active: acc.is_active ?? true, // Ensure boolean
+        is_group: acc.is_group ?? false    // Ensure boolean to resolve type incompatibility
     }))
 
     return (
