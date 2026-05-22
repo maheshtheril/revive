@@ -1373,7 +1373,6 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                                 unit_cost: 0,
                                 total_cost: 0,
                                 reference: updatedInvoice.invoice_number,
-                                created_by: userId,
                                 metadata: { 
                                     source: 'Sales/Update',
                                     sold_uom: item.uom,
@@ -1382,7 +1381,8 @@ export async function updateInvoice(invoiceId: string, data: { patient_id: strin
                                     original_qty: item.quantity,
                                     deduction_qty: qtyToDeduct,
                                     method: usedMethod,
-                                    invoice_id: invoiceId 
+                                    invoice_id: invoiceId,
+                                    created_by: userId
                                 }
                             }
                         });
