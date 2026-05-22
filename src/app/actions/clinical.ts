@@ -420,7 +420,7 @@ export async function getPatientTimeline(patientId: string) {
                 title: 'Hospital Invoice',
                 description: `Invoice ${inv.invoice_number} generated.`,
                 date: inv.created_at || new Date(),
-                metadata: { total: Number(inv.total_amount), status: inv.status }
+                metadata: { total: Number(inv.total), status: inv.status }
             });
         });
 
