@@ -628,7 +628,7 @@ export async function createInvoice(data: {
             for (const item of processedLineItems) {
                 if (!item.product_id) continue;
                 const product = pLookup.get(item.product_id);
-                if (!product || product.type === 'service') continue;
+                if (!product || product.is_service) continue;
 
                 // 1. Resolve Conversion
                 const normalizeUnit = (u: string) => (u || 'Unit').toUpperCase().trim().replace(/S$/, '');
