@@ -64,9 +64,9 @@ export async function recordAuditEntry(event: string, tableName?: string, record
                 tenant_id: session.user.tenantId,
                 actor_id: session.user.id,
                 event,
-                table_name: tableName,
+                table_name: tableName || "system",
                 record_id: recordId,
-                operation,
+                operation: operation || "SYSTEM_EVENT",
                 diff: diff || {}
             }
         });
@@ -74,3 +74,4 @@ export async function recordAuditEntry(event: string, tableName?: string, record
         console.error("Audit Logging Failure:", err);
     }
 }
+
