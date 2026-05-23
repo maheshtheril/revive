@@ -1547,12 +1547,13 @@ export async function exportStockReportToExcel() {
 
 export async function bulkUpdateBatchPricing(updates: { batchId: string, cost?: number, mrp?: number, salePrice?: number }[]) {
     const session = await auth();
-    if (!session?.user?.id || !session.user.companyId) return { error: "Unauthorized" };
+    const companyId = session?.user?.companyId;
+    if (!session?.user?.id || !companyId) return { error: "Unauthorized" };
 
     try {
         await prisma.$transaction(
             updates.map(u => prisma.hms_product_batch.update({
-                where: { id: u.batchId, company_id: session.user.companyId },
+                where: { id: u.batchId, company_id: companyId },
                 data: {
                     ...(u.cost !== undefined && { cost: new Prisma.Decimal(u.cost) }),
                     ...(u.mrp !== undefined && { mrp: new Prisma.Decimal(u.mrp) }),
@@ -1909,7 +1910,9 @@ export async function getBatchHistory(batchId: string) {
 
 export async function adjustStock(prevState: any, formData: FormData) {
     const session = await auth();
-    if (!session?.user?.id || !session.user.companyId) return { error: "Unauthorized" };
+    const companyId = session?.user?.companyId;
+    const tenantId = session?.user?.tenantId;
+    if (!session?.user?.id || !companyId || !tenantId) return { error: "Unauthorized" };
 
     const batchId = formData.get("batchId") as string;
     const multiplier = parseFloat(formData.get("multiplier") as string) || 1;
@@ -1917,8 +1920,6 @@ export async function adjustStock(prevState: any, formData: FormData) {
     const reason = formData.get("reason") as string || "Manual Adjustment";
 
     if (!batchId || changeQty === 0) return { error: "Invalid data" };
-
-    const companyId = session.user.companyId; // Store after null check
 
     try {
         await prisma.$transaction(async (tx) => {
@@ -1955,8 +1956,8 @@ export async function adjustStock(prevState: any, formData: FormData) {
 
             // 4. Update Stock Levels
             const stockLevelWhere = {
-                tenant_id: session.user.tenantId,
-                company_id: session.user.companyId,
+                tenant_id: tenantId,
+                company_id: companyId,
                 product_id: batch.product_id,
                 location_id: warehouse.id,
                 batch_id: batchId
@@ -1977,8 +1978,8 @@ export async function adjustStock(prevState: any, formData: FormData) {
             } else {
                 await tx.hms_stock_levels.create({
                     data: {
-                        tenant_id: session.user.tenantId as string,
-                        company_id: session.user.companyId as string,
+                        tenant_id: tenantId,
+                        company_id: companyId,
                         product_id: batch.product_id,
                         location_id: warehouse.id,
                         batch_id: batchId,
@@ -1991,8 +1992,8 @@ export async function adjustStock(prevState: any, formData: FormData) {
             // 5. Create Ledger Entry
             await tx.hms_stock_ledger.create({
                 data: {
-                    tenant_id: session.user.tenantId as string,
-                    company_id: session.user.companyId as string,
+                    tenant_id: tenantId,
+                    company_id: companyId,
                     product_id: batch.product_id,
                     movement_type: changeQty > 0 ? 'adjustment-in' : 'adjustment-out',
                     qty: Math.abs(changeQty),
