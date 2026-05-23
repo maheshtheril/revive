@@ -2151,7 +2151,7 @@ export async function rapidStockOnboarding(data: {
 
                 if (data.categoryId) {
                     await tx.hms_product_category_rel.upsert({
-                        where: { product_id: productId },
+                        where: { product_id_category_id: { product_id: productId, category_id: data.categoryId } },
                         create: { product_id: productId, category_id: data.categoryId },
                         update: { category_id: data.categoryId }
                     });
