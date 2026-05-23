@@ -1,0 +1,4 @@
+Error: NEXT_REDIRECT
+    at getRedirectError (C:\2035-HMS\SAAS_ERP\.next\dev\server\chunks\ssr\node_modules_next_351f5792._.js:6000:41)
+    at redirect (C:\2035-HMS\SAAS_ERP\.next\dev\server\chunks\ssr\node_modules_next_351f5792._.js:6010:11)
+    at ReceptionDashboardPage (C:\2035-HMS\SAAS_ERP\.next\dev\server\chunks\ssr\[root-of-the-server]__65d5d452._.js:10296:211)
