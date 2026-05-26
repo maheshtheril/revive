@@ -36,7 +36,7 @@ export default async function TenantLayout({
                             )}
                         </div>
                         <span className="font-bold text-gray-900 truncate">
-                            {tenant?.app_name || tenant?.name || "Tenant Admin"}
+                            {tenant?.app_name || tenant?.name || "Tenant"}
                         </span>
                     </div>
                     <CompanySwitcher initialActiveCompany={currentCompany} tenant={tenant} />
